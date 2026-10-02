@@ -28,3 +28,13 @@ export async function buildDeepLink(token: string): Promise<string> {
   const base = await getBaseUrl();
   return `${base}/followup/${encodeURIComponent(token)}`;
 }
+
+/**
+ * Deep link for an imported draft. Same shape, different route: a token is
+ * purpose-bound, so an import link cannot land on the follow-up page and a
+ * follow-up link cannot land on the import page.
+ */
+export async function buildImportDeepLink(token: string): Promise<string> {
+  const base = await getBaseUrl();
+  return `${base}/import/${encodeURIComponent(token)}`;
+}

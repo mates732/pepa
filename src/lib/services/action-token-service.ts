@@ -2,6 +2,7 @@ import "server-only";
 
 import { requireAuthenticatedUser } from "@/lib/auth/dal";
 import {
+  ACTION_TOKEN_PURPOSES,
   DEFAULT_ACTION_TOKEN_TTL_MS,
   expiresAt,
   generateActionToken,
@@ -52,8 +53,13 @@ export async function mintFollowUpToken(input: {
   leadId: string;
   outreachId?: string | null;
   ttlMs?: number;
+  /** Defaults to the follow-up purpose; imports pass "outreach_import". */
+  purpose?: ActionTokenPurpose;
 }): Promise<ServiceResult<{ token: string; expiresAt: string; id: string }>> {
   if (!input.leadId) return fail("A lead is required to mint a follow-up link.");
+  if (input.purpose && !ACTION_TOKEN_PURPOSES.includes(input.purpose)) {
+    return fail("Unknown action-token purpose.");
+  }
 
   const supabase = getSupabaseAdmin();
   const { count, error: leadError } = await supabase
@@ -72,7 +78,7 @@ export async function mintFollowUpToken(input: {
     .from("action_tokens")
     .insert({
       token_hash: hashActionToken(rawToken),
-      purpose: "followup_composer",
+      purpose: input.purpose ?? "followup_composer",
       lead_id: input.leadId,
       outreach_id: input.outreachId ?? null,
       expires_at: expiry.toISOString(),

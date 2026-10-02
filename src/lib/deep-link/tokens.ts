@@ -13,7 +13,7 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
-export const ACTION_TOKEN_PURPOSES = ["followup_composer"] as const;
+export const ACTION_TOKEN_PURPOSES = ["followup_composer", "outreach_import"] as const;
 export type ActionTokenPurpose = (typeof ACTION_TOKEN_PURPOSES)[number];
 
 /** Visible prefix: makes leaked tokens identifiable and purpose-scannable. */
@@ -26,6 +26,16 @@ export const TOKEN_PATTERN = /^fp1_[A-Za-z0-9_-]{43}$/;
 
 /** Default lifetime. Long enough for a mobile round-trip, short enough to expire. */
 export const DEFAULT_ACTION_TOKEN_TTL_MS = 72 * 60 * 60 * 1000; // 72h
+
+/**
+ * Import links are deliberately much shorter-lived.
+ *
+ * A follow-up link is a notification the operator may tap hours later. An import
+ * link points at a payload that was just pasted in and is reviewed immediately,
+ * so a 30-minute window is plenty — and shrinking it shrinks the value of a
+ * leaked link.
+ */
+export const IMPORT_TOKEN_TTL_MS = 30 * 60 * 1000; // 30m
 
 /**
  * Domain separation: the same signing key is never reused for the session
