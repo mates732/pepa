@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# The template holds placeholder values only and is referenced by runtime error
+# messages, the setup notice and the deployment runbook, so it must be tracked.
+!.env.example
 
 # vercel
 .vercel
