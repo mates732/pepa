@@ -11,6 +11,8 @@
  * Pure module: no `next/*` imports, safe to unit test directly.
  */
 
+import "server-only";
+
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 export const ACTION_TOKEN_PURPOSES = ["followup_composer", "outreach_import"] as const;

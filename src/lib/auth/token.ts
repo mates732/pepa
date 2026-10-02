@@ -8,6 +8,8 @@
  * Stateless, signed with PEPA_SESSION_SECRET, verified on every request.
  */
 
+import "server-only";
+
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 export const SESSION_COOKIE = "pepa_session";

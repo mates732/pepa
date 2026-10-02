@@ -1,3 +1,5 @@
+import "server-only";
+
 import { NextResponse, type NextRequest } from "next/server";
 
 import { constantTimeEquals } from "@/lib/auth/token";
