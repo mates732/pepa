@@ -53,6 +53,11 @@ export function proxy(request: NextRequest): NextResponse {
 
 export const config = {
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|robots.txt|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff2?)$).*)",
+    // `/api/*` is excluded on purpose: the Telegram webhook authenticates with
+    // Telegram's own secret-token header and must be reachable by Telegram, not
+    // by a PEPA session. Any future API route must call `requireAuthenticatedUser()`
+    // itself — Server Actions are POSTs to page routes, so they stay covered here
+    // as well as by their own check.
+    "/((?!api/|_next/static|_next/image|favicon.ico|robots.txt|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff2?)$).*)",
   ],
 };

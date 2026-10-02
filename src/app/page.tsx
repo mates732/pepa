@@ -1,8 +1,10 @@
 import { connection } from "next/server";
 
 import { logout } from "@/app/auth-actions";
+import { devToolsEnabled } from "@/app/dev-actions";
 import { Dashboard } from "@/components/dashboard";
 import { SetupNotice } from "@/components/setup-notice";
+import { TelegramTestButton } from "@/components/telegram-test-button";
 import { verifySession } from "@/lib/auth/dal";
 import { getEnvStatus } from "@/lib/config/env";
 import { listOutreachHistory } from "@/lib/services/outreach-service";
@@ -41,6 +43,7 @@ export default async function Page() {
   }
 
   const rows = (history.data ?? []) as OutreachHistoryRow[];
+  const showDevTools = await devToolsEnabled();
 
   return (
     <main className="mx-auto w-full max-w-6xl px-4 py-8">
@@ -55,14 +58,17 @@ export default async function Page() {
         </div>
 
         {/* A form (not fetch) so the HttpOnly cookie is cleared by the server. */}
-        <form action={logout}>
-          <button
-            type="submit"
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
-          >
-            Sign out
-          </button>
-        </form>
+        <div className="flex items-start gap-2">
+          {showDevTools ? <TelegramTestButton /> : null}
+          <form action={logout}>
+            <button
+              type="submit"
+              className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
+            >
+              Sign out
+            </button>
+          </form>
+        </div>
       </header>
 
       <Dashboard initialRows={rows} />

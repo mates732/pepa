@@ -1,14 +1,22 @@
 import type { EmailProvider, NotificationService } from "./types";
 
+// Deliberately NOT `server-only`: client components import the
+// NOT_CONFIGURED_MESSAGE constant from here. The registered provider
+// implementations are the server-only part, and they are constructed in
+// src/lib/providers/notifications.ts, which is server-only.
+
 /**
- * Registry for the transports added in V2. It is intentionally empty: the send
- * button reads it to explain *why* sending is unavailable instead of silently
- * doing nothing.
+ * Registry for the transports added in V2. The follow-up notification channel
+ * is registered here today; the email providers are still intentionally empty.
  *
  * To add Gmail:
  *   1. implement `EmailProvider` in `src/lib/providers/gmail.ts`
  *   2. `registerEmailProvider(new GmailProvider())` at module scope
  *   3. the send button picks it up — no UI changes needed.
+ *
+ * To add email or push notifications:
+ *   implement `NotificationService` and `registerNotificationService()`.
+ *   Follow-up logic never learns which channel it is talking to.
  */
 const emailProviders = new Map<string, EmailProvider>();
 const notificationServices = new Map<string, NotificationService>();

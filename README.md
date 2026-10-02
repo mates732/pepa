@@ -46,9 +46,15 @@ unreachable or the environment variables are missing.
 | `SUPABASE_SERVICE_ROLE_KEY`     | yes      | **Server-only.** Bypasses RLS — never expose it to the client |
 | `PEPA_PASSWORD`                 | yes      | The single operator's password. Server-only, ≥ 12 chars      |
 | `PEPA_SESSION_SECRET`           | yes      | HMAC key for the session cookie. Server-only, ≥ 32 chars     |
+| `TELEGRAM_BOT_TOKEN`            | for Telegram | Bot token. Server-only, never `NEXT_PUBLIC_`             |
+| `TELEGRAM_CHAT_ID`              | for Telegram | The one chat allowed to interact with PEPA             |
+| `TELEGRAM_WEBHOOK_SECRET`       | for Telegram | Echoed back by Telegram as `X-Telegram-Bot-Api-Secret-Token` |
 
-`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TELEGRAM_BOT_TOKEN` and
-`TELEGRAM_CHAT_ID` are listed in `.env.example` as placeholders for V2 only.
+Optional: `PEPA_BASE_URL` (canonical origin for deep links; falls back to the
+request host) and `PEPA_ENABLE_DEV_TOOLS` (shows the "Test Telegram" button in a
+production build).
+
+`GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` remain placeholders for V2 only.
 
 Generate the session secret:
 
@@ -107,9 +113,15 @@ security boundary and resets on a cold start or serverless recycle.
 | Layer | Mechanism |
 | ----- | --------- |
 | Edge | `src/proxy.ts` — redirects anonymous requests to `/login` |
-| Pages | `verifySession()` in `src/app/page.tsx` |
+| Pages | `verifySession()` in `src/app/page.tsx` and `/followup/[token]` |
 | Mutations | `requireAuthenticatedUser()` at the top of every privileged Server Action; it **throws**, so no caller can forget to check |
 | Data | RLS enabled with no client policies; service-role client imported only from `server-only` modules |
+
+`/api/*` is deliberately excluded from the Proxy matcher so the Telegram webhook
+is reachable by Telegram rather than by a PEPA session; it authenticates with
+Telegram's own secret-token header instead. Any future API route must call
+`requireAuthenticatedUser()` itself. Server Actions are POSTs to page routes, so
+they stay covered by both Proxy and their own check.
 
 ## Keyboard shortcuts
 
@@ -162,6 +174,91 @@ src/
 supabase/migrations/
   20260101000000_init.sql   full schema
 ```
+
+## Telegram + deep links (P1)
+
+Telegram is a **notification and control surface**, not a place where outreach
+content lives. It carries a company name, an email address and an opaque link —
+never a subject or a body.
+
+### Layering
+
+```
+FollowUpService (V2, not built)   ← decides WHAT is due
+        ↓
+NotificationService               ← the abstraction PEPA depends on
+        ↓
+TelegramProvider                  ← src/lib/providers/telegram.ts
+        ↓
+Telegram Bot API                  ← src/lib/telegram/client.ts (dumb HTTP)
+```
+
+Follow-up logic never imports Telegram. Adding email or push later means
+registering another `NotificationService` — nothing above it changes.
+
+### Bot setup
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) → `TELEGRAM_BOT_TOKEN`.
+2. Get your own id from `https://t.me/userinfobot` → `TELEGRAM_CHAT_ID`.
+3. Register the webhook with a shared secret (see `.env.example`). The webhook
+   rejects **every** delivery when `TELEGRAM_WEBHOOK_SECRET` is unset.
+
+### Authorization
+
+Two independent gates, both failing closed:
+
+1. **Webhook delivery** — the `X-Telegram-Bot-Api-Secret-Token` header must
+   equal `TELEGRAM_WEBHOOK_SECRET`, compared in constant time.
+2. **Owner-only** — the update's chat must equal `TELEGRAM_CHAT_ID`.
+
+Every rejection returns the same plain `{"ok":true}` with no detail, so an
+unknown chat cannot learn whether it exists, whether it is the owner, or whether
+PEPA is configured. Unrelated update types (polls, edits, commands) are
+acknowledged and ignored; `callback_query` is answered and nothing else. No
+long-running work happens inside the webhook.
+
+The webhook is a server peer, not a browser: it never touches lead data, so it
+cannot bypass PEPA session auth.
+
+### Deep links
+
+```
+https://pepa.example.com/followup/fp1_<43 base64url chars>
+```
+
+- **Opaque** — 32 cryptographically random bytes behind an `fp1_` prefix. The
+  URL contains no lead id, email, subject or body, so `/followup/123` is
+  meaningless and leads cannot be enumerated.
+- **Hashed at rest** — only `HMAC-SHA256(token)` with domain separation is
+  stored in `action_tokens.token_hash`. A database dump cannot be replayed as a
+  link. The raw token exists only inside the Telegram button URL.
+- **Purpose-scoped** — a `CHECK` constraint limits rows to `followup_composer`.
+- **Expiring** — 72 hours by default. An expired token is refused.
+- **Still requires a PEPA session.** Tapping the button while signed out sends
+  the operator to `/login?next=/followup/<token>`, and login returns them
+  straight to the follow-up. Telegram cannot bypass authentication.
+
+Failed resolution (unknown / malformed / expired / wrong purpose) returns one
+indistinguishable message, so the page cannot be probed for valid tokens.
+
+Tokens are not single-use: a phone needs to be able to refresh or re-tap the
+link. First use is stamped in `used_at` for auditing.
+
+### Database change
+
+`supabase/migrations/20260101000100_action_tokens.sql` adds `action_tokens`
+(`id`, `token_hash` unique, `purpose`, `lead_id` FK, `outreach_id` nullable FK,
+`created_at`, `expires_at`, `used_at`) with RLS on and no client policies. No
+existing table or column changed.
+
+### Testing the channel
+
+A **Test Telegram** button appears in the dashboard when dev tools are enabled
+(`NODE_ENV !== production`, or `PEPA_ENABLE_DEV_TOOLS=true`). It calls the
+authenticated server action `sendTestTelegramNotification()`, which sends a real
+notification for the most recent lead. There is no unauthenticated test endpoint.
+
+---
 
 ## Duplicate detection
 
@@ -216,16 +313,19 @@ intended workflow.
 
 | Feature | Where it plugs in |
 | ------- | ----------------- |
+| Follow-up scheduler | implement `FollowUpService`; `leads.next_followup_at`, `leads.followup_count` and `getLeadOutreachHistory()` already exist. It emits through `NotificationService`, so Telegram is optional |
 | Gmail sending | implement `EmailProvider` in `src/lib/providers/`, `registerEmailProvider()`; the Send button already resolves through `getEmailProvider()` |
 | Apple Mail | second `EmailProvider` (mailto) in the same registry |
-| Telegram | implement `NotificationService`, `registerNotificationService()` |
-| Follow-up engine | implement `FollowUpService`; `leads.next_followup_at`, `leads.followup_count` and `getLeadOutreachHistory()` already exist |
 | Reply detection | set lead `status = 'replied'`, fill `outreach_messages.provider_message_id` (already uniquely indexed) |
+| Email / push notifications | implement `NotificationService`, `registerNotificationService()` |
 | Analytics | `outreach_messages` + `outreach_overview` view are the base |
 
 Persisting a send means writing `provider`, `provider_message_id` and `sent_at`
 on the message, then bumping the lead's `last_contacted_at` /
 `next_followup_at` — the columns and the check constraint are already in place.
+
+Not built yet, deliberately: the follow-up scheduler itself (including any cron
+or Vercel Cron job), automatic follow-up generation, and automatic sending.
 
 ## Security notes
 
