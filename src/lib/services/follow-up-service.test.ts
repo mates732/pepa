@@ -529,3 +529,39 @@ describe("processDueFollowUps — failure handling", () => {
     expect(db.notifications).toHaveLength(0);
   });
 });
+
+describe("notification channel wiring", () => {
+  // Regression: the scheduler used to read the bare registry, which returns
+  // null unless something else happened to import the registration module. The
+  // cron route imports nothing else, so in production every due follow-up
+  // silently counted as `failed` and no Telegram message was ever sent.
+  it("registers the Telegram channel merely by importing the service", async () => {
+    const { getNotificationService } = await import("@/lib/providers/registry");
+    expect(getNotificationService("telegram")?.id).toBe("telegram");
+  });
+
+  it("resolves a channel for the scheduler even without Telegram credentials", async () => {
+    // Registration is unconditional; only `isConfigured()` flips. The send then
+    // throws and the claim is released, which is what keeps it retryable.
+    const { getNotificationChannel } = await import("@/lib/providers/notifications");
+    const channel = getNotificationChannel();
+
+    expect(channel).not.toBeNull();
+    expect(channel?.isConfigured()).toBe(false);
+  });
+
+  it("counts an unconfigured channel as retryable, not as notified", async () => {
+    seedDueFollowUp();
+    const previous = process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+
+    try {
+      const outcome = await processDueFollowUps();
+      expect(outcome.notified).toBe(0);
+      expect(outcome.failed).toBe(1);
+      expect(db.notifications).toHaveLength(0);
+    } finally {
+      if (previous !== undefined) process.env.TELEGRAM_BOT_TOKEN = previous;
+    }
+  });
+});

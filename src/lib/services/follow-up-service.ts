@@ -7,7 +7,7 @@ import {
   toUtcIso,
 } from "@/lib/followup/cadence";
 import { buildDeepLink } from "@/lib/config/base-url";
-import { getNotificationService } from "@/lib/providers/registry";
+import { getNotificationChannel } from "@/lib/providers/notifications";
 import type { ActionNotification, DueFollowUp, FollowUpService } from "@/lib/providers/types";
 import { mintFollowUpToken } from "@/lib/services/action-token-service";
 import { toActionNotification } from "@/lib/telegram/format";
@@ -256,7 +256,11 @@ export async function processDueFollowUps(options: ProcessOptions = {}): Promise
     failed: 0,
   };
 
-  const channel = options.notifier ?? getNotificationService();
+  // `getNotificationChannel()` comes from the registration module, so importing
+  // this service is enough to make a channel resolvable. Asking the bare
+  // registry instead returns null whenever nothing else happened to import the
+  // registration module — which is exactly what a bare cron route does.
+  const channel = options.notifier ?? getNotificationChannel();
   const send = channel?.sendActionNotification?.bind(channel);
 
   const due = await listDueFollowUps(options.limit ?? DEFAULT_BATCH_LIMIT);
