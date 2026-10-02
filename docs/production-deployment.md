@@ -57,7 +57,7 @@ hand.
 ## 3. Verify the schema
 
 ```bash
-supabase db execute --file supabase/verify-schema.sql
+supabase db query --linked --file supabase/verify-schema.sql
 ```
 
 This script is read-only and raises an exception naming the first problem. A
@@ -78,9 +78,11 @@ means something outside PEPA has write access to the data. `tables = 4` counts
 only tables with RLS enabled, so that number is also a second RLS assertion.
 
 `verify-schema.sql` lives in `supabase/` but not in `supabase/migrations/`, so
-`supabase db push` will never try to apply it. If your CLI has no
-`db execute` subcommand, paste the file into **Supabase Studio → SQL Editor** and
-run it there — the result is identical.
+`supabase db push` will never try to apply it. `db query --linked` routes the
+statement through the Management API rather than a direct Postgres connection.
+If you prefer a direct connection, `psql` against the linked connection string
+works too; pasting the file into **Supabase Studio → SQL Editor** gives an
+identical result.
 
 ## 4. Set the environment variables
 

@@ -5,7 +5,7 @@
 -- exists, and raises an exception naming the first thing that is missing.
 --
 -- Usage:
---   supabase db execute --file supabase/verify-schema.sql
+--   supabase db query --linked --file supabase/verify-schema.sql
 -- or paste it into Supabase Studio -> SQL Editor and run it.
 --
 -- It never inserts, updates or deletes: running it twice is harmless.

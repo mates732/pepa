@@ -353,8 +353,8 @@ Telegram end-to-end check — is in
 Short version:
 
 1. Push the schema with `supabase db push`, then prove it with
-   `supabase db execute --file supabase/verify-schema.sql`. A correct database
-   reports 4 RLS-enabled tables, 2 views and **0** RLS policies.
+   `supabase db query --linked --file supabase/verify-schema.sql`. A correct
+   database reports 4 RLS-enabled tables, 2 views and **0** RLS policies.
 2. Set the variables listed in `.env.example` (ten required) under **Settings →
    Environment Variables**. `npm run build` reads none of them, so a successful
    build says nothing about your configuration.
