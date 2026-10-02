@@ -1,6 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { formatFollowUpDueMessage, followUpDueButtons, OPEN_IN_PEPA_LABEL } from "./format";
+import {
+  formatFollowUpDueMessage,
+  formatPlainNotification,
+  followUpDueButtons,
+  OPEN_IN_PEPA_LABEL,
+  toActionNotification,
+} from "./format";
+
+function titleAndBody(notification: { title: string; body: string }): [string, string] {
+  return [notification.title, notification.body];
+}
 
 beforeEach(() => {
   process.env.TELEGRAM_CHAT_ID = "-1001234567890";
@@ -63,6 +73,37 @@ describe("formatFollowUpDueMessage", () => {
     });
     expect(text).toContain("<b>bold</b>");
     expect(text).not.toContain("parse_mode");
+  });
+});
+
+describe("toActionNotification", () => {
+  it("splits the surface into a channel-agnostic title and body", () => {
+    const notification = toActionNotification(details);
+
+    expect(notification.title).toBe("🔥 FOLLOW-UP DUE");
+    expect(notification.body).toContain("The Archive");
+    expect(notification.body).toContain("Follow-up #1");
+  });
+
+  it("renders back to exactly the same message the provider sends today", () => {
+    // The engine and the in-app trigger cannot drift apart.
+    expect(formatPlainNotification(...titleAndBody(toActionNotification(details)))).toBe(
+      formatFollowUpDueMessage(details),
+    );
+  });
+
+  it("carries the deep link as an OPEN IN PEPA action", () => {
+    const notification = toActionNotification(details);
+
+    expect(notification.actionLabel).toBe(OPEN_IN_PEPA_LABEL);
+    expect(notification.actionUrl).toBe(details.deepLink);
+    expect(notification.actionUrl).not.toContain("thearchive");
+  });
+
+  it("never carries subject or body content", () => {
+    const text = JSON.stringify(toActionNotification(details));
+    expect(text).not.toContain("Re: AI reception");
+    expect(text).not.toContain("Dobrý den");
   });
 });
 

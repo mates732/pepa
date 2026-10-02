@@ -28,18 +28,31 @@ function fail(error: string): ServiceResult<never> {
 }
 
 /**
- * Mint a follow-up deep link.
- *
- * The raw token is returned to the caller (to be embedded in a Telegram button)
- * and immediately forgotten; only its digest is stored.
+ * Mint a follow-up deep link on behalf of the operator in the browser.
+ * Requires a PEPA session.
  */
 export async function createFollowUpToken(input: {
   leadId: string;
   outreachId?: string | null;
   ttlMs?: number;
-}): Promise<ServiceResult<{ token: string; expiresAt: string }>> {
+}): Promise<ServiceResult<{ token: string; expiresAt: string; id: string }>> {
   await requireAuthenticatedUser();
+  return mintFollowUpToken(input);
+}
 
+/**
+ * Core minting routine, without a session requirement.
+ *
+ * Server-to-server callers (the follow-up cron) authenticate with their own
+ * credential — Vercel's CRON_SECRET — so they legitimately have no PEPA cookie.
+ * Reaching this function still requires the service-role client, which is only
+ * reachable from `server-only` modules.
+ */
+export async function mintFollowUpToken(input: {
+  leadId: string;
+  outreachId?: string | null;
+  ttlMs?: number;
+}): Promise<ServiceResult<{ token: string; expiresAt: string; id: string }>> {
   if (!input.leadId) return fail("A lead is required to mint a follow-up link.");
 
   const supabase = getSupabaseAdmin();
@@ -55,17 +68,25 @@ export async function createFollowUpToken(input: {
   const ttl = input.ttlMs ?? DEFAULT_ACTION_TOKEN_TTL_MS;
   const expiry = expiresAt(Date.now(), ttl);
 
-  const { error } = await supabase.from("action_tokens").insert({
-    token_hash: hashActionToken(rawToken),
-    purpose: "followup_composer",
-    lead_id: input.leadId,
-    outreach_id: input.outreachId ?? null,
-    expires_at: expiry.toISOString(),
-  });
+  const { data, error } = await supabase
+    .from("action_tokens")
+    .insert({
+      token_hash: hashActionToken(rawToken),
+      purpose: "followup_composer",
+      lead_id: input.leadId,
+      outreach_id: input.outreachId ?? null,
+      expires_at: expiry.toISOString(),
+    })
+    .select("id")
+    .maybeSingle();
 
   if (error) return fail(error.message);
 
-  return { ok: true, error: null, data: { token: rawToken, expiresAt: expiry.toISOString() } };
+  return {
+    ok: true,
+    error: null,
+    data: { token: rawToken, expiresAt: expiry.toISOString(), id: (data as { id: string }).id },
+  };
 }
 
 /**

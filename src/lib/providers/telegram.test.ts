@@ -150,6 +150,56 @@ describe("TelegramProvider", () => {
     ).rejects.toThrow(/not configured/i);
   });
 
+  it("renders an ActionNotification as one inline OPEN IN PEPA button", async () => {
+    const fetchMock = mockFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await new TelegramProvider().sendActionNotification({
+      title: "🔥 FOLLOW-UP DUE",
+      body: "The Archive\n\nFollow-up #1",
+      actionLabel: "OPEN IN PEPA",
+      actionUrl: "https://pepa.example.com/followup/fp1_abc",
+    });
+
+    const request = requests[0];
+    expect(request.body.chat_id).toBe(OWNER_CHAT);
+    expect(String(request.body.text)).toBe("🔥 FOLLOW-UP DUE\n\nThe Archive\n\nFollow-up #1");
+    expect(request.body.reply_markup).toEqual({
+      inline_keyboard: [
+        [{ text: "OPEN IN PEPA", url: "https://pepa.example.com/followup/fp1_abc" }],
+      ],
+    });
+  });
+
+  it("throws when the channel rejects an action notification", async () => {
+    vi.stubGlobal("fetch", mockFetch(false, "Bad Request: chat not found"));
+
+    await expect(
+      new TelegramProvider().sendActionNotification({
+        title: "🔥 FOLLOW-UP DUE",
+        body: "The Archive",
+        actionLabel: "OPEN IN PEPA",
+        actionUrl: "https://pepa.example.com/followup/fp1_abc",
+      }),
+    ).rejects.toThrow(/telegram delivery failed/i);
+  });
+
+  it("refuses to render an action notification when unconfigured", async () => {
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    const fetchMock = mockFetch();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      new TelegramProvider().sendActionNotification({
+        title: "x",
+        body: "y",
+        actionLabel: "OPEN IN PEPA",
+        actionUrl: "https://pepa.example.com/followup/fp1_abc",
+      }),
+    ).rejects.toThrow(/not configured/i);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("implements the generic NotificationService.send contract", async () => {
     const fetchMock = mockFetch();
     vi.stubGlobal("fetch", fetchMock);

@@ -71,10 +71,30 @@ const supabaseMock = {
           Promise.resolve(resolve()).then(resolve_);
         return builder;
       },
-      async insert(payload: Array<Record<string, unknown>> | Record<string, unknown>) {
+      insert(payload: Array<Record<string, unknown>> | Record<string, unknown>) {
         const rows = Array.isArray(payload) ? payload : [payload];
-        if (table === "action_tokens") state.tokens.push(...rows);
-        return { error: null };
+        if (table === "action_tokens") {
+          state.tokens.push(
+            ...rows.map((row) => ({
+              id: `token-${state.tokens.length + rows.length}`,
+              ...row,
+            })),
+          );
+        }
+
+        // PostgREST: insert() is thenable and can chain .select().maybeSingle()
+        // to read the stored row back (the engine needs the token id).
+        const inserted = () =>
+          rows.map((_, index) => ({
+            id: `token-${state.tokens.length - rows.length + index + 1}`,
+          }));
+        const builder: Record<string, unknown> = {
+          select: () => builder,
+          maybeSingle: async () => ({ data: inserted()[0] ?? null, error: null }),
+          then: (resolve_: (value: unknown) => unknown) =>
+            Promise.resolve({ data: inserted(), error: null }).then(resolve_),
+        };
+        return builder;
       },
       update(patch: Record<string, unknown>) {
         // Mirrors the real builder: chainable synchronously, thenable so `await`
@@ -184,6 +204,7 @@ describe("createFollowUpToken", () => {
     expect(JSON.stringify(state.tokens)).not.toContain(raw);
     expect(stored.purpose).toBe("followup_composer");
     expect(Date.parse(String(stored.expires_at))).toBeGreaterThan(Date.now());
+    expect(result.data?.id).toBe(stored.id);
   });
 
   it("refuses to mint for a lead that does not exist", async () => {

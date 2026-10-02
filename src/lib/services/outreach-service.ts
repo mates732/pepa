@@ -129,7 +129,7 @@ export async function listOutreachHistory(
   let query = supabase
     .from("outreach_overview")
     .select(
-      "id, email, company_name, contact_name, status, created_at, updated_at, last_contacted_at, next_followup_at, followup_count, latest_subject, latest_message_status, latest_message_at, message_count",
+      "id, email, company_name, contact_name, status, created_at, updated_at, last_contacted_at, next_followup_at, followup_count, latest_subject, latest_message_status, latest_message_at, message_count, last_followup_notified_number, last_followup_notified_at",
     )
     .order("updated_at", { ascending: false })
     .limit(filters.limit ?? 200);
@@ -161,6 +161,11 @@ export async function listOutreachHistory(
     latestMessageStatus: (row.latest_message_status ?? null) as Lead["status"] | null,
     latestMessageAt: (row.latest_message_at ?? null) as string | null,
     messageCount: Number(row.message_count ?? 0),
+    lastFollowupNotifiedNumber:
+      row.last_followup_notified_number === null || row.last_followup_notified_number === undefined
+        ? null
+        : Number(row.last_followup_notified_number),
+    lastFollowupNotifiedAt: (row.last_followup_notified_at ?? null) as string | null,
   }));
 
   return { ok: true, error: null, data: rows };

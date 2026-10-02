@@ -22,6 +22,7 @@ import type { Lead } from "@/lib/types";
 import {
   followUpDueButtons,
   formatFollowUpDueMessage,
+  formatPlainNotification,
   type FollowUpDueDetails,
 } from "@/lib/telegram/format";
 import {
@@ -30,7 +31,12 @@ import {
   sendTelegramMessage,
   type TelegramApiResult,
 } from "@/lib/telegram/client";
-import type { Notification, NotificationService, SendResult } from "@/lib/providers/types";
+import type {
+  ActionNotification,
+  Notification,
+  NotificationService,
+  SendResult,
+} from "@/lib/providers/types";
 
 export class TelegramProvider implements NotificationService {
   readonly id = "telegram";
@@ -49,7 +55,33 @@ export class TelegramProvider implements NotificationService {
 
   /** Named entry point for the richer message body. */
   async sendNotification(title: string, body: string): Promise<TelegramApiResult> {
-    return sendTelegramMessage({ chatId: normalizeChatId(process.env.TELEGRAM_CHAT_ID), text: `${title}\n\n${body}` });
+    return sendTelegramMessage({
+      chatId: normalizeChatId(process.env.TELEGRAM_CHAT_ID),
+      text: `${title}\n\n${body}`,
+    });
+  }
+
+  /**
+   * Renders an ActionNotification as a single inline URL button.
+   *
+   * This is the shape the follow-up engine uses: the engine mints the deep link,
+   * this provider only renders it, so no Telegram concept leaks upward.
+   */
+  async sendActionNotification(notification: ActionNotification): Promise<void> {
+    const config = getTelegramConfig();
+    if (!config.configured) {
+      throw new Error("Telegram is not configured (TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID).");
+    }
+
+    const result = await sendTelegramMessage({
+      chatId: normalizeChatId(config.chatId),
+      text: formatPlainNotification(notification.title, notification.body),
+      buttons: [[{ text: notification.actionLabel, url: notification.actionUrl }]],
+    });
+
+    if (!result.ok) {
+      throw new Error(`Telegram delivery failed: ${result.description ?? "unknown error"}`);
+    }
   }
 
   /**

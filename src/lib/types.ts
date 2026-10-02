@@ -70,6 +70,9 @@ export interface OutreachHistoryRow extends Lead {
   latestMessageStatus: LeadStatus | null;
   latestMessageAt: string | null;
   messageCount: number;
+  /** Highest follow-up number already notified through a channel, if any. */
+  lastFollowupNotifiedNumber: number | null;
+  lastFollowupNotifiedAt: string | null;
 }
 
 export interface ServiceResult<T> {

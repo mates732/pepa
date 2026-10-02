@@ -57,9 +57,23 @@ export interface Notification {
   body: string;
 }
 
-/** Telegram (V2). Operator-facing nudges such as "3 follow-ups are due today." */
+/**
+ * A notification that carries a single call to action.
+ *
+ * Deliberately channel-agnostic: Telegram renders `actionUrl` as an inline button,
+ * email would render a link, push would deep-link. The caller (the follow-up
+ * engine) owns the URL, which is always an opaque PEPA deep link — no channel
+ * ever receives outreach content or a lead id.
+ */
+export interface ActionNotification extends Notification {
+  actionLabel: string;
+  actionUrl: string;
+}
+
 export interface NotificationService {
   readonly id: string;
   isConfigured(): boolean;
   send(notification: Notification): Promise<void>;
+  /** Optional: providers that cannot render an action button may omit it. */
+  sendActionNotification?(notification: ActionNotification): Promise<void>;
 }

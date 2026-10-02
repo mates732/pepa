@@ -1,5 +1,6 @@
 "use client";
 
+import { FollowUpState } from "@/components/follow-up-state";
 import { StatusBadge } from "@/components/status-badge";
 import { formatDate, formatDateTime } from "@/lib/format";
 import type { OutreachHistoryRow } from "@/lib/types";
@@ -23,13 +24,14 @@ export function OutreachHistory({ rows, onLoadIntoComposer }: OutreachHistoryPro
         </p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px] border-collapse text-sm">
+          <table className="w-full min-w-[1000px] border-collapse text-sm">
             <thead>
               <tr className="border-b border-neutral-100 text-left text-[11px] uppercase tracking-wide text-neutral-500">
                 <th className="px-4 py-2 font-medium">Company / recipient</th>
                 <th className="px-4 py-2 font-medium">Email</th>
                 <th className="px-4 py-2 font-medium">Subject</th>
                 <th className="px-4 py-2 font-medium">Status</th>
+                <th className="px-4 py-2 font-medium">Follow-up</th>
                 <th className="px-4 py-2 font-medium">Last contacted</th>
                 <th className="px-4 py-2 text-right font-medium">Follow-ups</th>
                 <th className="px-4 py-2 font-medium">Created</th>
@@ -62,6 +64,9 @@ export function OutreachHistory({ rows, onLoadIntoComposer }: OutreachHistoryPro
                   </td>
                   <td className="px-4 py-2">
                     <StatusBadge status={row.status} />
+                  </td>
+                  <td className="px-4 py-2">
+                    <FollowUpState row={row} />
                   </td>
                   <td className="px-4 py-2 text-xs whitespace-nowrap text-neutral-600">
                     {formatDateTime(row.last_contacted_at)}
