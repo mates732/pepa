@@ -16,7 +16,7 @@ export function LoginForm({ next, disabled }: LoginFormProps) {
   const [state, formAction, pending] = useActionState(login, INITIAL);
 
   return (
-    <form action={formAction} className="mt-6 space-y-3">
+    <form action={formAction} className="mt-7 space-y-4">
       <input type="hidden" name="next" value={next} />
 
       <label className="block">
@@ -29,23 +29,20 @@ export function LoginForm({ next, disabled }: LoginFormProps) {
           autoComplete="current-password"
           disabled={disabled || pending}
           placeholder="Password"
-          className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900 disabled:opacity-60"
+          className="field text-center tracking-[0.3em]"
         />
       </label>
 
       <button
         type="submit"
         disabled={disabled || pending}
-        className="w-full rounded-md bg-neutral-900 px-3 py-2 text-sm font-semibold uppercase tracking-wide text-white transition-colors hover:bg-neutral-700 disabled:opacity-50"
+        className="btn btn-primary btn-lg w-full"
       >
         {disabled ? "Not configured" : pending ? "Verifying…" : "Enter PEPA"}
       </button>
 
       {state.error ? (
-        <p
-          role="alert"
-          className="rounded-md border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-900"
-        >
+        <p role="alert" className="notice notice-alarm">
           {state.error}
         </p>
       ) : null}

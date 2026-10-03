@@ -25,24 +25,35 @@ export default async function LoginPage({
 
   return (
     <main className="flex min-h-full items-center justify-center px-4 py-16">
-      <div className="w-full max-w-sm rounded-lg border border-neutral-200 bg-white p-6 shadow-sm">
-        <h1 className="text-center text-lg font-semibold tracking-[0.2em] text-neutral-900 uppercase">
-          PEPA the Outman
-        </h1>
-        <p className="mt-1 text-center text-xs uppercase tracking-widest text-neutral-500">
-          Internal Outreach System
-        </p>
+      <div className="w-full max-w-sm">
+        <div className="tilt mb-3 flex justify-center">
+          <div
+            aria-hidden
+            className="grid h-16 w-16 place-items-center rounded-[1.4rem] border-[3px] border-midnight bg-midnight text-2xl font-black text-cream shadow-[5px_5px_0_0_var(--color-midnight)]"
+          >
+            P
+          </div>
+        </div>
 
-        <LoginForm next={safeRedirectPath(requested)} disabled={!status.configured} />
-
-        {status.configured ? null : (
-          <p className="mt-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            Server is not configured. Set{" "}
-            <code className="font-mono">PEPA_PASSWORD</code> and{" "}
-            <code className="font-mono">PEPA_SESSION_SECRET</code> (32+ characters). See{" "}
-            <code className="font-mono">.env.example</code>.
+        <div className="sticker p-7">
+          <h1 className="heading-sticker text-center text-2xl text-midnight">
+            PEPA the Outman
+          </h1>
+          <p className="mt-1 text-center text-[11px] font-bold uppercase tracking-[0.22em] text-midnight-soft">
+            Internal Outreach System
           </p>
-        )}
+
+          <LoginForm next={safeRedirectPath(requested)} disabled={!status.configured} />
+
+          {status.configured ? null : (
+            <p className="notice notice-alarm mt-5">
+              Server is not configured. Set{" "}
+              <code className="font-mono">PEPA_PASSWORD</code> and{" "}
+              <code className="font-mono">PEPA_SESSION_SECRET</code> (32+ characters).
+              See <code className="font-mono">.env.example</code>.
+            </p>
+          )}
+        </div>
       </div>
     </main>
   );

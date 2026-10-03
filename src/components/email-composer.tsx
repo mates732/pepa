@@ -31,18 +31,14 @@ export function EmailComposer(props: EmailComposerProps) {
   const { values, onChange } = props;
 
   return (
-    <section className="rounded-lg border border-neutral-200 bg-white shadow-sm">
-      <header className="flex items-baseline justify-between border-b border-neutral-100 px-4 py-3">
-        <h2 className="text-sm font-semibold text-neutral-900">2 · Email composer</h2>
-        <span className="text-xs text-neutral-500">
-          <kbd className="rounded border border-neutral-300 bg-neutral-50 px-1.5 py-0.5 font-sans text-[11px]">
-            ⌘
-          </kbd>
-          <span className="mx-0.5">+</span>
-          <kbd className="rounded border border-neutral-300 bg-neutral-50 px-1.5 py-0.5 font-sans text-[11px]">
-            S
-          </kbd>{" "}
-          to save draft
+    <section className="sticker">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
+        <h2 className="heading-sticker text-base text-midnight">
+          <span className="chip chip-solid mr-2 align-middle">2</span>
+          Email composer
+        </h2>
+        <span className="text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
+          ⌘ + S to save draft
         </span>
       </header>
 
@@ -54,7 +50,7 @@ export function EmailComposer(props: EmailComposerProps) {
         />
 
         <label className="block">
-          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-neutral-500">
+          <span className="field-label">
             Recipient
           </span>
           <input
@@ -63,12 +59,12 @@ export function EmailComposer(props: EmailComposerProps) {
             onChange={(event) => onChange({ recipient: event.target.value })}
             spellCheck={false}
             placeholder="info@example.com"
-            className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900"
+            className="field"
           />
         </label>
 
         <label className="block">
-          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-neutral-500">
+          <span className="field-label">
             Subject
           </span>
           <input
@@ -76,12 +72,12 @@ export function EmailComposer(props: EmailComposerProps) {
             value={values.subject}
             onChange={(event) => onChange({ subject: event.target.value })}
             placeholder="AI recepce pro Example"
-            className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900"
+            className="field"
           />
         </label>
 
         <label className="block">
-          <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-neutral-500">
+          <span className="field-label">
             Body
           </span>
           <textarea
@@ -89,12 +85,12 @@ export function EmailComposer(props: EmailComposerProps) {
             onChange={(event) => onChange({ body: event.target.value })}
             rows={14}
             spellCheck={false}
-            className="w-full resize-y rounded-md border border-neutral-300 p-3 text-sm leading-relaxed text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900"
+            className="field resize-y leading-relaxed"
           />
         </label>
 
-        <details className="rounded-md border border-dashed border-neutral-300 px-3 py-2">
-          <summary className="cursor-pointer text-xs font-medium uppercase tracking-wide text-neutral-500">
+        <details className="rounded-[1.25rem] border-[3px] border-dashed border-midnight-line px-4 py-3">
+          <summary className="cursor-pointer text-xs font-bold uppercase tracking-widest text-midnight-soft">
             Lead details (optional)
           </summary>
           <div className="mt-2 grid gap-3 sm:grid-cols-2">
@@ -103,36 +99,32 @@ export function EmailComposer(props: EmailComposerProps) {
               value={values.companyName}
               onChange={(event) => onChange({ companyName: event.target.value })}
               placeholder="Company name"
-              className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900"
+              className="field"
             />
             <input
               type="text"
               value={values.contactName}
               onChange={(event) => onChange({ contactName: event.target.value })}
               placeholder="Contact name"
-              className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm outline-none placeholder:text-neutral-400 focus:border-neutral-900 focus:ring-1 focus:ring-neutral-900"
+              className="field"
             />
           </div>
         </details>
 
         {props.notice && (
           <p
-            className={`rounded-md border px-3 py-2 text-sm ${
-              props.notice.kind === "error"
-                ? "border-red-300 bg-red-50 text-red-900"
-                : "border-emerald-300 bg-emerald-50 text-emerald-900"
-            }`}
+            className={props.notice.kind === "error" ? "notice notice-alarm" : "notice"}
           >
             {props.notice.text}
           </p>
         )}
 
-        <div className="flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-3">
+        <div className="flex flex-wrap items-center gap-2 border-t-[3px] border-dashed border-midnight-line pt-5">
           <button
             type="button"
             onClick={props.onSave}
             disabled={props.saving}
-            className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-neutral-700 disabled:opacity-50"
+            className="btn btn-primary"
           >
             {props.saving ? "Saving…" : props.savingDone ? "Draft saved" : "Save draft"}
           </button>
@@ -142,7 +134,7 @@ export function EmailComposer(props: EmailComposerProps) {
             onClick={props.onSend}
             disabled={props.saving}
             title={NOT_CONFIGURED_MESSAGE}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50 disabled:opacity-50"
+            className="btn"
           >
             Send
           </button>
@@ -150,7 +142,7 @@ export function EmailComposer(props: EmailComposerProps) {
           <button
             type="button"
             onClick={props.onClear}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
+            className="rounded-md border border-midnight-line px-3 py-1.5 text-sm font-medium text-midnight transition-colors hover:bg-midnight-faint/40"
           >
             Clear
           </button>

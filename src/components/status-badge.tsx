@@ -1,20 +1,31 @@
 import type { LeadStatus } from "@/lib/types";
 
+/**
+ * Two-colour palette only: every status is a midnight blue at a different
+ * strength, so severity is read from density rather than from hue.
+ * draft → blocked goes lightest to solid.
+ */
 const STYLES: Record<LeadStatus, string> = {
-  draft: "bg-slate-100 text-slate-700 ring-slate-300",
-  ready: "bg-sky-50 text-sky-800 ring-sky-300",
-  sent: "bg-emerald-50 text-emerald-800 ring-emerald-300",
-  replied: "bg-violet-50 text-violet-800 ring-violet-300",
-  follow_up: "bg-amber-50 text-amber-900 ring-amber-300",
-  completed: "bg-neutral-200 text-neutral-700 ring-neutral-400",
-  blocked: "bg-red-50 text-red-800 ring-red-300",
+  draft: "bg-paper text-midnight-soft border-midnight-line border-dashed",
+  ready: "bg-midnight-faint text-midnight border-midnight",
+  sent: "bg-midnight/20 text-midnight border-midnight",
+  replied: "bg-midnight/40 text-midnight border-midnight font-black",
+  follow_up: "bg-midnight/65 text-cream border-midnight",
+  completed: "bg-midnight/85 text-cream border-midnight",
+  blocked: "bg-midnight text-cream border-midnight",
 };
 
 export function StatusBadge({ status }: { status: LeadStatus | null }) {
-  if (!status) return <span className="text-neutral-400">—</span>;
+  if (!status) {
+    return (
+      <span className="inline-flex rounded-full border-2 border-dashed border-midnight-line px-2 py-0.5 text-[11px] text-midnight-soft">
+        —
+      </span>
+    );
+  }
   return (
     <span
-      className={`inline-flex items-center rounded px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide ring-1 ring-inset ${STYLES[status] ?? STYLES.draft}`}
+      className={`inline-flex items-center rounded-full border-2 px-2.5 py-0.5 text-[11px] uppercase tracking-wider ${STYLES[status] ?? STYLES.draft}`}
     >
       {status.replace("_", " ")}
     </span>

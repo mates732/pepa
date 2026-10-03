@@ -13,11 +13,11 @@ export function FollowUpState({ row }: { row: OutreachHistoryRow }) {
   const attempt = row.followup_count + 1;
 
   if (row.followup_count >= MAX_FOLLOW_UPS) {
-    return <span className="text-xs text-neutral-500">Follow-up #{MAX_FOLLOW_UPS} done</span>;
+    return <span className="text-xs text-midnight-soft">Follow-up #{MAX_FOLLOW_UPS} done</span>;
   }
 
   if (!row.next_followup_at) {
-    return <span className="text-xs text-neutral-400">No follow-up scheduled</span>;
+    return <span className="text-xs text-midnight-soft/70">No follow-up scheduled</span>;
   }
 
   const notified =
@@ -26,15 +26,15 @@ export function FollowUpState({ row }: { row: OutreachHistoryRow }) {
 
   return (
     <div className="text-xs leading-snug">
-      <div className="whitespace-nowrap text-neutral-700">
+      <div className="whitespace-nowrap font-semibold text-midnight">
         Follow-up #{attempt} · due {formatDate(row.next_followup_at)}
       </div>
       {notified && row.lastFollowupNotifiedAt ? (
-        <div className="text-emerald-700">
+        <div className="inline-flex items-center gap-1 rounded-full border-2 border-midnight bg-midnight px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cream">
           Telegram notified {formatDateTime(row.lastFollowupNotifiedAt)}
         </div>
       ) : (
-        <div className="text-neutral-400">Telegram not notified</div>
+        <div className="text-midnight-soft/70">Telegram not notified</div>
       )}
     </div>
   );

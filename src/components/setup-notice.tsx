@@ -9,20 +9,20 @@ export function SetupNotice({
 }) {
   return (
     <main className="mx-auto w-full max-w-3xl px-4 py-16">
-      <h1 className="text-xl font-semibold tracking-tight text-neutral-900">
+      <h1 className="text-xl font-semibold tracking-tight text-midnight">
         Outreach Tool
       </h1>
 
-      <div className="mt-6 rounded-lg border border-amber-300 bg-amber-50 p-4">
-        <p className="text-sm font-semibold text-amber-900">Setup required</p>
+      <div className="mt-6 rounded-[var(--radius-blob)] border-[3px] border-midnight bg-midnight-faint p-5 shadow-[5px_5px_0_0_var(--color-midnight)]">
+        <p className="text-sm font-black uppercase tracking-wide text-midnight">Setup required</p>
 
         {missing.length > 0 ? (
           <>
-            <p className="mt-2 text-sm text-amber-900">
+            <p className="mt-2 text-sm text-midnight">
               These environment variables are not set. Copy <code>.env.example</code> to{" "}
               <code>.env.local</code> and fill in your project values.
             </p>
-            <ul className="mt-2 list-inside list-disc font-mono text-sm text-amber-900">
+            <ul className="mt-2 list-inside list-disc font-mono text-sm text-midnight">
               {missing.map((name) => (
                 <li key={name}>{name}</li>
               ))}
@@ -32,11 +32,11 @@ export function SetupNotice({
 
         {detail ? (
           <div className="mt-3">
-            <p className="text-sm text-amber-900">{detail}</p>
-            {hint ? <p className="mt-1 text-sm text-amber-900">{hint}</p> : null}
-            <p className="mt-2 text-sm text-amber-900">
+            <p className="text-sm text-midnight">{detail}</p>
+            {hint ? <p className="mt-1 text-sm text-midnight">{hint}</p> : null}
+            <p className="mt-2 text-sm text-midnight">
               Apply the schema first:{" "}
-              <code className="rounded bg-amber-100 px-1 py-0.5 font-mono text-[13px]">
+              <code className="rounded-md border-2 border-midnight bg-paper px-1.5 py-0.5 font-mono text-[13px]">
                 supabase db push
               </code>{" "}
               (or paste{" "}
@@ -49,7 +49,7 @@ export function SetupNotice({
         ) : null}
       </div>
 
-      <p className="mt-4 text-sm text-neutral-500">
+      <p className="mt-4 text-sm text-midnight-soft">
         The paste/import and composer still work once Supabase is configured. No
         Gmail, Apple Mail or Telegram integration exists yet — those land in V2.
       </p>

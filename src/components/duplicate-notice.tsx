@@ -3,10 +3,11 @@
 import { daysAgo, DUPLICATE_LABEL, formatDateTime } from "@/lib/format";
 import type { DuplicateCheckResult } from "@/lib/types";
 
+/** Monochrome: severity by ink density, new → contacted goes light to solid. */
 const TONE: Record<string, string> = {
-  new: "border-emerald-300 bg-emerald-50 text-emerald-900",
-  existing: "border-sky-300 bg-sky-50 text-sky-900",
-  contacted: "border-red-400 bg-red-50 text-red-900",
+  new: "border-midnight bg-midnight-faint text-midnight",
+  existing: "border-midnight bg-midnight/15 text-midnight",
+  contacted: "border-midnight bg-midnight text-cream",
 };
 
 interface DuplicateNoticeProps {
@@ -18,7 +19,7 @@ interface DuplicateNoticeProps {
 export function DuplicateNotice({ result, pending, error }: DuplicateNoticeProps) {
   if (error) {
     return (
-      <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+      <div className="notice notice-alarm">
         {error}
       </div>
     );
@@ -26,7 +27,7 @@ export function DuplicateNotice({ result, pending, error }: DuplicateNoticeProps
 
   if (pending) {
     return (
-      <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-500">
+      <div className="notice opacity-70">
         Checking Supabase for duplicates…
       </div>
     );
@@ -38,10 +39,16 @@ export function DuplicateNotice({ result, pending, error }: DuplicateNoticeProps
   const ago = daysAgo(lastContactedAt);
 
   return (
-    <div className={`rounded-md border px-3 py-2 ${TONE[state]}`}>
+    <div
+      className={`rounded-[1.25rem] border-[3px] px-4 py-3 shadow-[3px_3px_0_0_var(--color-midnight)] ${TONE[state]}`}
+    >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="text-sm font-bold tracking-wide">{DUPLICATE_LABEL[state]}</span>
-        <span className="font-mono text-xs break-all">{result.normalizedEmail}</span>
+        <span className="text-sm font-black uppercase tracking-wide">
+          {DUPLICATE_LABEL[state]}
+        </span>
+        <span className="font-mono text-xs break-all opacity-80">
+          {result.normalizedEmail}
+        </span>
         {lead?.company_name ? (
           <span className="text-xs opacity-80">{lead.company_name}</span>
         ) : null}

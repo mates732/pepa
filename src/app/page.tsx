@@ -46,25 +46,30 @@ export default async function Page() {
   const showDevTools = await devToolsEnabled();
 
   return (
-    <main className="mx-auto w-full max-w-6xl px-4 py-8">
-      <header className="mb-6 flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight text-neutral-900">
-            PEPA · Outreach Tool
-          </h1>
-          <p className="mt-1 text-sm text-neutral-500">
-            Paste → Parse → Check duplicate → Review → Save/Send
-          </p>
+    <main className="mx-auto w-full max-w-6xl px-4 pb-16 pt-8 sm:px-6">
+      <header className="mb-8 flex flex-wrap items-start justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div
+            aria-hidden
+            className="tilt grid h-12 w-12 shrink-0 place-items-center rounded-[1.1rem] border-[3px] border-midnight bg-midnight text-lg font-black text-cream shadow-[4px_4px_0_0_var(--color-midnight)]"
+          >
+            P
+          </div>
+          <div>
+            <h1 className="heading-sticker text-2xl text-midnight">
+              PEPA the Outman
+            </h1>
+            <p className="mt-0.5 text-xs font-bold uppercase tracking-[0.18em] text-midnight-soft">
+              Paste · Parse · Check · Review
+            </p>
+          </div>
         </div>
 
         {/* A form (not fetch) so the HttpOnly cookie is cleared by the server. */}
         <div className="flex items-start gap-2">
           {showDevTools ? <TelegramTestButton /> : null}
           <form action={logout}>
-            <button
-              type="submit"
-              className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
-            >
+            <button type="submit" className="btn btn-sm">
               Sign out
             </button>
           </form>

@@ -28,7 +28,7 @@ export function TelegramTestButton() {
             );
           })
         }
-        className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50 disabled:opacity-50"
+        className="btn"
       >
         {pending ? "Sending…" : "Test Telegram"}
       </button>
@@ -36,7 +36,7 @@ export function TelegramTestButton() {
         <p
           role="status"
           className={`max-w-[280px] text-right text-[11px] ${
-            result.kind === "ok" ? "text-emerald-700" : "text-red-700"
+            result.kind === "ok" ? "text-midnight" : "text-midnight"
           }`}
         >
           {result.text}

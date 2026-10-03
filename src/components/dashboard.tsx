@@ -168,7 +168,7 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
   }, []);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-7">
       <PasteImport
         onParsed={handleParsed}
         onError={(message) => {

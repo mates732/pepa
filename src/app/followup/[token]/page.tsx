@@ -41,33 +41,33 @@ export default async function FollowUpPage({ params }: PageProps<"/followup/[tok
   const deepLink = await buildDeepLink(token);
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 py-8">
+    <main className="mx-auto w-full max-w-3xl px-4 pb-16 pt-10">
       <header className="mb-6">
-        <h1 className="text-center text-sm font-semibold tracking-[0.2em] text-neutral-900 uppercase">
+        <h1 className="heading-sticker text-center text-xl text-midnight">
           PEPA the Outman
         </h1>
-        <p className="mt-1 text-center text-xs uppercase tracking-widest text-neutral-500">
+        <p className="mt-1 text-center text-[11px] font-bold uppercase tracking-[0.22em] text-midnight-soft">
           Follow-up #{attempt}
         </p>
       </header>
 
-      <section className="rounded-lg border border-neutral-200 bg-white shadow-sm">
-        <div className="space-y-1 border-b border-neutral-100 px-4 py-3">
-          <h2 className="text-base font-semibold text-neutral-900">
+      <section className="sticker">
+        <div className="space-y-1 border-b-[3px] border-midnight px-5 py-4">
+          <h2 className="heading-sticker text-lg text-midnight">
             {lead.company_name || lead.contact_name || lead.email}
           </h2>
-          <p className="font-mono text-xs break-all text-neutral-600">{lead.email}</p>
-          <p className="pt-1 text-xs text-neutral-500">
+          <p className="font-mono text-xs break-all text-midnight-soft">{lead.email}</p>
+          <p className="pt-1 text-xs text-midnight-soft">
             Last contact: {formatDateTime(lead.last_contacted_at)}
             {since !== null ? ` (${since} day${since === 1 ? "" : "s"} ago)` : ""}
           </p>
-          <p className="text-xs text-neutral-500">
+          <p className="text-xs text-midnight-soft">
             Previous outreach messages: {lead.followup_count} · deep link valid until{" "}
             {formatDateTime(resolved.data.expiresAt)}
           </p>
         </div>
 
-        <div className="p-4">
+        <div className="p-5">
           <FollowUpEditor
             token={token}
             recipient={lead.email}
@@ -76,13 +76,13 @@ export default async function FollowUpPage({ params }: PageProps<"/followup/[tok
             savedMessageId={outreach?.id ?? null}
           />
 
-          <div className="mt-4 rounded-md border border-dashed border-neutral-300 px-3 py-2 text-xs text-neutral-500">
+          <div className="notice mt-5 text-xs opacity-80">
             Sending is not wired up yet — the EmailProvider implementation lands in a later
             phase. Use <span className="font-medium">Save</span> to keep this draft, then
             review it in the dashboard.
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-neutral-500">
+          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-midnight-soft">
             <span>
               Deep link:{" "}
               <span className="font-mono break-all">{deepLink}</span>

@@ -37,22 +37,18 @@ export function PasteImport({ onParsed, onError, focusSignal, disabled }: PasteI
   }
 
   return (
-    <section className="rounded-lg border border-neutral-200 bg-white shadow-sm">
-      <header className="flex items-baseline justify-between border-b border-neutral-100 px-4 py-3">
-        <h2 className="text-sm font-semibold text-neutral-900">1 · Paste / Import</h2>
-        <span className="text-xs text-neutral-500">
-          <kbd className="rounded border border-neutral-300 bg-neutral-50 px-1.5 py-0.5 font-sans text-[11px]">
-            ⌘
-          </kbd>
-          <span className="mx-0.5">+</span>
-          <kbd className="rounded border border-neutral-300 bg-neutral-50 px-1.5 py-0.5 font-sans text-[11px]">
-            ↵
-          </kbd>{" "}
-          to parse
+    <section className="sticker">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
+        <h2 className="heading-sticker text-base text-midnight">
+          <span className="chip chip-solid mr-2 align-middle">1</span>
+          Paste / Import
+        </h2>
+        <span className="text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
+          ⌘ + ↵ to parse
         </span>
       </header>
 
-      <div className="p-4">
+      <div className="p-5">
         <textarea
           ref={textareaRef}
           value={value}
@@ -64,28 +60,19 @@ export function PasteImport({ onParsed, onError, focusSignal, disabled }: PasteI
             }
           }}
           disabled={disabled}
-          rows={12}
+          rows={11}
           spellCheck={false}
           placeholder={
             "recipient: info@example.com\nsubject: AI recepce pro Example\nbody: Dobrý den,\n\nchtěl jsem Vám ukázat..."
           }
-          className="w-full resize-y rounded-md border border-neutral-300 bg-neutral-50 p-3 font-mono text-[13px] leading-relaxed text-neutral-900 outline-none placeholder:text-neutral-400 focus:border-neutral-900 focus:bg-white focus:ring-1 focus:ring-neutral-900 disabled:opacity-60"
+          className="field resize-y font-mono text-[13px] leading-relaxed"
         />
 
-        <div className="mt-3 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleParse}
-            disabled={disabled}
-            className="rounded-md bg-neutral-900 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-neutral-700 disabled:opacity-50"
-          >
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button type="button" onClick={handleParse} disabled={disabled} className="btn btn-primary">
             Parse &amp; check duplicates
           </button>
-          <button
-            type="button"
-            onClick={() => setValue("")}
-            className="rounded-md border border-neutral-300 px-3 py-1.5 text-sm font-medium text-neutral-700 transition-colors hover:bg-neutral-50"
-          >
+          <button type="button" onClick={() => setValue("")} className="btn">
             Clear paste
           </button>
         </div>
