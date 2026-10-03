@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { checkRecipient, recordOutreachSent, saveDraft } from "@/app/actions";
+import { checkQualityGate, checkRecipient, recordOutreachSent, saveDraft } from "@/app/actions";
 import { EmailComposer, type ComposerValues } from "@/components/email-composer";
 import { OutreachHistory } from "@/components/outreach-history";
 import { PasteImport } from "@/components/paste-import";
 import { formatDate, formatDateTime } from "@/lib/format";
+import type { GateEvaluation } from "@/lib/services/outreach-quality-gate";
 import type { DuplicateCheckResult, OutreachHistoryRow, ParsedOutreachInput } from "@/lib/types";
 
 const EMPTY: ComposerValues = {
@@ -29,6 +30,10 @@ const EMPTY: ComposerValues = {
 const SENT_CONFIRMATION =
   "PEPA does not send this email. Confirm only after you have sent it through your email provider.";
 
+/** Second gate, shown only when the quality gate raised warnings. */
+const WARNING_CONFIRMATION =
+  "The quality gate raised warnings. Record it as sent anyway only if you have checked them yourself.";
+
 interface Notice {
   kind: "info" | "error";
   text: string;
@@ -44,6 +49,11 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [focusSignal, setFocusSignal] = useState(0);
+  const [gate, setGate] = useState<GateEvaluation | null>(null);
+  const [gatePending, setGatePending] = useState(false);
+  // Set once the operator has answered the warning confirmation, so the retry
+  // is an explicit decision rather than a silent override.
+  const [warningsConfirmed, setWarningsConfirmed] = useState(false);
 
   const valuesRef = useRef(values);
   useEffect(() => {
@@ -71,6 +81,27 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
     }
   }, []);
 
+  const runGateCheck = useCallback(async () => {
+    setGatePending(true);
+    try {
+      const result = await checkQualityGate({
+        recipient: valuesRef.current.recipient,
+        subject: valuesRef.current.subject,
+        body: valuesRef.current.body,
+        messageId: valuesRef.current.messageId,
+        leadId: valuesRef.current.leadId,
+      });
+      // A failed evaluation must not leave a stale verdict on screen.
+      if (result.ok) {
+        setGate(result.gate);
+      } else {
+        setGate(null);
+      }
+    } finally {
+      setGatePending(false);
+    }
+  }, []);
+
   // Re-check whenever the operator edits the recipient, so the warning can
   // never drift from what is stored in Postgres.
   useEffect(() => {
@@ -78,6 +109,22 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
     const handle = setTimeout(() => void runDuplicateCheck(values.recipient), 400);
     return () => clearTimeout(handle);
   }, [values.recipient, hasContent, runDuplicateCheck]);
+
+  // The gate depends on subject and body too, so it gets its own debounce.
+  // Advisory only: the server re-runs every check at the moment of the send.
+  useEffect(() => {
+    if (!hasContent) return;
+    const handle = setTimeout(() => void runGateCheck(), 500);
+    return () => clearTimeout(handle);
+  }, [
+    values.recipient,
+    values.subject,
+    values.body,
+    values.messageId,
+    values.leadId,
+    hasContent,
+    runGateCheck,
+  ]);
 
   function handleParsed(parsed: ParsedOutreachInput) {
     setValues((current) => ({
@@ -102,6 +149,8 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
     setDuplicateError(null);
     setNotice(null);
     setSaved(false);
+    setGate(null);
+    setWarningsConfirmed(false);
     setFocusSignal((n) => n + 1);
   }
 
@@ -155,6 +204,13 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
       return;
     }
 
+    // A warning the operator has already reviewed does not ask twice; one they
+    // have not gets its own explicit confirmation before anything is recorded.
+    if (!warningsConfirmed && gate?.status === "warning") {
+      if (!window.confirm(WARNING_CONFIRMATION)) return;
+      setWarningsConfirmed(true);
+    }
+
     if (!window.confirm(SENT_CONFIRMATION)) return;
 
     setSaving(true);
@@ -163,10 +219,23 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
       const result = await recordOutreachSent({
         messageId: values.messageId,
         leadId: values.leadId,
+        confirmWarnings: warningsConfirmed,
       });
 
       if (!result.ok) {
-        setNotice({ kind: "error", text: result.error });
+        // The server is authoritative: it re-runs the gate and can refuse even
+        // when the composer looked acceptable.
+        // ActionFailure has no `outcome` and no `gate`; a generic failure is
+        // just an error string.
+        const refusal = "outcome" in result ? result : null;
+        if (refusal?.gate) setGate(refusal.gate);
+        setNotice({
+          kind: "error",
+          text:
+            refusal?.outcome === "needs_confirmation"
+              ? `${result.error} Confirm the warnings to continue.`
+              : result.error,
+        });
         return;
       }
 
@@ -259,6 +328,8 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
           onChange={(patch) => {
             setValues((current) => ({ ...current, ...patch }));
             setSaved(false);
+            // New text invalidates an earlier "yes I checked that" answer.
+            setWarningsConfirmed(false);
           }}
           duplicate={duplicate}
           duplicatePending={duplicatePending}
@@ -269,6 +340,9 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
           onSend={handleSend}
           saving={saving}
           savingDone={saved}
+          gate={gate}
+          gatePending={gatePending}
+          warningsConfirmed={warningsConfirmed}
         />
       ) : null}
 

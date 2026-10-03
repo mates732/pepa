@@ -161,6 +161,34 @@ describe("saveDraft (privileged server action)", () => {
   });
 });
 
+const READY_GATE = {
+  status: "ready" as const,
+  checks: [{ name: "identity", status: "pass" as const, reason: "New lead." }],
+  reasons: [],
+  leadId: LEAD.id,
+  normalizedRecipient: "info@example.com",
+  blocked: false,
+  hasWarnings: false,
+};
+
+function gateEvaluation(status: "ready" | "warning" | "blocked") {
+  return {
+    status,
+    checks: [
+      {
+        name: "identity",
+        status: status === "ready" ? ("pass" as const) : status === "warning" ? ("warn" as const) : ("block" as const),
+        reason: "fixture",
+      },
+    ],
+    reasons: status === "ready" ? [] : ["fixture reason"],
+    leadId: LEAD.id,
+    normalizedRecipient: "info@example.com",
+    blocked: status === "blocked",
+    hasWarnings: status === "warning",
+  };
+}
+
 describe("recordOutreachSent (privileged server action)", () => {
   const MESSAGE_ID = "22222222-2222-2222-2222-222222222222";
 
@@ -181,7 +209,12 @@ describe("recordOutreachSent (privileged server action)", () => {
     mocks.recordOutreachSent.mockResolvedValue({
       ok: true,
       error: null,
-      data: { outcome: "recorded", message: sentMessage, nextFollowUpAt: "2026-03-05T10:00:00.000Z" },
+      data: {
+        outcome: "recorded",
+        message: sentMessage,
+        nextFollowUpAt: "2026-03-05T10:00:00.000Z",
+        gate: READY_GATE,
+      },
     });
   });
 
@@ -215,7 +248,11 @@ describe("recordOutreachSent (privileged server action)", () => {
     const result = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD.id });
 
     expect(result).toMatchObject({ ok: true, outcome: "recorded", nextFollowUpAt: "2026-03-05T10:00:00.000Z" });
-    expect(mocks.recordOutreachSent).toHaveBeenCalledWith({ messageId: MESSAGE_ID, leadId: LEAD.id });
+    expect(mocks.recordOutreachSent).toHaveBeenCalledWith({
+      messageId: MESSAGE_ID,
+      leadId: LEAD.id,
+      confirmWarnings: false,
+    });
     expect(mocks.revalidatePath).toHaveBeenCalledWith("/");
   });
 
@@ -223,7 +260,7 @@ describe("recordOutreachSent (privileged server action)", () => {
     mocks.recordOutreachSent.mockResolvedValueOnce({
       ok: true,
       error: null,
-      data: { outcome: "already_sent", message: sentMessage, nextFollowUpAt: "2026-03-05T10:00:00.000Z" },
+      data: { outcome: "already_sent", message: sentMessage, nextFollowUpAt: null, gate: READY_GATE },
     });
     cookieStore.set(SESSION_COOKIE, createSessionToken());
     const { recordOutreachSent } = await loadActions();
@@ -259,5 +296,81 @@ describe("recordOutreachSent (privileged server action)", () => {
     await expect(
       recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD.id }),
     ).resolves.toMatchObject({ ok: false, error: "connection reset" });
+  });
+});
+
+describe("recordOutreachSent — quality gate enforcement", () => {
+  const MESSAGE_ID = "22222222-2222-2222-2222-222222222222";
+  const sentMessage = { id: MESSAGE_ID, lead_id: LEAD.id, status: "sent" as const };
+
+  beforeEach(() => {
+    cookieStore.set(SESSION_COOKIE, createSessionToken());
+    mocks.recordOutreachSent.mockReset();
+    mocks.revalidatePath.mockReset();
+  });
+
+  it("26. a blocked gate prevents the send and never revalidates", async () => {
+    mocks.recordOutreachSent.mockResolvedValueOnce({
+      ok: true,
+      error: null,
+      data: { outcome: "blocked", gate: gateEvaluation("blocked"), error: "Blocked by the quality gate: inside cooldown." },
+    });
+    const { recordOutreachSent } = await loadActions();
+
+    const result = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD.id });
+
+    expect(result).toMatchObject({ ok: false, outcome: "blocked", requiresConfirmation: false });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("27. a warning stops the first attempt and asks for confirmation", async () => {
+    mocks.recordOutreachSent.mockResolvedValueOnce({
+      ok: true,
+      error: null,
+      data: { outcome: "needs_confirmation", gate: gateEvaluation("warning"), error: "warnings to review" },
+    });
+    const { recordOutreachSent } = await loadActions();
+
+    const result = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD.id });
+
+    expect(result).toMatchObject({ ok: false, outcome: "needs_confirmation", requiresConfirmation: true });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+    expect(mocks.recordOutreachSent).toHaveBeenCalledWith(expect.objectContaining({ confirmWarnings: false }));
+  });
+
+  it("27b. the confirmed retry forwards confirmWarnings and succeeds", async () => {
+    mocks.recordOutreachSent.mockResolvedValueOnce({
+      ok: true,
+      error: null,
+      data: {
+        outcome: "recorded",
+        message: sentMessage,
+        nextFollowUpAt: "2026-03-05T10:00:00.000Z",
+        gate: gateEvaluation("warning"),
+      },
+    });
+    const { recordOutreachSent } = await loadActions();
+
+    const result = await recordOutreachSent({
+      messageId: MESSAGE_ID,
+      leadId: LEAD.id,
+      confirmWarnings: true,
+    });
+
+    expect(result).toMatchObject({ ok: true, outcome: "recorded" });
+    expect(mocks.recordOutreachSent).toHaveBeenCalledWith(expect.objectContaining({ confirmWarnings: true }));
+  });
+
+  it("28. an already-sent message stays idempotent and carries no new schedule", async () => {
+    mocks.recordOutreachSent.mockResolvedValueOnce({
+      ok: true,
+      error: null,
+      data: { outcome: "already_sent", message: sentMessage, gate: READY_GATE },
+    });
+    const { recordOutreachSent } = await loadActions();
+
+    const result = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD.id });
+
+    expect(result).toMatchObject({ ok: true, outcome: "already_sent", nextFollowUpAt: null });
   });
 });

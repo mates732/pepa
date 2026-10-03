@@ -1,6 +1,8 @@
 "use client";
 
 import { DuplicateNotice } from "@/components/duplicate-notice";
+import { QualityGatePanel } from "@/components/quality-gate-panel";
+import type { GateEvaluation } from "@/lib/services/outreach-quality-gate";
 import type { DuplicateCheckResult } from "@/lib/types";
 
 export interface ComposerValues {
@@ -26,6 +28,11 @@ interface EmailComposerProps {
   onSend: () => void;
   saving: boolean;
   savingDone: boolean;
+  /** Live quality-gate verdict for the draft currently in the composer. */
+  gate: GateEvaluation | null;
+  gatePending: boolean;
+  /** True once the operator has acknowledged the gate's warnings. */
+  warningsConfirmed: boolean;
 }
 
 export function EmailComposer(props: EmailComposerProps) {
@@ -120,6 +127,8 @@ export function EmailComposer(props: EmailComposerProps) {
           </p>
         )}
 
+        <QualityGatePanel gate={props.gate} pending={props.gatePending} />
+
         <div className="flex flex-wrap items-center gap-2 border-t-[3px] border-dashed border-midnight-line pt-5">
           <button
             type="button"
@@ -133,7 +142,7 @@ export function EmailComposer(props: EmailComposerProps) {
           <button
             type="button"
             onClick={props.onSend}
-            disabled={props.saving}
+            disabled={props.saving || props.gate?.status === "blocked"}
             title="PEPA does not send email. Send it from your own mail client first, then record it here."
             className="btn"
           >

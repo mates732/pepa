@@ -2,6 +2,11 @@ import { normalizeEmail } from "@/lib/email";
 import { toUtcIso } from "@/lib/followup/cadence";
 import { createLead, getLead } from "@/lib/services/lead-service";
 import { markFollowUpSent } from "@/lib/services/follow-up-service";
+import {
+  describeBlocked,
+  evaluateStoredMessageQualityGate,
+  type GateEvaluation,
+} from "@/lib/services/outreach-quality-gate";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type { Lead, OutreachHistoryRow, OutreachMessage, ServiceResult } from "@/lib/types";
 
@@ -113,9 +118,18 @@ const SENDABLE_STATUSES = ["draft", "ready"] as const;
 
 export type RecordSentResult =
   /** The transition happened on this call, and a follow-up was scheduled. */
-  | { outcome: "recorded"; message: OutreachMessage; nextFollowUpAt: string | null }
+  | {
+      outcome: "recorded";
+      message: OutreachMessage;
+      nextFollowUpAt: string | null;
+      gate: GateEvaluation | null;
+    }
   /** It was already recorded as sent. Nothing was written, nothing rescheduled. */
-  | { outcome: "already_sent"; message: OutreachMessage };
+  | { outcome: "already_sent"; message: OutreachMessage; gate: GateEvaluation | null }
+  /** The quality gate refused. Nothing was written. */
+  | { outcome: "blocked"; gate: GateEvaluation; error: string }
+  /** Warnings are present and the operator has not confirmed them yet. */
+  | { outcome: "needs_confirmation"; gate: GateEvaluation; error: string };
 
 /**
  * Record that the operator sent a draft from their own mail client.
@@ -142,12 +156,57 @@ export async function recordOutreachSent(input: {
   messageId: string;
   leadId: string;
   sentAt?: Date;
+  /**
+   * Set by the caller once the operator has explicitly acknowledged the gate's
+   * warnings. Warnings are never waived implicitly: the first call reports them
+   * and the second one, with this flag, proceeds.
+   */
+  confirmWarnings?: boolean;
 }): Promise<ServiceResult<RecordSentResult>> {
   if (!input.messageId) return fail("A message is required.");
   if (!input.leadId) return fail("A lead is required.");
 
   const sentAt = input.sentAt ?? new Date();
   const supabase = getSupabaseAdmin();
+
+  // The quality gate runs here, inside the send transition, rather than in the
+  // action or the UI. That placement is the whole point: the draft is re-read
+  // from Postgres and re-checked at the moment of the write, so a dashboard
+  // loaded ten minutes ago — or a hand-crafted request that skips the UI
+  // entirely — cannot talk the server into recording a blocked draft as sent.
+  const evaluated = await evaluateStoredMessageQualityGate(input.messageId, input.leadId);
+  const gate = evaluated?.gate ?? null;
+
+  if (evaluated && (evaluated.message.sent_at !== null || evaluated.message.status === "sent")) {
+    // Already recorded. Idempotency outranks the gate: no write is about to
+    // happen, so there is nothing for the gate to authorise, and reporting a
+    // refusal here would misdescribe a send that legitimately succeeded earlier.
+    return {
+      ok: true,
+      error: null,
+      data: { outcome: "already_sent", message: evaluated.message, gate },
+    };
+  }
+
+  if (gate?.status === "blocked") {
+    return {
+      ok: true,
+      error: null,
+      data: { outcome: "blocked", gate, error: describeBlocked(gate) },
+    };
+  }
+
+  if (gate?.status === "warning" && !input.confirmWarnings) {
+    return {
+      ok: true,
+      error: null,
+      data: {
+        outcome: "needs_confirmation",
+        gate,
+        error: gate.reasons.join(" ") || "This draft has warnings to review.",
+      },
+    };
+  }
 
   const { data, error } = await supabase
     .from("outreach_messages")
@@ -170,7 +229,11 @@ export async function recordOutreachSent(input: {
     const existing = await findRecordedSend(input.messageId, input.leadId);
     if (!existing) return fail("That message does not exist for this lead.");
 
-    return { ok: true, error: null, data: { outcome: "already_sent", message: existing } };
+    return {
+      ok: true,
+      error: null,
+      data: { outcome: "already_sent", message: existing, gate: gate ?? null },
+    };
   }
 
   // Sent state is durable at this point, so scheduling may begin.
@@ -188,7 +251,12 @@ export async function recordOutreachSent(input: {
   return {
     ok: true,
     error: null,
-    data: { outcome: "recorded", message: data as OutreachMessage, nextFollowUpAt },
+    data: {
+      outcome: "recorded",
+      message: data as OutreachMessage,
+      nextFollowUpAt,
+      gate: gate ?? null,
+    },
   };
 }
 

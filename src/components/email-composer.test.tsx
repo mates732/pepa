@@ -36,6 +36,9 @@ function render(overrides: Partial<React.ComponentProps<typeof EmailComposer>> =
     onSend: () => {},
     saving: false,
     savingDone: false,
+    gate: null,
+    gatePending: false,
+    warningsConfirmed: false,
     ...overrides,
     values,
   };

@@ -29,11 +29,33 @@ const OTHER_LEAD_ID = "33333333-3333-3333-3333-333333333333";
 
 const SENT_AT = new Date("2026-03-01T10:00:00.000Z");
 
-const mocks = vi.hoisted(() => ({ markFollowUpSent: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  markFollowUpSent: vi.fn(),
+  evaluateStoredMessageQualityGate: vi.fn(),
+  describeBlocked: vi.fn(() => "Blocked by the quality gate: fixture."),
+}));
 
 vi.mock("@/lib/services/follow-up-service", () => ({
   markFollowUpSent: mocks.markFollowUpSent,
 }));
+
+// The quality gate is exercised in its own suite. Mocked here so these tests
+// keep proving what they were written for: the compare-and-set transition and
+// its idempotency under concurrency.
+vi.mock("@/lib/services/outreach-quality-gate", () => ({
+  evaluateStoredMessageQualityGate: mocks.evaluateStoredMessageQualityGate,
+  describeBlocked: mocks.describeBlocked,
+}));
+
+const READY_GATE = {
+  status: "ready" as const,
+  checks: [{ name: "identity", status: "pass" as const, reason: "New lead." }],
+  reasons: [],
+  leadId: LEAD_ID,
+  normalizedRecipient: "hello@example.com",
+  blocked: false,
+  hasWarnings: false,
+};
 
 vi.mock("server-only", () => ({}));
 
@@ -186,6 +208,10 @@ beforeEach(() => {
   db.leads = [];
   db.messages = [];
   mocks.markFollowUpSent.mockReset();
+  mocks.evaluateStoredMessageQualityGate.mockReset();
+  mocks.evaluateStoredMessageQualityGate.mockImplementation(
+    async () => ({ message: { ...db.messages[0] } as never, gate: READY_GATE }),
+  );
   mocks.markFollowUpSent.mockResolvedValue({ nextFollowUpAt: "2026-03-05T10:00:00.000Z" });
   seedLead();
   seedMessage();
@@ -309,6 +335,98 @@ describe("recordOutreachSent — follow-up handoff", () => {
     expect(result.ok).toBe(true);
     expect(result.data?.outcome).toBe("recorded");
     expect(db.messages[0].status).toBe("sent");
+  });
+});
+
+describe("recordOutreachSent — quality gate enforcement", () => {
+  /** Wraps a verdict the way the gate service does, echoing the live row. */
+  const GATE = (status: "ready" | "warning" | "blocked") => ({
+    message: { ...db.messages[0] } as never,
+    gate: {
+    status,
+    checks: [
+      {
+        name: "identity",
+        status: status === "ready" ? "pass" : status === "warning" ? "warn" : "block",
+        reason: "fixture reason",
+      },
+    ],
+    reasons: status === "ready" ? [] : ["fixture reason"],
+    leadId: LEAD_ID,
+    normalizedRecipient: "hello@example.com",
+    blocked: status === "blocked",
+    hasWarnings: status === "warning",
+    },
+  });
+
+  it("refuses to record a send while the gate blocks", async () => {
+    mocks.evaluateStoredMessageQualityGate.mockResolvedValue(GATE("blocked"));
+
+    const result = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD_ID });
+
+    expect(result.data?.outcome).toBe("blocked");
+    // Nothing was written and nothing was scheduled.
+    expect(db.messages[0].status).toBe("draft");
+    expect(db.messages[0].sent_at).toBeNull();
+    expect(mocks.markFollowUpSent).not.toHaveBeenCalled();
+  });
+
+  it("holds a warning until the operator confirms it", async () => {
+    mocks.evaluateStoredMessageQualityGate.mockResolvedValue(GATE("warning"));
+
+    const result = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD_ID });
+
+    expect(result.data?.outcome).toBe("needs_confirmation");
+    expect(db.messages[0].status).toBe("draft");
+    expect(db.messages[0].sent_at).toBeNull();
+    expect(mocks.markFollowUpSent).not.toHaveBeenCalled();
+  });
+
+  it("proceeds once the warning is explicitly confirmed", async () => {
+    mocks.evaluateStoredMessageQualityGate.mockResolvedValue(GATE("warning"));
+
+    const result = await recordOutreachSent({
+      messageId: MESSAGE_ID,
+      leadId: LEAD_ID,
+      confirmWarnings: true,
+    });
+
+    expect(result.data?.outcome).toBe("recorded");
+    expect(db.messages[0].status).toBe("sent");
+    expect(mocks.markFollowUpSent).toHaveBeenCalledOnce();
+  });
+
+  it("checks the gate before the write, not after (26. stale UI cannot bypass)", async () => {
+    mocks.evaluateStoredMessageQualityGate.mockResolvedValue(GATE("blocked"));
+
+    await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD_ID });
+
+    // The gate is consulted while the row is still a draft, which is the only
+    // ordering in which refusing it actually prevents the send.
+    expect(db.messages[0].status).toBe("draft");
+  });
+
+  it("carries the authorising verdict on a successful record", async () => {
+    const gate = GATE("ready");
+    mocks.evaluateStoredMessageQualityGate.mockResolvedValue(gate);
+
+    const result = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD_ID });
+
+    expect(result.data?.outcome).toBe("recorded");
+    if (result.data?.outcome === "recorded") {
+      expect(result.data.gate).toEqual(gate.gate);
+    }
+  });
+
+  it("stays idempotent even when the gate blocks, for an already-sent message", async () => {
+    await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD_ID, sentAt: SENT_AT });
+    mocks.evaluateStoredMessageQualityGate.mockResolvedValue(GATE("blocked"));
+    mocks.markFollowUpSent.mockClear();
+
+    const again = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD_ID });
+
+    expect(again.data?.outcome).toBe("already_sent");
+    expect(mocks.markFollowUpSent).not.toHaveBeenCalled();
   });
 });
 

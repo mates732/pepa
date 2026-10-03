@@ -6,6 +6,7 @@ import { requireAuthenticatedUser } from "@/lib/auth/dal";
 import { isValidEmail, normalizeEmail } from "@/lib/email";
 import { findLeadByEmail } from "@/lib/services/lead-service";
 import { createDraft, recordOutreachSent as recordOutreachSentService } from "@/lib/services/outreach-service";
+import { evaluateDraftQualityGate, type GateEvaluation } from "@/lib/services/outreach-quality-gate";
 import type { DuplicateCheckResult, Lead, OutreachMessage } from "@/lib/types";
 
 /**
@@ -101,8 +102,57 @@ export type RecordOutreachSentResult =
       outcome: "recorded" | "already_sent";
       message: OutreachMessage;
       nextFollowUpAt: string | null;
+      /** The verdict that authorised the write, for the UI to render. */
+      gate: GateEvaluation | null;
+    }
+  /**
+   * The quality gate refused. `requiresConfirmation` separates the two
+   * refusals: a blocked draft can never proceed, while a warning is waiting
+   * for the operator to acknowledge it and submit again.
+   */
+  | {
+      ok: false;
+      error: string;
+      outcome: "blocked" | "needs_confirmation";
+      requiresConfirmation: boolean;
+      gate: GateEvaluation;
     }
   | ActionFailure;
+
+export type CheckQualityGateResult =
+  | { ok: true; gate: GateEvaluation }
+  | ActionFailure;
+
+/**
+ * Live, advisory quality-gate evaluation for the draft in the composer.
+ *
+ * Never authorises anything on its own: the send path re-runs the gate against
+ * stored state, so this exists purely to tell the operator what will happen
+ * before they click.
+ */
+export async function checkQualityGate(input: {
+  recipient: string;
+  subject: string;
+  body: string;
+  messageId?: string | null;
+  leadId?: string | null;
+}): Promise<CheckQualityGateResult> {
+  await requireAuthenticatedUser();
+
+  try {
+    const gate = await evaluateDraftQualityGate({
+      recipient: String(input?.recipient ?? ""),
+      subject: String(input?.subject ?? ""),
+      body: String(input?.body ?? ""),
+      messageId: input?.messageId ?? null,
+      leadId: input?.leadId ?? null,
+    });
+    return { ok: true, gate };
+  } catch {
+    // A gate failure must not read as "ready".
+    return failure("The quality gate could not be evaluated.");
+  }
+}
 
 /**
  * Record that the operator has already sent a draft from their own mail client.
@@ -118,6 +168,8 @@ export type RecordOutreachSentResult =
 export async function recordOutreachSent(input: {
   messageId: string;
   leadId: string;
+  /** Second and later attempts, after the operator acknowledged warnings. */
+  confirmWarnings?: boolean;
 }): Promise<RecordOutreachSentResult> {
   await requireAuthenticatedUser();
 
@@ -128,18 +180,37 @@ export async function recordOutreachSent(input: {
   if (!UUID_PATTERN.test(leadId)) return failure("That lead could not be identified.");
 
   try {
-    const result = await recordOutreachSentService({ messageId, leadId });
+    const result = await recordOutreachSentService({
+      messageId,
+      leadId,
+      confirmWarnings: input?.confirmWarnings === true,
+    });
     if (!result.ok || !result.data) {
       return failure(result.error ?? "Could not record the send.");
+    }
+
+    const data = result.data;
+
+    // A refusal must not reach the dashboard as a success, and must not
+    // revalidate the page into a state the operator never achieved.
+    if (data.outcome === "blocked" || data.outcome === "needs_confirmation") {
+      return {
+        ok: false,
+        outcome: data.outcome,
+        requiresConfirmation: data.outcome === "needs_confirmation",
+        error: data.error,
+        gate: data.gate,
+      };
     }
 
     revalidatePath("/");
     return {
       ok: true,
-      outcome: result.data.outcome,
-      message: result.data.message,
+      outcome: data.outcome,
+      message: data.message,
       // An idempotent repeat has no new schedule, so it never claims one.
-      nextFollowUpAt: result.data.outcome === "recorded" ? result.data.nextFollowUpAt : null,
+      nextFollowUpAt: data.outcome === "recorded" ? data.nextFollowUpAt : null,
+      gate: data.gate,
     };
   } catch (error) {
     return failure(
