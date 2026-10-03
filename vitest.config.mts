@@ -14,6 +14,8 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["src/**/*.test.ts"],
+    // .tsx is included so component regressions can be covered with
+    // renderToStaticMarkup, which needs no DOM environment and no extra deps.
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
   },
 });

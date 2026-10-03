@@ -39,6 +39,11 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Kilo agent worktrees and Agent Manager state. These are local tooling, not
+# application source: a worktree is a full duplicate of the project (possibly at
+# an older commit, missing migrations) and must never be committed.
+.kilo/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts

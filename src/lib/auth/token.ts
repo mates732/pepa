@@ -27,8 +27,13 @@ export const SESSION_COOKIE_OPTIONS = {
   maxAge: SESSION_TTL_SECONDS,
 } as const;
 
-/** Renew once the session is past this age, keeping active users signed in. */
-export const SESSION_RENEW_AFTER_MS = SESSION_TTL_SECONDS * 500;
+/**
+ * Renew once the session is older than its half-life (15 days of the 30-day
+ * TTL), keeping an active operator signed in. Written in ms explicitly so the
+ * relationship to SESSION_TTL_SECONDS is obvious rather than arithmetic to
+ * reverse-engineer.
+ */
+export const SESSION_RENEW_AFTER_MS = SESSION_TTL_SECONDS * 1000 * 0.5;
 
 const TOKEN_VERSION = "v1";
 

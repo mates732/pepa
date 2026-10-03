@@ -1,7 +1,6 @@
 "use client";
 
 import { DuplicateNotice } from "@/components/duplicate-notice";
-import { NOT_CONFIGURED_MESSAGE } from "@/lib/providers/registry";
 import type { DuplicateCheckResult } from "@/lib/types";
 
 export interface ComposerValues {
@@ -11,6 +10,8 @@ export interface ComposerValues {
   companyName: string;
   contactName: string;
   messageId: string | null;
+  /** Set once the draft is saved, so a send can be recorded against its lead. */
+  leadId: string | null;
 }
 
 interface EmailComposerProps {
@@ -133,10 +134,10 @@ export function EmailComposer(props: EmailComposerProps) {
             type="button"
             onClick={props.onSend}
             disabled={props.saving}
-            title={NOT_CONFIGURED_MESSAGE}
+            title="PEPA does not send email. Send it from your own mail client first, then record it here."
             className="btn"
           >
-            Send
+            {props.saving ? "Recording…" : "Mark as sent"}
           </button>
 
           <button

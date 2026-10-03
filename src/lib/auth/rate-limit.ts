@@ -1,9 +1,26 @@
 /**
  * Login throttle.
  *
- * Deliberately in-process: PEPA is a single-user private app, so this only has
- * to blunt online guessing. It is NOT a security boundary — it resets on a cold
- * start or a serverless instance recycle. Documented as such on purpose.
+ * THIS IS NOT A SECURITY BOUNDARY. It is a UX affordance that blunts casual,
+ * interactive guessing. Concretely, on the deployment PEPA actually targets:
+ *
+ *   * the Map is process-local — every serverless cold start begins empty, so an
+ *     attacker who lets the instance recycle resets the counter for free;
+ *   * concurrent instances never share it, so N instances tolerate N × 5
+ *     failures before any lock engages;
+ *   * the key is derived from `x-forwarded-for`, which a determined client can
+ *     influence.
+ *
+ * Read it as "slow down a human typing the same wrong password five times", not
+ * as online password-guessing resistance. A correct password is a single
+ * 256-bit-plus random secret compared in constant time
+ * (`verifyPassword()` in ./env.ts), and that — not this file — is what makes
+ * guessing impractical.
+ *
+ * The real second lock is infrastructure, and it is required before PEPA faces
+ * the internet: enable Vercel Authentication or an IP allow-list on the
+ * production domain. See step 6 of docs/production-deployment.md. Until that is
+ * in place, treat password strength as the only real barrier.
  */
 
 const MAX_FAILURES = 5;

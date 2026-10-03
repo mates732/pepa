@@ -152,17 +152,29 @@ begin
 end
 $$;
 
+-- Intentionally exactly as wide as migration
+-- 20260101000400_revoke_public_grants.sql: ALL privileges, for BOTH anon and
+-- authenticated, on ALL SIX PEPA objects — including the two views, which return
+-- every lead's email address. A narrower check (write privileges on four tables
+-- only) would pass even if SELECT had been re-granted on a view.
 do $$
 begin
   if exists (
-    select 1 from information_schema.role_table_grants
+    select 1
+    from information_schema.role_table_grants
     where table_schema = 'public'
-      and table_name in ('leads', 'outreach_messages', 'action_tokens', 'followup_notifications')
+      and table_name in (
+        'leads',
+        'outreach_messages',
+        'action_tokens',
+        'followup_notifications',
+        'outreach_overview',
+        'due_followups'
+      )
       and grantee in ('anon', 'authenticated')
-      and privilege_type in ('INSERT', 'UPDATE', 'DELETE', 'TRUNCATE')
   ) then
     raise exception
-      'anon/authenticated has write access to a PEPA table — the browser must never write directly';
+      'anon/authenticated still holds a privilege on a PEPA object — the browser must never reach one';
   end if;
 end
 $$;

@@ -5,13 +5,29 @@ import { headers } from "next/headers";
 /**
  * Absolute base URL for deep links.
  *
- * On Vercel and behind any proxy the forwarded host is authoritative. On local
- * dev it falls back to the dev server origin. `PEPA_BASE_URL` overrides both when
- * a canonical public hostname differs from the deployment host.
+ * `PEPA_BASE_URL` always wins, so a canonical public hostname can differ from
+ * the deployment host.
+ *
+ * In production there is NO header fallback. `x-forwarded-host` / `host` are
+ * request-supplied: a poisoned or misrouted Host header would mint a deep link
+ * pointing at an attacker's origin, and that link is then delivered into the
+ * operator's Telegram chat. Failing closed is the only safe answer, so a
+ * production deployment without `PEPA_BASE_URL` refuses to build deep links at
+ * all rather than guessing.
+ *
+ * Outside production the request host is a correct fallback and local dev keeps
+ * working without any configuration.
  */
 export async function getBaseUrl(): Promise<string> {
   const explicit = process.env.PEPA_BASE_URL?.trim();
   if (explicit) return explicit.replace(/\/+$/, "");
+
+  if (process.env.NODE_ENV === "production") {
+    // Names the variable and points at the template. Never a value.
+    throw new Error(
+      "PEPA_BASE_URL is not configured. Production deep links are never derived from a request header. See .env.example.",
+    );
+  }
 
   const h = await headers();
   const forwardedHost = h.get("x-forwarded-host") ?? h.get("host");

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { IMPORT_TOKEN_TTL_MS } from "@/lib/deep-link/tokens";
+import { buildImportDeepLink } from "@/lib/config/base-url";
 
 import { createOutreachImport, resolveOutreachImport, saveImportedDraft } from "./import-service";
 
@@ -185,7 +186,7 @@ vi.mock("server-only", () => ({}));
 vi.mock("@/lib/supabase/server", () => ({ getSupabaseAdmin: () => makeSupabase() }));
 
 vi.mock("@/lib/config/base-url", () => ({
-  buildImportDeepLink: async (token: string) => `https://pepa.example.com/import/${token}`,
+  buildImportDeepLink: vi.fn(async (token: string) => `https://pepa.example.com/import/${token}`),
   buildDeepLink: async (token: string) => `https://pepa.example.com/followup/${token}`,
   getBaseUrl: async () => "https://pepa.example.com",
 }));
@@ -310,6 +311,35 @@ describe("createOutreachImport — persistence", () => {
     expect(outcome.deepLink).not.toContain("hello");
     expect(outcome.deepLink).not.toContain("Example");
     expect(outcome.deepLink).not.toContain("Dobr");
+  });
+
+  it("maps a deep-link failure to store_failed instead of throwing", async () => {
+    // Production refuses to build a deep link when PEPA_BASE_URL is absent
+    // rather than trusting a Host header. That rejection must not escape the
+    // service as an unhandled exception.
+    vi.mocked(buildImportDeepLink).mockRejectedValueOnce(
+      new Error("PEPA_BASE_URL is not configured. See .env.example."),
+    );
+
+    const outcome = await createOutreachImport(validPayload);
+
+    expect(outcome).toEqual({
+      ok: false,
+      error: "The import link could not be created.",
+      reason: "store_failed",
+    });
+  });
+
+  it("still returns the same deep_link on the next successful import", async () => {
+    vi.mocked(buildImportDeepLink).mockRejectedValueOnce(
+      new Error("PEPA_BASE_URL is not configured. See .env.example."),
+    );
+    await createOutreachImport(validPayload);
+
+    const outcome = await createOutreachImport(validPayload);
+
+    if (!outcome.ok) throw new Error("expected success");
+    expect(outcome.deepLink).toMatch(/^https:\/\/pepa\.example\.com\/import\/fp1_[A-Za-z0-9_-]+$/);
   });
 
   it("mints an outreach_import token, never a followup_composer token", async () => {

@@ -109,8 +109,24 @@ canonical public origin (e.g. `https://pepa.example.com`) and is used to build
 Telegram deep links and import review links. Generate secrets with
 `openssl rand -base64 32`.
 
-Leave `PEPA_ENABLE_DEV_TOOLS` unset (or `false`) in production. It turns on the
-"Test Telegram" button, which is a development affordance.
+Leave `PEPA_ENABLE_DEV_TOOLS` unset (or `false`) in production. In a production
+build the flag has **no effect at all** — `devToolsEnabled()` returns false there
+unconditionally, so a mis-set variable cannot switch on the Telegram test sender
+— but leave it `false` anyway so the intent is recorded. Outside production the
+dev tools are always available; the flag was already inert there too.
+
+**A partial configuration is no longer silent.** `getEnvStatus()` in
+`src/lib/config/env.ts` validates all eleven variables, so the dashboard setup
+notice reports every missing one **by variable name** — the three
+`TELEGRAM_*` variables, `CRON_SECRET`, `IMPORT_SECRET` and `PEPA_BASE_URL`
+included, not just Supabase and the two auth secrets. If the dashboard renders
+the setup notice instead of the composer, the login page's own notice still
+covers only `PEPA_PASSWORD` and `PEPA_SESSION_SECRET`: read the full list off
+the dashboard after signing in. No value is ever displayed.
+
+`PEPA_BASE_URL` is required in production, not optional: production deep links
+are built only from it and never from a request `Host` header. Without it,
+`getBaseUrl()` throws rather than guessing an origin.
 
 For local work, copy `.env.example` to `.env.local` and fill it in. `.env.local`
 is gitignored and must never be committed.
@@ -176,9 +192,9 @@ curl -sS "$PEPA_BASE_URL/api/cron/followups"                     # 401
 curl -sS -X POST "$PEPA_BASE_URL/api/import"                      # 401
 ```
 
-The two `401`s are the correct result: both routes fail closed without their
-bearer secret. A `500` here means an environment variable is missing — the setup
-notice on the login page lists variable **names** only, never values.
+The two `401`s are the correct result: both routes fail closed with **401** when
+their bearer secret is wrong or unset — they never fall through to a 500. A
+`500` means something else broke at runtime; check the Vercel function log.
 
 ## 9. Confirm the secrets are set, not just present
 
@@ -221,7 +237,7 @@ Before touching production data, confirm the tree is green:
 ```bash
 npm run lint
 npm run typecheck
-npm run test      # 245 tests
+npm run test      # full suite, must be green
 npm run build
 git status --short   # must be clean
 ```
@@ -235,8 +251,21 @@ creates **drafts**; nothing is ever sent automatically.
 curl -sS -X POST "$PEPA_BASE_URL/api/import" \
   -H "Authorization: Bearer $IMPORT_SECRET" \
   -H 'Content-Type: application/json' \
-  -d '{"items":[{"email":"Real.Address@Example.com","name":"Real Address","summary":"imported during production verification"}]}'
+  -d '{
+        "recipient": "Real.Address@Example.com",
+        "subject": "AI recepce pro Example",
+        "body": "Dobrý den,\n\nchtěl jsem Vám ukázat...",
+        "companyName": "Example s.r.o.",
+        "contactName": "Real Address"
+      }'
 ```
+
+The payload shape is `OutreachImportInput` from
+`src/lib/import/outreach-import.ts`: `recipient`, `subject` and `body` are
+required; `companyName` and `contactName` are optional. The recipient is
+normalised server-side, so `Real.Address@Example.com` is stored as
+`real.address@example.com`. Wrong field names are rejected with `400`, not
+ignored.
 
 Expected: a short-lived opaque `deep_link`, never the payload and never a lead
 id. `status` reports `created`, `refreshed` or `already_contacted`, and
@@ -253,33 +282,63 @@ same table and the same token model as composer links, not a second system.
 This is the step that cannot be faked with a mock. It proves the notification
 path against a real bot token, and it is a release gate.
 
-1. Sign in, create a lead with your real email, and send yourself a composer
-   message from `/review`. It must appear in Telegram within seconds. The
-   notification must be sent by the module that owns the Telegram channel — this
-   is what `fa68c5e` fixed; if notifications silently do not arrive, check that
-   fix is present.
-2. Tap the inline buttons on that message: **Done**, **Snooze 3 days**, and
-   **Cancel**. Each must update the lead and post a fresh message. Snoozing must
-   push the next follow-up out by exactly 3 days (and 7/10 for the later steps)
-   and must **not** advance the recorded follow-up counter.
-3. Confirm the claim lease is released after each action, so a second tap on the
-   same button cannot double-apply.
-4. Exercise the schedule: set a lead's `next_followup_at` into the past, then
-   trigger the job and confirm the 4-day follow-up notification arrives in
-   Telegram and that the same follow-up is not sent twice.
-5. Confirm an unauthorised chat id is rejected: the route authorises exactly one
-   chat, and a different `TELEGRAM_CHAT_ID` must not receive or be able to post.
-6. Confirm the cron route rejects a bad secret in constant time, and that
-   **notifications do not advance `next_followup_at`** — only a real send does.
-   A follow-up firing on schedule after a notification alone is a bug.
-7. Check the Vercel dashboard → **Logs → Cron** for the next scheduled run, or
-   invoke the route by hand with the real secret:
+> **This gate cannot be completed yet.** The chain below starts from a message
+> that actually left the outbox (`outreach_messages.sent_at` set). **PEPA has no
+> send-recording path yet** — nothing in the codebase writes `sent_at`, and
+> `markFollowUpSent()` (which would arm `next_followup_at`) has no caller. Until
+> that lands, every step from 1 onwards is unreachable and **PEPA is not
+> production-verified**. The steps are written against the system as it is
+> designed to behave, so they can be executed unchanged once it does.
+>
+> Do not report a green build as verification. A working `/api/cron/followups`
+> returning `{"ok":true}` with `examined: 0` means the engine found nothing
+> because nothing is ever due — not that the chain works.
+
+1. Create a lead with your real email and save a composer draft, so the lead and
+   its outreach message exist.
+2. Record that the outreach actually went out, so `outreach_messages.sent_at`
+   is set and the message status is `sent`. This is the send-recording step and
+   it does not exist yet; today you cannot complete this gate.
+3. Ensure the lead has a `next_followup_at` in the past, so it is due.
+4. Trigger the job by hand with the real secret, or wait for the scheduled run:
    ```bash
    curl -sS "$PEPA_BASE_URL/api/cron/followups" \
      -H "Authorization: Bearer $CRON_SECRET"
    ```
-   Vercel attaches the same header automatically, so a manual call with the
-   secret must be indistinguishable from a scheduled one.
+   `examined` must be at least 1 and `notified` must be at least 1. All zeros
+   means the engine is inert, not that there was nothing to do.
+5. The Telegram notification arrives on your phone within seconds. It shows the
+   lead name, the email, the follow-up number and the last-contact date. It must
+   **never** contain the subject or the body of the email.
+6. The message carries exactly one inline button: **OPEN IN PEPA**. That is the
+   only button PEPA renders. There are no Done / Snooze / Cancel buttons and no
+   reply detection.
+7. Tap **OPEN IN PEPA**. If you are not signed in you land on
+   `/login?next=/followup/<token>`; after signing in you return to the **same**
+   follow-up.
+8. Confirm the page shows the **correct** lead and the **correct** message — not
+   another lead, and not an empty composer.
+9. Save a change and confirm it persists to that lead's draft.
+10. Confirm the ledger holds exactly one row for this follow-up, by name only:
+    ```sql
+    select lead_id, followup_number, status, sent_at
+    from public.followup_notifications
+    order by created_at desc limit 5;
+    ```
+    There must be exactly one row with `status = 'sent'` for that
+    `(lead_id, followup_number)`.
+11. Run the cron endpoint again with the real secret. `notified` must be `0` and
+    **no second Telegram message may arrive**. This is the duplicate-notification
+    gate.
+12. Confirm an unauthorised chat id is rejected: the webhook authorises exactly
+    one chat, and no other chat can receive or post.
+13. Confirm the cron route rejects a bad secret in constant time, and that
+    **notifications do not advance `next_followup_at`** — only a real send does.
+    A follow-up firing on schedule after a notification alone is a bug.
+14. Check the Vercel dashboard → **Logs → Cron** for the next scheduled run.
+    Vercel attaches the same `Authorization: Bearer $CRON_SECRET` header
+    automatically, so a manual call with the secret must be indistinguishable
+    from a scheduled one.
 
 Record what you observed. If any step above cannot be performed, PEPA is **not**
 production-verified — say so rather than reporting a green build.
@@ -302,7 +361,7 @@ production-verified — say so rather than reporting a green build.
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | Login page shows a setup notice | A required variable is missing or empty | Check Vercel env vars by **name** |
-| `/api/cron/followups` or `/api/import` returns 500 | Secret unset, so the route fails closed | Set `CRON_SECRET` / `IMPORT_SECRET` |
+| `/api/cron/followups` or `/api/import` returns 401 | Wrong or missing bearer secret, or the secret is not set at all | Set `CRON_SECRET` / `IMPORT_SECRET`. Both routes fail closed with **401**, never 500 |
 | No Telegram notifications | Webhook not registered, or `TELEGRAM_BOT_TOKEN` wrong | Re-run step 7, check `getWebhookInfo` |
 | Telegram notifications arrive from the wrong sender | Bot token belongs to a different bot | Re-issue via @BotFather, redeploy |
 | Deep links open the wrong host | `PEPA_BASE_URL` unset and request host used | Set `PEPA_BASE_URL` to the canonical origin |

@@ -5,6 +5,7 @@ import { createSessionToken, SESSION_COOKIE } from "@/lib/auth/token";
 const mocks = vi.hoisted(() => ({
   findLeadByEmail: vi.fn(),
   createDraft: vi.fn(),
+  recordOutreachSent: vi.fn(),
   revalidatePath: vi.fn(),
 }));
 
@@ -14,6 +15,7 @@ vi.mock("@/lib/services/lead-service", () => ({
 }));
 vi.mock("@/lib/services/outreach-service", () => ({
   createDraft: mocks.createDraft,
+  recordOutreachSent: mocks.recordOutreachSent,
 }));
 
 const cookieStore = new Map<string, string>();
@@ -46,6 +48,7 @@ beforeEach(() => {
   cookieStore.clear();
   mocks.findLeadByEmail.mockReset();
   mocks.createDraft.mockReset();
+  mocks.recordOutreachSent.mockReset();
   mocks.revalidatePath.mockReset();
 
   mocks.findLeadByEmail.mockResolvedValue({
@@ -155,5 +158,106 @@ describe("saveDraft (privileged server action)", () => {
       ok: false,
     });
     expect(mocks.createDraft).not.toHaveBeenCalled();
+  });
+});
+
+describe("recordOutreachSent (privileged server action)", () => {
+  const MESSAGE_ID = "22222222-2222-2222-2222-222222222222";
+
+  const sentMessage = {
+    id: MESSAGE_ID,
+    lead_id: LEAD.id,
+    recipient_email: "info@example.com",
+    subject: "Test subject",
+    body: "Test body",
+    status: "sent" as const,
+    provider: null,
+    provider_message_id: null,
+    sent_at: "2026-03-01T10:00:00.000Z",
+    created_at: "2026-02-01T00:00:00.000Z",
+  };
+
+  beforeEach(() => {
+    mocks.recordOutreachSent.mockResolvedValue({
+      ok: true,
+      error: null,
+      data: { outcome: "recorded", message: sentMessage, nextFollowUpAt: "2026-03-05T10:00:00.000Z" },
+    });
+  });
+
+  it("is rejected when unauthenticated and never records a send", async () => {
+    const { recordOutreachSent } = await loadActions();
+
+    await expect(
+      recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD.id }),
+    ).rejects.toThrow("Not authenticated.");
+    expect(mocks.recordOutreachSent).not.toHaveBeenCalled();
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+
+  it("validates both ids before touching the database", async () => {
+    cookieStore.set(SESSION_COOKIE, createSessionToken());
+    const { recordOutreachSent } = await loadActions();
+
+    await expect(
+      recordOutreachSent({ messageId: "not-a-uuid", leadId: LEAD.id }),
+    ).resolves.toMatchObject({ ok: false });
+    await expect(
+      recordOutreachSent({ messageId: MESSAGE_ID, leadId: "not-a-uuid" }),
+    ).resolves.toMatchObject({ ok: false });
+    expect(mocks.recordOutreachSent).not.toHaveBeenCalled();
+  });
+
+  it("records the send and refreshes the dashboard for an authenticated operator", async () => {
+    cookieStore.set(SESSION_COOKIE, createSessionToken());
+    const { recordOutreachSent } = await loadActions();
+
+    const result = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD.id });
+
+    expect(result).toMatchObject({ ok: true, outcome: "recorded", nextFollowUpAt: "2026-03-05T10:00:00.000Z" });
+    expect(mocks.recordOutreachSent).toHaveBeenCalledWith({ messageId: MESSAGE_ID, leadId: LEAD.id });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/");
+  });
+
+  it("does not hand out a schedule for an idempotent repeat", async () => {
+    mocks.recordOutreachSent.mockResolvedValueOnce({
+      ok: true,
+      error: null,
+      data: { outcome: "already_sent", message: sentMessage, nextFollowUpAt: "2026-03-05T10:00:00.000Z" },
+    });
+    cookieStore.set(SESSION_COOKIE, createSessionToken());
+    const { recordOutreachSent } = await loadActions();
+
+    const result = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD.id });
+
+    // Reporting a fresh schedule here would imply a follow-up was queued again.
+    expect(result).toMatchObject({ ok: true, outcome: "already_sent", nextFollowUpAt: null });
+  });
+
+  it("surfaces a rejected message/lead pairing as a failure", async () => {
+    mocks.recordOutreachSent.mockResolvedValueOnce({
+      ok: false,
+      error: "That message does not exist for this lead.",
+      data: null,
+    });
+    cookieStore.set(SESSION_COOKIE, createSessionToken());
+    const { recordOutreachSent } = await loadActions();
+
+    const result = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD.id });
+
+    expect(result).toMatchObject({
+      ok: false,
+      error: "That message does not exist for this lead.",
+    });
+  });
+
+  it("turns a thrown service error into a failure instead of crashing the action", async () => {
+    mocks.recordOutreachSent.mockRejectedValueOnce(new Error("connection reset"));
+    cookieStore.set(SESSION_COOKIE, createSessionToken());
+    const { recordOutreachSent } = await loadActions();
+
+    await expect(
+      recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD.id }),
+    ).resolves.toMatchObject({ ok: false, error: "connection reset" });
   });
 });

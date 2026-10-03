@@ -1,9 +1,14 @@
 import type { EmailProvider, NotificationService } from "./types";
 
-// Deliberately NOT `server-only`: client components import the
-// NOT_CONFIGURED_MESSAGE constant from here. The registered provider
-// implementations are the server-only part, and they are constructed in
-// src/lib/providers/notifications.ts, which is server-only.
+// Deliberately NOT `server-only`, so a client component can import the shared
+// constants here (for example when the send button grows a real provider).
+// The registered provider implementations are the server-only part, and they
+// are constructed in src/lib/providers/notifications.ts, which is server-only.
+//
+// NOTE: `NOT_CONFIGURED_MESSAGE` was the copy behind the composer's old "Send"
+// button, which did nothing. The button now records a send the operator already
+// made from their own mail client, so that constant has no caller left; it is
+// kept for the future EmailProvider rather than deleted here.
 
 /**
  * Registry for the transports added in V2. The follow-up notification channel

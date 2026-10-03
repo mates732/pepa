@@ -1,5 +1,7 @@
 import { normalizeEmail } from "@/lib/email";
+import { toUtcIso } from "@/lib/followup/cadence";
 import { createLead, getLead } from "@/lib/services/lead-service";
+import { markFollowUpSent } from "@/lib/services/follow-up-service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type { Lead, OutreachHistoryRow, OutreachMessage, ServiceResult } from "@/lib/types";
 
@@ -98,6 +100,119 @@ async function leadIdForMessage(messageId: string): Promise<string> {
   if (error) throw new Error(error.message);
   if (!data) throw new Error("Draft not found.");
   return (data as { lead_id: string }).lead_id;
+}
+
+/**
+ * A message may be recorded as sent only from these states.
+ *
+ * `replied` / `completed` / `blocked` are terminal: a conversation that already
+ * moved on must not be dragged back to "sent". `follow_up` is excluded too —
+ * it means a follow-up already went out and is handled by its own message.
+ */
+const SENDABLE_STATUSES = ["draft", "ready"] as const;
+
+export type RecordSentResult =
+  /** The transition happened on this call, and a follow-up was scheduled. */
+  | { outcome: "recorded"; message: OutreachMessage; nextFollowUpAt: string | null }
+  /** It was already recorded as sent. Nothing was written, nothing rescheduled. */
+  | { outcome: "already_sent"; message: OutreachMessage };
+
+/**
+ * Record that the operator sent a draft from their own mail client.
+ *
+ * PEPA does not send email and has no provider: this only records a fact the
+ * operator asserts, so that the follow-up engine can see that real outreach
+ * happened. `provider` and `provider_message_id` are deliberately left NULL —
+ * PEPA has no idea which client was used and will not invent a delivery id.
+ *
+ * Idempotency and concurrency come from the database, not from an application
+ * flag. The UPDATE is a compare-and-set on two columns at once:
+ *
+ *   status IN ('draft','ready')  — only an unsent message can transition
+ *   sent_at IS NULL              — a message already recorded as sent never
+ *                                  transitions again, even if another code path
+ *                                  put its status back to 'draft'
+ *
+ * Under Postgres row locking exactly one concurrent caller matches; the losers
+ * match zero rows and fall through to the idempotent branch below. Only the
+ * winner calls `markFollowUpSent()`, which is what keeps `followup_count` and
+ * `next_followup_at` from being advanced twice.
+ */
+export async function recordOutreachSent(input: {
+  messageId: string;
+  leadId: string;
+  sentAt?: Date;
+}): Promise<ServiceResult<RecordSentResult>> {
+  if (!input.messageId) return fail("A message is required.");
+  if (!input.leadId) return fail("A lead is required.");
+
+  const sentAt = input.sentAt ?? new Date();
+  const supabase = getSupabaseAdmin();
+
+  const { data, error } = await supabase
+    .from("outreach_messages")
+    .update({ status: "sent", sent_at: toUtcIso(sentAt) })
+    .eq("id", input.messageId)
+    // The message must belong to the lead the caller asked for, so a crafted
+    // request cannot record a different lead's message as sent.
+    .eq("lead_id", input.leadId)
+    .in("status", [...SENDABLE_STATUSES])
+    .is("sent_at", null)
+    .select(MESSAGE_COLUMNS)
+    .maybeSingle();
+
+  if (error) return fail(error.message);
+
+  if (!data) {
+    // Zero rows matched. Either this exact message is already recorded as sent
+    // (idempotent no-op), or the id/lead pair does not exist at all. The two
+    // must not be conflated: a wrong lead id is a failure, not a success.
+    const existing = await findRecordedSend(input.messageId, input.leadId);
+    if (!existing) return fail("That message does not exist for this lead.");
+
+    return { ok: true, error: null, data: { outcome: "already_sent", message: existing } };
+  }
+
+  // Sent state is durable at this point, so scheduling may begin.
+  let nextFollowUpAt: string | null = null;
+  try {
+    const scheduled = await markFollowUpSent({ leadId: input.leadId, sentAt });
+    nextFollowUpAt = scheduled.nextFollowUpAt;
+  } catch {
+    // The send record is the important half and it is already committed. Losing
+    // the schedule is recoverable by re-recording; failing the whole action
+    // would report a sent email as not sent.
+    nextFollowUpAt = null;
+  }
+
+  return {
+    ok: true,
+    error: null,
+    data: { outcome: "recorded", message: data as OutreachMessage, nextFollowUpAt },
+  };
+}
+
+/**
+ * The already-recorded-sent message for this exact (message, lead) pair.
+ *
+ * Scoped to `sent_at IS NOT NULL` so a message that simply does not exist, or
+ * exists under a different lead, is reported as "not found" rather than being
+ * mistaken for an idempotent repeat.
+ */
+async function findRecordedSend(
+  messageId: string,
+  leadId: string,
+): Promise<OutreachMessage | null> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("outreach_messages")
+    .select(MESSAGE_COLUMNS)
+    .eq("id", messageId)
+    .eq("lead_id", leadId)
+    .not("sent_at", "is", null)
+    .maybeSingle();
+  if (error) return null;
+  return (data as OutreachMessage | null) ?? null;
 }
 
 /** Every message ever attached to a lead, newest first. Feeds reply/follow-up history (V2). */

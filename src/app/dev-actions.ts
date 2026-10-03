@@ -10,21 +10,39 @@ import type { Lead } from "@/lib/types";
 
 /**
  * Development trigger for the Telegram channel, so `sendFollowUpDue()` can be
- * exercised end-to-end without waiting for the follow-up scheduler (V2).
+ * exercised end-to-end without waiting for the follow-up scheduler.
  *
- * Safety: always requires a PEPA session, and is refused unless dev tooling is
- * explicitly enabled. There is no unauthenticated endpoint anywhere in PEPA.
+ * Safety, in order:
+ *   1. `requireAuthenticatedUser()` — an unauthenticated caller gets nothing;
+ *   2. production is HARD-DISABLED — see `devToolsEnabled()` below;
+ *   3. Telegram must be configured.
+ *
+ * There is no unauthenticated endpoint anywhere in PEPA.
  */
 
 export type TestTelegramResult =
   | { ok: true; messageId: string | null; deepLink: string; lead: string }
   | { ok: false; error: string };
 
+/**
+ * Whether the dev affordances are available.
+ *
+ * Production returns FALSE unconditionally. `PEPA_ENABLE_DEV_TOOLS` is
+ * deliberately NOT honoured there: this action sends real Telegram messages and
+ * mints real `action_tokens` rows, it has no rate limit of its own, and a
+ * mis-set environment flag must not be able to switch it on in a deployed
+ * environment.
+ *
+ * Outside production the tools are always available. That is not a change: the
+ * previous `NODE_ENV !== "production" || PEPA_ENABLE_DEV_TOOLS === "true"`
+ * expression was already always true there, because its left operand was
+ * already true. The flag never changed the outcome in any environment, and is
+ * retained in `.env.example` and the deployment runbook purely as documentation
+ * of intent.
+ */
 export async function devToolsEnabled(): Promise<boolean> {
-  return (
-    process.env.NODE_ENV !== "production" ||
-    process.env.PEPA_ENABLE_DEV_TOOLS === "true"
-  );
+  if (process.env.NODE_ENV === "production") return false;
+  return true;
 }
 
 /**

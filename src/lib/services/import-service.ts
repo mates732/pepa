@@ -136,9 +136,21 @@ export async function createOutreachImport(
     return rejected("store_failed", "The import link could not be created.");
   }
 
+  // `buildImportDeepLink()` can legitimately fail — production refuses to build
+  // a deep link without PEPA_BASE_URL rather than trusting a Host header. The
+  // draft is already stored at this point, so the failure is reported through
+  // the same mapped result as a failed mint instead of escaping as an
+  // unhandled exception.
+  let deepLink: string;
+  try {
+    deepLink = await buildImportDeepLink(minted.data.token);
+  } catch {
+    return rejected("store_failed", "The import link could not be created.");
+  }
+
   return {
     ok: true,
-    deepLink: await buildImportDeepLink(minted.data.token),
+    deepLink,
     recipient,
     created: !existing,
     alreadyContacted: false,

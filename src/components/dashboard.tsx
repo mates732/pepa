@@ -2,11 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { checkRecipient, saveDraft } from "@/app/actions";
+import { checkRecipient, recordOutreachSent, saveDraft } from "@/app/actions";
 import { EmailComposer, type ComposerValues } from "@/components/email-composer";
 import { OutreachHistory } from "@/components/outreach-history";
 import { PasteImport } from "@/components/paste-import";
-import { NOT_CONFIGURED_MESSAGE } from "@/lib/providers/registry";
+import { formatDate, formatDateTime } from "@/lib/format";
 import type { DuplicateCheckResult, OutreachHistoryRow, ParsedOutreachInput } from "@/lib/types";
 
 const EMPTY: ComposerValues = {
@@ -16,7 +16,18 @@ const EMPTY: ComposerValues = {
   companyName: "",
   contactName: "",
   messageId: null,
+  leadId: null,
 };
+
+/**
+ * Spoken before anything is written.
+ *
+ * PEPA does not send email and has no provider. The operator sends it from their
+ * own mail client first; this only records the fact. The wording has to say so
+ * before the click, not after.
+ */
+const SENT_CONFIRMATION =
+  "PEPA does not send this email. Confirm only after you have sent it through your email provider.";
 
 interface Notice {
   kind: "info" | "error";
@@ -115,6 +126,7 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
       setValues((current) => ({
         ...current,
         messageId: result.message.id,
+        leadId: result.lead.id,
         companyName: result.lead.company_name ?? current.companyName,
         contactName: result.lead.contact_name ?? current.contactName,
       }));
@@ -127,8 +139,67 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
     }
   }
 
-  function handleSend() {
-    setNotice({ kind: "info", text: NOT_CONFIGURED_MESSAGE });
+  /**
+   * Record an already-sent draft. This does NOT send anything.
+   *
+   * Confirmation is required first, then the server action compare-and-sets the
+   * row and schedules follow-up #1. Submitting twice is safe: the second call
+   * comes back `already_sent` and schedules nothing further.
+   */
+  async function handleSend() {
+    if (!values.messageId || !values.leadId) {
+      setNotice({
+        kind: "error",
+        text: "Save the draft first — there is nothing recorded to mark as sent yet.",
+      });
+      return;
+    }
+
+    if (!window.confirm(SENT_CONFIRMATION)) return;
+
+    setSaving(true);
+    setNotice(null);
+    try {
+      const result = await recordOutreachSent({
+        messageId: values.messageId,
+        leadId: values.leadId,
+      });
+
+      if (!result.ok) {
+        setNotice({ kind: "error", text: result.error });
+        return;
+      }
+
+      setSaved(true);
+
+      if (result.outcome === "already_sent") {
+        setNotice({
+          kind: "info",
+          text: `Already recorded as sent on ${formatDateTime(
+            result.message.sent_at,
+          )}. Nothing was changed.`,
+        });
+      } else if (result.nextFollowUpAt) {
+        setNotice({
+          kind: "info",
+          text: `Recorded as sent at ${formatDateTime(
+            result.message.sent_at,
+          )}. Follow-up #1 is due ${formatDate(result.nextFollowUpAt)}.`,
+        });
+      } else {
+        setNotice({
+          kind: "info",
+          text: `Recorded as sent at ${formatDateTime(
+            result.message.sent_at,
+          )}. No further follow-up will be scheduled.`,
+        });
+      }
+
+      // The duplicate badge is derived from sent_at, so it must be re-read.
+      void runDuplicateCheck(values.recipient);
+    } finally {
+      setSaving(false);
+    }
   }
 
   function handleOpenFromHistory(row: OutreachHistoryRow) {
@@ -139,6 +210,9 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
       companyName: row.company_name ?? "",
       contactName: row.contact_name ?? "",
       messageId: null,
+      // The overview view exposes the lead id but not the message id, so a
+      // re-opened row must be saved before it can be recorded as sent.
+      leadId: row.id,
     });
     setHasContent(true);
     setSaved(false);
