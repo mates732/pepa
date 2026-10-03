@@ -202,24 +202,48 @@ export interface FollowUpListItem {
   /** True when `next_followup_at` is set and already in the past. */
   due: boolean;
   dueAt: string | null;
+  /**
+   * Operational rank: 0 = needs attention now, 1 = unsent, 2 = already sent.
+   * See {@link listFollowUps} for why this is not a database column.
+   */
+  attention: 0 | 1 | 2;
+}
+
+/** A message that left the outbox is finished; everything else still needs work. */
+function isSent(message: OutreachMessage): boolean {
+  return message.sent_at !== null || message.status === "sent";
 }
 
 /**
- * Every stored follow-up (`sequence_number > 0`), newest sequence first.
+ * Every stored follow-up (`sequence_number > 0`), in workspace order.
  *
  * Deliberately NOT derived from `leads.followup_count`: only real rows are
  * listed. Scheduling fields are still joined in, because `next_followup_at` is
  * what the operator acts on.
+ *
+ * Ordering. `sequence_number` is a position *within one lead*, so ordering by it
+ * alone is meaningless across leads — it would interleave every lead's
+ * follow-up #1 before any #2. A workspace needs a presentation order instead,
+ * defined here in TypeScript rather than in SQL, which means no migration:
+ *
+ *   1. due follow-ups, soonest first  — the ones to act on today
+ *   2. other unsent follow-ups          — ready, not yet due
+ *   3. sent follow-ups, most recent first — history
+ *
+ * Every group falls back to deterministic tie-breakers (lead id, then sequence
+ * number, then message id) so two identical requests always render the same
+ * order. `attention` is returned so the UI can group without re-deriving it.
  */
-export async function listFollowUps(limit = 50): Promise<FollowUpResult<FollowUpListItem[]>> {
+export async function listFollowUps(limit = 100): Promise<FollowUpResult<FollowUpListItem[]>> {
   const supabase = getSupabaseAdmin();
   const now = Date.now();
 
   const { data, error } = await supabase
     .from("outreach_messages")
-    .select(`${MESSAGE_COLUMNS}, leads(id, email, company_name, contact_name, next_followup_at)`)
+    .select(`${MESSAGE_COLUMNS}, leads(id, email, company_name, contact_name, next_followup_at, followup_count)`)
     .gt("sequence_number", 0)
-    .order("sequence_number", { ascending: false })
+    // Stable base order from the database; the workspace order is applied below.
+    .order("created_at", { ascending: false })
     .limit(limit);
 
   if (error) return fail("store_failed", "Follow-ups could not be loaded.");
@@ -229,6 +253,8 @@ export async function listFollowUps(limit = 50): Promise<FollowUpResult<FollowUp
     const lead = (row.leads ?? {}) as Record<string, unknown>;
     const dueAt = (lead.next_followup_at ?? null) as string | null;
     const dueTimestamp = dueAt ? Date.parse(dueAt) : Number.NaN;
+    const due = Number.isFinite(dueTimestamp) && dueTimestamp <= now;
+    const sent = isSent(message);
 
     return {
       message,
@@ -239,11 +265,51 @@ export async function listFollowUps(limit = 50): Promise<FollowUpResult<FollowUp
         contact_name: (lead.contact_name ?? null) as string | null,
       },
       dueAt,
-      due: Number.isFinite(dueTimestamp) && dueTimestamp <= now,
+      due,
+      // Due wins over merely unsent: an overdue follow-up is the actionable one.
+      attention: (sent ? 2 : due ? 0 : 1) as 0 | 1 | 2,
     };
   });
 
+  items.sort(compareForWorkspace);
+
   return { ok: true, data: items, error: null };
+}
+
+/**
+ * Total, deterministic workspace order. Exported so the ordering rule can be
+ * tested directly rather than inferred from a rendered list.
+ */
+export function compareForWorkspace(a: FollowUpListItem, b: FollowUpListItem): number {
+  if (a.attention !== b.attention) return a.attention - b.attention;
+
+  const aDue = a.dueAt ? Date.parse(a.dueAt) : Number.NaN;
+  const bDue = b.dueAt ? Date.parse(b.dueAt) : Number.NaN;
+
+  if (a.attention !== 2) {
+    // Due items: soonest deadline first. Items with no deadline sort last.
+    if (Number.isFinite(aDue) && Number.isFinite(bDue) && aDue !== bDue) return aDue - bDue;
+    if (Number.isFinite(aDue) !== Number.isFinite(bDue)) {
+      return Number.isFinite(aDue) ? -1 : 1;
+    }
+  } else {
+    // Sent items: most recently sent first.
+    const aSent = a.message.sent_at ? Date.parse(a.message.sent_at) : Number.NaN;
+    const bSent = b.message.sent_at ? Date.parse(b.message.sent_at) : Number.NaN;
+    if (Number.isFinite(aSent) && Number.isFinite(bSent) && aSent !== bSent) return bSent - aSent;
+    if (Number.isFinite(aSent) !== Number.isFinite(bSent)) {
+      return Number.isFinite(aSent) ? -1 : 1;
+    }
+  }
+
+  // Deterministic tie-breakers. `sequence_number` alone is not a total order
+  // across leads, so lead id comes first and the message id guarantees a total
+  // order even for otherwise identical rows.
+  if (a.lead.id !== b.lead.id) return a.lead.id < b.lead.id ? -1 : 1;
+  if (a.message.sequence_number !== b.message.sequence_number) {
+    return a.message.sequence_number - b.message.sequence_number;
+  }
+  return a.message.id < b.message.id ? -1 : a.message.id > b.message.id ? 1 : 0;
 }
 
 /**

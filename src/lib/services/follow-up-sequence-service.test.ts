@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildGmailComposeUrl } from "@/lib/outreach/gmail-compose";
 
@@ -200,7 +200,20 @@ vi.mock("@/lib/supabase/server", () => ({ getSupabaseAdmin: () => makeSupabase()
 
 const LEAD_ID = "11111111-1111-1111-1111-111111111111";
 const OTHER_LEAD_ID = "22222222-2222-2222-2222-222222222222";
+const THIRD_LEAD_ID = "33333333-3333-3333-3333-333333333333";
 const RECIPIENT = "info@thearchive.cz";
+const OTHER_RECIPIENT = "a@bistrot.cz";
+const THIRD_RECIPIENT = "c@vinoteka.cz";
+
+/** Slot-0 rows are cheap; a follow-up workspace spans several leads at once. */
+function seedSequenceHead(leadId: string, recipient: string, id: string) {
+  return seedMessage({
+    id,
+    lead_id: leadId,
+    recipient_email: recipient,
+    recipient_normalized: recipient,
+  });
+}
 
 async function load() {
   return import("@/lib/services/follow-up-sequence-service");
@@ -560,5 +573,258 @@ describe("gmail compose integration", () => {
     const before = JSON.stringify(db.messages);
     buildGmailComposeUrl({ to: RECIPIENT, subject: "FU1", body: "Text." });
     expect(JSON.stringify(db.messages)).toBe(before);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* Phase 4C — workspace ordering and honest presentation                      */
+/* -------------------------------------------------------------------------- */
+
+describe("follow-up workspace — ordering", () => {
+  /**
+   * Build one follow-up row directly, bypassing the draft flow.
+   *
+   * The row is constructed rather than derived from `seedMessage()`: calling
+   * that helper would push a second slot-0 row on every call, which silently
+   * fabricates history and makes `initial` resolve to an unrelated message.
+   */
+  function seedFollowUp({ id, ...overrides }: Partial<OutreachMessageRow> & { id: string }): OutreachMessageRow {
+    const row: OutreachMessageRow = {
+      id,
+      lead_id: LEAD_ID,
+      recipient_email: RECIPIENT,
+      recipient_normalized: RECIPIENT,
+      subject: "Navazání",
+      body: "Text.",
+      status: "draft",
+      provider: null,
+      provider_message_id: null,
+      sent_at: null,
+      created_at: "2026-10-02T08:00:00.000Z",
+      sequence_number: 1,
+      parent_message_id: null,
+      ...overrides,
+    };
+    db.messages.push(row);
+    return row;
+  }
+
+  // The workspace order depends on `next_followup_at` versus *now*, so pin the
+  // clock instead of letting the wall clock decide what counts as overdue.
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-03T12:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("never lists a sequence 0 row", async () => {
+    seedLead();
+    seedMessage(); // slot 0
+    seedFollowUp({ id: "fu-1" }); // slot 1
+
+    const { listFollowUps } = await load();
+    const list = await listFollowUps();
+
+    expect(list.data?.map((i) => i.message.sequence_number)).toEqual([1]);
+  });
+
+  it("reports the true sequence number, never the counter plus one", async () => {
+    seedLead({ followup_count: 7 });
+    seedMessage();
+    seedFollowUp({ id: "fu-2", sequence_number: 2 });
+
+    const { listFollowUps } = await load();
+    const list = await listFollowUps();
+
+    // Known issue #1 makes `followup_count + 1` read as #8. The stored value wins.
+    expect(list.data?.[0]?.message.sequence_number).toBe(2);
+  });
+
+  it("ranks due follow-ups above merely unsent, and both above sent", async () => {
+    // Due-ness is a property of the lead, so each state needs its own lead.
+    // Mutating one lead after seeding would not work: the embedded lead row is
+    // read at query time, so every row would inherit the final value.
+    seedLead({ next_followup_at: "2099-01-01T00:00:00.000Z" }); // ready, not due
+    seedSequenceHead(LEAD_ID, RECIPIENT, "head-archive");
+    seedLead({ id: OTHER_LEAD_ID, email: OTHER_RECIPIENT, next_followup_at: "2026-01-01T00:00:00.000Z" });
+    seedSequenceHead(OTHER_LEAD_ID, OTHER_RECIPIENT, "head-bistrot");
+    seedLead({ id: THIRD_LEAD_ID, email: THIRD_RECIPIENT, next_followup_at: "2026-10-01T08:00:00.000Z" });
+    seedSequenceHead(THIRD_LEAD_ID, THIRD_RECIPIENT, "head-vinoteka");
+
+    seedFollowUp({ id: "due-1", lead_id: OTHER_LEAD_ID, recipient_email: OTHER_RECIPIENT, recipient_normalized: OTHER_RECIPIENT });
+    seedFollowUp({ id: "later-1" });
+    seedFollowUp({
+      id: "sent-1",
+      lead_id: THIRD_LEAD_ID,
+      recipient_email: THIRD_RECIPIENT,
+      recipient_normalized: THIRD_RECIPIENT,
+      status: "sent",
+      sent_at: "2026-10-01T09:00:00.000Z",
+    });
+
+    const { listFollowUps } = await load();
+    const list = await listFollowUps();
+
+    expect(list.data?.map((i) => i.message.id)).toEqual(["due-1", "later-1", "sent-1"]);
+    expect(list.data?.map((i) => i.attention)).toEqual([0, 1, 2]);
+    expect(list.data?.map((i) => i.due)).toEqual([true, false, true]);
+  });
+
+  it("orders due follow-ups by soonest deadline first", async () => {
+    seedLead({ next_followup_at: "2026-01-05T00:00:00.000Z" }); // overdue, later
+    seedSequenceHead(LEAD_ID, RECIPIENT, "head-archive");
+    seedLead({ id: OTHER_LEAD_ID, email: OTHER_RECIPIENT, next_followup_at: "2026-01-02T00:00:00.000Z" });
+    seedSequenceHead(OTHER_LEAD_ID, OTHER_RECIPIENT, "head-bistrot");
+
+    seedFollowUp({ id: "late" });
+    seedFollowUp({
+      id: "soon",
+      lead_id: OTHER_LEAD_ID,
+      recipient_email: OTHER_RECIPIENT,
+      recipient_normalized: OTHER_RECIPIENT,
+    });
+
+    const { listFollowUps } = await load();
+    const list = await listFollowUps();
+
+    expect(list.data?.map((i) => i.message.id)).toEqual(["soon", "late"]);
+  });
+
+  it("orders sent follow-ups most recently sent first", async () => {
+    seedMessage();
+    const { listFollowUps } = await load();
+
+    seedFollowUp({ id: "older", status: "sent", sent_at: "2026-09-01T00:00:00.000Z" });
+    seedFollowUp({ id: "newer", status: "sent", sent_at: "2026-10-01T00:00:00.000Z" });
+
+    const list = await listFollowUps();
+
+    expect(list.data?.map((i) => i.message.id)).toEqual(["newer", "older"]);
+  });
+
+  it("is deterministic: repeated calls return the same order", async () => {
+    seedMessage();
+    const { listFollowUps } = await load();
+    seedFollowUp({ id: "a" });
+    seedFollowUp({ id: "b" });
+    seedFollowUp({ id: "c" });
+
+    const first = await listFollowUps();
+    const second = await listFollowUps();
+
+    expect(first.data?.map((i) => i.message.id)).toEqual(second.data?.map((i) => i.message.id));
+  });
+
+  it("keeps multiple leads independent and in a stable relative order", async () => {
+    seedLead({ company_name: "The Archive" });
+    seedSequenceHead(LEAD_ID, RECIPIENT, "head-archive");
+    seedLead({ id: OTHER_LEAD_ID, email: OTHER_RECIPIENT, company_name: "Bistrot" });
+    seedSequenceHead(OTHER_LEAD_ID, OTHER_RECIPIENT, "head-bistrot");
+
+    const { listFollowUps } = await load();
+    seedFollowUp({ id: "archive-1" });
+    seedFollowUp({
+      id: "bistrot-1",
+      lead_id: OTHER_LEAD_ID,
+      recipient_email: OTHER_RECIPIENT,
+      recipient_normalized: OTHER_RECIPIENT,
+    });
+
+    const list = await listFollowUps();
+
+    // Both leads hold their own follow-up #1; neither displaces the other.
+    expect(list.data).toHaveLength(2);
+    expect(list.data?.every((i) => i.message.sequence_number === 1)).toBe(true);
+    expect(new Set(list.data?.map((i) => i.lead.id))).toEqual(new Set([LEAD_ID, OTHER_LEAD_ID]));
+  });
+
+  it("preserves status and sent_at verbatim", async () => {
+    seedMessage();
+    const { listFollowUps } = await load();
+    seedFollowUp({ id: "ready-1", status: "ready" });
+    seedFollowUp({ id: "sent-1", status: "sent", sent_at: "2026-10-01T09:14:00.000Z" });
+
+    const list = await listFollowUps();
+    const byId = new Map(list.data?.map((i) => [i.message.id, i]));
+
+    expect(byId.get("ready-1")?.message.status).toBe("ready");
+    expect(byId.get("sent-1")?.message.status).toBe("sent");
+    expect(byId.get("sent-1")?.message.sent_at).toBe("2026-10-01T09:14:00.000Z");
+  });
+
+  it("generates no row for a lead whose follow-ups were never stored", async () => {
+    seedLead({ followup_count: 3 });
+    seedMessage(); // only slot 0 exists
+
+    const { listFollowUps, getFollowUpDetail } = await load();
+    const list = await listFollowUps();
+    const detail = await getFollowUpDetail(messageById(db.messages[0]!.id as string).id);
+
+    expect(list.data).toEqual([]);
+    // The gap is flagged, not filled.
+    expect(detail.data?.unrecordedHistory).toBe(true);
+  });
+});
+
+describe("follow-up workspace — detail edge cases", () => {
+  it("handles a follow-up whose parent row was deleted", async () => {
+    seedLead();
+    // Only the orphaned follow-up survives: its predecessor was deleted, so
+    // Phase 4A's ON DELETE SET NULL left parent_message_id empty. Nothing else
+    // about the sequence exists either.
+    db.messages.push({
+      id: "orphan-1",
+      lead_id: LEAD_ID,
+      recipient_email: RECIPIENT,
+      recipient_normalized: RECIPIENT,
+      subject: "Navazání bez předchůdce",
+      body: null,
+      status: "draft",
+      provider: null,
+      provider_message_id: null,
+      sent_at: null,
+      created_at: "2026-10-02T08:00:00.000Z",
+      sequence_number: 3,
+      parent_message_id: null,
+    } as OutreachMessageRow);
+
+    const { getFollowUpDetail } = await load();
+    const detail = await getFollowUpDetail("orphan-1");
+
+    expect(detail.ok).toBe(true);
+    expect(detail.data?.message.sequence_number).toBe(3);
+    // No parent and no initial: both are absent rather than fabricated.
+    expect(detail.data?.parent).toBeNull();
+    expect(detail.data?.initial).toBeNull();
+    expect(detail.data?.isInitial).toBe(false);
+  });
+
+  it("loads the exact message requested, not a different follow-up", async () => {
+    seedLead();
+    seedMessage();
+    const { createFollowUpDraft } = await load();
+    const first = await createFollowUpDraft({ anchorMessageId: messageById(db.messages[0]!.id as string).id, subject: "FU1", body: "Jedna." });
+    const second = await createFollowUpDraft({ anchorMessageId: first.data!.message.id, subject: "FU2", body: "Dva." });
+
+    const { getFollowUpDetail } = await load();
+    const detail = await getFollowUpDetail(second.data!.message.id);
+
+    expect(detail.data?.message.subject).toBe("FU2");
+    expect(detail.data?.message.body).toBe("Dva.");
+    expect(detail.data?.message.sequence_number).toBe(2);
+    expect(detail.data?.parent?.subject).toBe("FU1");
+  });
+
+  it("rejects an unknown message id without throwing", async () => {
+    seedLead();
+    const { getFollowUpDetail } = await load();
+
+    const detail = await getFollowUpDetail("00000000-0000-0000-0000-000000000000");
+
+    expect(detail.ok).toBe(false);
+    expect(detail.reason).toBe("not_found");
   });
 });

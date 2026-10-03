@@ -2,11 +2,22 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { checkQualityGate, checkRecipient, openOutreachInGmail, recordOutreachSent, saveDraft } from "@/app/actions";
+import {
+  checkQualityGate,
+  checkRecipient,
+  loadFollowUpDetail,
+  loadFollowUpWorkspace,
+  openOutreachInGmail,
+  recordOutreachSent,
+  saveDraft,
+} from "@/app/actions";
 import { EmailComposer, type ComposerValues } from "@/components/email-composer";
+import { FollowUpDetail } from "@/components/follow-up-detail";
+import { FollowUpWorkspace } from "@/components/follow-up-workspace";
 import { OutreachHistory } from "@/components/outreach-history";
 import { PasteImport } from "@/components/paste-import";
 import { formatDate, formatDateTime } from "@/lib/format";
+import type { FollowUpDetail as FollowUpDetailData, FollowUpListItem } from "@/lib/services/follow-up-sequence-service";
 import type { GateEvaluation } from "@/lib/services/outreach-quality-gate";
 import type { DuplicateCheckResult, OutreachHistoryRow, ParsedOutreachInput } from "@/lib/types";
 
@@ -55,6 +66,17 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
   // is an explicit decision rather than a silent override.
   const [warningsConfirmed, setWarningsConfirmed] = useState(false);
   const [openingGmail, setOpeningGmail] = useState(false);
+
+  // Follow-ups workspace. Loaded once on mount and refreshed after a send, so
+  // the list reflects stored state rather than an optimistic local guess.
+  const [followUps, setFollowUps] = useState<FollowUpListItem[]>([]);
+  const [followUpsLoading, setFollowUpsLoading] = useState(true);
+  const [followUpsError, setFollowUpsError] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [detail, setDetail] = useState<FollowUpDetailData | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailNotice, setDetailNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
+  const [recordingDetail, setRecordingDetail] = useState(false);
 
   const valuesRef = useRef(values);
   useEffect(() => {
@@ -184,6 +206,117 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
       });
     } finally {
       setOpeningGmail(false);
+    }
+  }
+
+  /** Load the workspace once. Read-only: opening it records nothing. */
+  const loadWorkspace = useCallback(async () => {
+    setFollowUpsLoading(true);
+    try {
+      const result = await loadFollowUpWorkspace();
+      if (result.ok) {
+        setFollowUps(result.followUps);
+        setFollowUpsError(null);
+      } else {
+        setFollowUpsError(result.error);
+      }
+    } finally {
+      setFollowUpsLoading(false);
+    }
+  }, []);
+
+  // Deferred for the same reason the gate and duplicate checks are: a fetch
+  // that synchronously flips loading state would cascade a second render.
+  useEffect(() => {
+    const handle = setTimeout(() => void loadWorkspace(), 0);
+    return () => clearTimeout(handle);
+  }, [loadWorkspace]);
+
+  /** Open one follow-up's exact message. */
+  const handleSelectFollowUp = useCallback(async (messageId: string) => {
+    setSelectedId(messageId);
+    setDetailNotice(null);
+    setDetailLoading(true);
+    try {
+      const result = await loadFollowUpDetail(messageId);
+      if (result.ok) {
+        setDetail(result.detail);
+      } else {
+        // The server refused (unknown id, or a lead that no longer exists).
+        setDetail(null);
+        setDetailNotice({ kind: "error", text: result.error });
+      }
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
+
+  /**
+   * Open a follow-up in Gmail from the detail view.
+   *
+   * Reuses the Phase 4B server action, so recipient, subject and body are
+   * resolved from the database and nothing is written. Opening Gmail is not
+   * sending; that stays a separate, explicit action.
+   */
+  async function handleOpenDetailInGmail(messageId: string) {
+    setOpeningGmail(true);
+    setDetailNotice(null);
+    try {
+      const result = await openOutreachInGmail(messageId);
+      if (!result.ok) {
+        setDetailNotice({ kind: "error", text: result.error });
+        return;
+      }
+      window.open(result.url, "_blank", "noopener,noreferrer");
+      setDetailNotice({
+        kind: "info",
+        text: "Gmail opened with the saved text. Nothing was sent — use “Mark as sent” after you send it yourself.",
+      });
+    } finally {
+      setOpeningGmail(false);
+    }
+  }
+
+  /**
+   * Record a follow-up as sent.
+   *
+   * Goes through the existing authenticated action, so the server-authoritative
+   * quality gate runs before anything is persisted. On success the workspace and
+   * the detail are re-read from the database; on failure the local state is left
+   * untouched, because nothing was written.
+   */
+  async function handleMarkDetailSent(messageId: string, leadId: string) {
+    setRecordingDetail(true);
+    setDetailNotice(null);
+    try {
+      const result = await recordOutreachSent({ messageId, leadId });
+
+      // Refusals (gate blocked / needs confirmation) arrive as `ok: false` with
+      // an `outcome`. Nothing was written, so local state stays untouched.
+      if (!result.ok) {
+        const refusal = "outcome" in result ? result : null;
+        setDetailNotice({
+          kind: "error",
+          text:
+            refusal?.outcome === "needs_confirmation"
+              ? `${result.error} Confirm the warnings to continue.`
+              : result.error,
+        });
+        return;
+      }
+
+      if (result.outcome === "already_sent") {
+        setDetailNotice({ kind: "info", text: "Already recorded as sent. Nothing was changed." });
+      } else {
+        setDetailNotice({ kind: "info", text: "Recorded as sent. The next follow-up is scheduled." });
+      }
+
+      // Re-read from the server rather than patching local state, so the UI can
+      // never claim a send the database does not hold.
+      await loadWorkspace();
+      await handleSelectFollowUp(messageId);
+    } finally {
+      setRecordingDetail(false);
     }
   }
 
@@ -382,6 +515,36 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
       ) : null}
 
       <OutreachHistory rows={initialRows} onLoadIntoComposer={handleOpenFromHistory} />
+
+      <FollowUpWorkspace
+        followUps={followUps}
+        onSelect={(id) => void handleSelectFollowUp(id)}
+        loading={followUpsLoading}
+        error={followUpsError}
+        selectedId={selectedId}
+      />
+
+      {detailLoading ? (
+        <section className="sticker">
+          <p className="m-5 rounded-[1.25rem] border-[3px] border-dashed border-midnight-line bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
+            Loading follow-up…
+          </p>
+        </section>
+      ) : detail ? (
+        <FollowUpDetail
+          detail={detail}
+          onClose={() => {
+            setDetail(null);
+            setSelectedId(null);
+            setDetailNotice(null);
+          }}
+          onOpenInGmail={(id) => void handleOpenDetailInGmail(id)}
+          onMarkSent={(id, leadId) => void handleMarkDetailSent(id, leadId)}
+          openingGmail={openingGmail}
+          recording={recordingDetail}
+          notice={detailNotice}
+        />
+      ) : null}
     </div>
   );
 }

@@ -8,6 +8,12 @@ import { buildGmailComposeUrl } from "@/lib/outreach/gmail-compose";
 import { findLeadByEmail } from "@/lib/services/lead-service";
 import { createDraft, recordOutreachSent as recordOutreachSentService } from "@/lib/services/outreach-service";
 import { evaluateDraftQualityGate, type GateEvaluation } from "@/lib/services/outreach-quality-gate";
+import {
+  getFollowUpDetail,
+  listFollowUps,
+  type FollowUpDetail,
+  type FollowUpListItem,
+} from "@/lib/services/follow-up-sequence-service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type { DuplicateCheckResult, Lead, OutreachMessage } from "@/lib/types";
 
@@ -188,6 +194,60 @@ export async function openOutreachInGmail(messageId: string): Promise<OpenInGmai
   } catch {
     // Never surface a raw database error to the browser.
     return failure("That message could not be opened.");
+  }
+}
+
+export type FollowUpWorkspaceResult =
+  | { ok: true; followUps: FollowUpListItem[]; error: null }
+  | ActionFailure;
+
+export type FollowUpDetailResult =
+  | { ok: true; detail: FollowUpDetail; error: null }
+  | ActionFailure;
+
+/**
+ * Load the Follow-ups workspace.
+ *
+ * A server action rather than a client fetch so the sequence rules stay on the
+ * server: the browser receives already-ordered rows and never issues its own
+ * Supabase query. It is read-only — opening the workspace records nothing.
+ */
+export async function loadFollowUpWorkspace(): Promise<FollowUpWorkspaceResult> {
+  await requireAuthenticatedUser();
+
+  try {
+    const result = await listFollowUps();
+    if (!result.ok || !result.data) {
+      return failure(result.error ?? "Follow-ups could not be loaded.");
+    }
+    return { ok: true, followUps: result.data, error: null };
+  } catch {
+    return failure("Follow-ups could not be loaded.");
+  }
+}
+
+/**
+ * Load one follow-up's detail, including its position in the sequence.
+ *
+ * The message id is the only input: lead, recipient, subject, body and sequence
+ * position all come from the database, so a crafted id cannot redirect the view
+ * onto content the caller did not already have access to.
+ */
+export async function loadFollowUpDetail(messageId: string): Promise<FollowUpDetailResult> {
+  await requireAuthenticatedUser();
+
+  if (!messageId || !UUID_PATTERN.test(messageId)) {
+    return failure("That follow-up could not be identified.");
+  }
+
+  try {
+    const result = await getFollowUpDetail(messageId);
+    if (!result.ok || !result.data) {
+      return failure(result.error ?? "That follow-up could not be loaded.");
+    }
+    return { ok: true, detail: result.data, error: null };
+  } catch {
+    return failure("That follow-up could not be loaded.");
   }
 }
 
