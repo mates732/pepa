@@ -15,9 +15,11 @@ import {
 import { EmailComposer, type ComposerValues } from "@/components/email-composer";
 import { FollowUpDetail } from "@/components/follow-up-detail";
 import { FollowUpWorkspace } from "@/components/follow-up-workspace";
+import { loadOutreachStats } from "@/app/stats-actions";
 import { OutreachActivity } from "@/components/outreach-activity";
 import { OutreachActivityDetail } from "@/components/outreach-activity-detail";
 import { OutreachHistory } from "@/components/outreach-history";
+import { OutreachStats } from "@/components/outreach-stats";
 import { PasteImport } from "@/components/paste-import";
 import { formatDate, formatDateTime } from "@/lib/format";
 import type { FollowUpDetail as FollowUpDetailData, FollowUpListItem } from "@/lib/services/follow-up-sequence-service";
@@ -96,6 +98,60 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
   const [activityDetail, setActivityDetail] = useState<OutreachActivityDetailData | null>(null);
   const [activityDetailLoading, setActivityDetailLoading] = useState(false);
   const [activityNotice, setActivityNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
+
+  // Stats. Read-only and server-counted: the browser never holds a message row,
+  // only the seven figures. The reader's zone is sent so the server can resolve
+  // where each window starts; every count still comes from the database.
+  const [stats, setStats] = useState<{
+    today: number;
+    week: number;
+    month: number;
+    allTime: number;
+    initialOutreach: number;
+    followUps: number;
+    totalSent: number;
+  } | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [statsComplete, setStatsComplete] = useState(true);
+  const [statsTimeZone, setStatsTimeZone] = useState<string | null>(null);
+
+  /**
+   * The calendar the operator is actually reading in.
+   *
+   * Read in the browser, because that is where it exists: a serverless runtime
+   * has UTC and would count the wrong day. Only the zone name is sent — no
+   * boundaries, no counts — so the server still owns the arithmetic.
+   */
+  function readerTimeZone(): string {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    } catch {
+      return "UTC";
+    }
+  }
+
+  const loadStats = useCallback(async () => {
+    setStatsLoading(true);
+    try {
+      const result = await loadOutreachStats({ timeZone: readerTimeZone() });
+      if (result.ok) {
+        setStats(result.stats);
+        setStatsComplete(result.complete);
+        setStatsTimeZone(result.timeZone);
+        setStatsError(null);
+      } else {
+        setStatsError(result.error);
+      }
+    } finally {
+      setStatsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handle = setTimeout(() => void loadStats(), 0);
+    return () => clearTimeout(handle);
+  }, [loadStats]);
 
   const valuesRef = useRef(values);
   useEffect(() => {
@@ -409,6 +465,9 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
       // A newly recorded send is a new activity row, so the window is re-read
       // too. Activity is never patched locally either.
       await loadActivity();
+      // A recorded send moves every count, so stats are re-read too rather than
+      // incremented locally.
+      await loadStats();
       await handleSelectFollowUp(messageId);
     } finally {
       setRecordingDetail(false);
@@ -529,6 +588,7 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
       // same send is also a new activity record.
       void runDuplicateCheck(values.recipient);
       void loadActivity();
+      void loadStats();
     } finally {
       setSaving(false);
     }
@@ -575,6 +635,14 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
 
   return (
     <div className="flex flex-col gap-7">
+      <OutreachStats
+        stats={stats}
+        loading={statsLoading}
+        error={statsError}
+        complete={statsComplete}
+        timeZone={statsTimeZone}
+      />
+
       <PasteImport
         onParsed={handleParsed}
         onError={(message) => {
