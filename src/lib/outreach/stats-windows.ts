@@ -84,8 +84,21 @@ interface LocalParts {
   second: number;
 }
 
-/** Wall-clock fields of `instant` as seen in `timeZone`. */
-function localParts(timeZone: string, instant: Date): LocalParts {
+/**
+ * One formatter per zone, reused.
+ *
+ * Constructing an `Intl.DateTimeFormat` is far more expensive than using one,
+ * and a single stats or streak load resolves thousands of instants through this
+ * path. The formatters are stateless and zone-keyed, so caching them changes no
+ * result — only how long it takes to get one. The map is bounded by the number
+ * of zones a process ever reads in, which is one.
+ */
+const formatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function formatterFor(timeZone: string): Intl.DateTimeFormat {
+  const cached = formatterCache.get(timeZone);
+  if (cached) return cached;
+
   const formatter = new Intl.DateTimeFormat("en-US", {
     timeZone,
     hourCycle: "h23",
@@ -96,6 +109,13 @@ function localParts(timeZone: string, instant: Date): LocalParts {
     minute: "2-digit",
     second: "2-digit",
   });
+  formatterCache.set(timeZone, formatter);
+  return formatter;
+}
+
+/** Wall-clock fields of `instant` as seen in `timeZone`. */
+function localParts(timeZone: string, instant: Date): LocalParts {
+  const formatter = formatterFor(timeZone);
 
   const fields: Record<string, string> = {};
   for (const part of formatter.formatToParts(instant)) {
@@ -128,14 +148,19 @@ function zoneOffsetMs(timeZone: string, instant: Date): number {
   return asIfUtc - floored;
 }
 
+/** Whole-day number of a local date, for comparing local dates with each other. */
+function localDateNumber(timeZone: string, instant: Date): number {
+  const { year, month, day } = localParts(timeZone, instant);
+  return Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
+}
+
 /**
  * The UTC instant of local midnight on the local date `year-month-day`.
  *
  * The offset that applies at local midnight is not always the offset that
  * applies at the naive UTC guess for that date, so it is resolved once and
- * re-checked after correction. Two passes are enough: the correction moves by
- * at most one offset step, and the second read is taken at the corrected
- * instant.
+ * re-checked after correction: the correction moves by at most one offset step,
+ * and the second read is taken at the corrected instant.
  *
  * Where a zone genuinely skips midnight on a DST spring-forward day, this
  * resolves to the first instant that does exist on that local date — the day's
@@ -143,14 +168,23 @@ function zoneOffsetMs(timeZone: string, instant: Date): number {
  */
 function startOfLocalDay(timeZone: string, year: number, month: number, day: number): Date {
   const naive = Date.UTC(year, month - 1, day, 0, 0, 0, 0);
+  const target = Math.floor(naive / 86_400_000);
 
-  const offset = zoneOffsetMs(timeZone, new Date(naive));
-  let instant = naive - offset;
+  const first = naive - zoneOffsetMs(timeZone, new Date(naive));
+  const second = naive - zoneOffsetMs(timeZone, new Date(first));
 
-  const corrected = zoneOffsetMs(timeZone, new Date(instant));
-  if (corrected !== offset) instant = naive - corrected;
+  // Prefer whichever candidate really begins the requested local date. A
+  // correction can cross the very transition that prompted it — in a zone whose
+  // clocks jump forward at local midnight — and taking it unconditionally would
+  // start the day an hour early and hand that hour to the previous window.
+  for (const candidate of [second, first]) {
+    if (localDateNumber(timeZone, new Date(candidate)) === target) return new Date(candidate);
+  }
 
-  return new Date(instant);
+  // No local midnight exists on this date: a skipped DST hour or a date the
+  // zone never experienced. The day's real beginning is the later candidate,
+  // never the previous day.
+  return new Date(Math.max(first, second));
 }
 
 /** Days since Sunday for a plain `YYYY-MM-DD`, via UTC to dodge DST entirely. */
@@ -220,6 +254,43 @@ function shiftDate(year: number, month: number, day: number, days: number): Date
   const shifted = new Date(Date.UTC(year, month - 1, day));
   shifted.setUTCDate(shifted.getUTCDate() + days);
   return [shifted.getUTCFullYear(), shifted.getUTCMonth() + 1, shifted.getUTCDate()];
+}
+
+/**
+ * The local calendar day an instant falls on, as a plain `YYYY-MM-DD` key.
+ *
+ * Streaks are calendar facts, so they need a calendar-day *identity* — not a
+ * window comparison and not a 24-hour offset. A day containing 23 or 25 real
+ * hours because of a daylight-saving transition is still exactly one day, and
+ * this key is one key for it.
+ *
+ * Derived through the same `localParts` resolution every other boundary here
+ * uses, so a day key and a window edge can never disagree about where a day
+ * starts. No offset is assumed anywhere: the offset is read per instant, which
+ * is what makes DST and non-whole-hour zones such as `Asia/Kathmandu` fall out
+ * correctly instead of being approximated.
+ *
+ * Returns `null` — never a guessed date — for an unusable zone or an
+ * unparseable instant, so a caller cannot silently mis-file a send.
+ */
+export function localDayKeyInZone(timeZone: string, instant: Date | number | string): string | null {
+  if (!isValidTimeZone(timeZone)) return null;
+
+  const date = instant instanceof Date ? instant : new Date(instant);
+  if (Number.isNaN(date.getTime())) return null;
+
+  const { year, month, day } = localParts(timeZone, date);
+  return `${padYear(year)}-${pad2(month)}-${pad2(day)}`;
+}
+
+/** Two digits, so lexical order on a key is chronological order. */
+function pad2(value: number): string {
+  return String(value).padStart(2, "0");
+}
+
+/** Four digits, so years before 1000 still compare lexically. */
+function padYear(value: number): string {
+  return String(value).padStart(4, "0");
 }
 
 /** `[start, end)` — a half-open window, so boundaries are never double-counted. */

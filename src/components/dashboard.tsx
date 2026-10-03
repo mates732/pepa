@@ -16,10 +16,12 @@ import { EmailComposer, type ComposerValues } from "@/components/email-composer"
 import { FollowUpDetail } from "@/components/follow-up-detail";
 import { FollowUpWorkspace } from "@/components/follow-up-workspace";
 import { loadOutreachStats } from "@/app/stats-actions";
+import { loadOutreachStreaks } from "@/app/streak-actions";
 import { OutreachActivity } from "@/components/outreach-activity";
 import { OutreachActivityDetail } from "@/components/outreach-activity-detail";
 import { OutreachHistory } from "@/components/outreach-history";
 import { OutreachStats } from "@/components/outreach-stats";
+import { OutreachStreaks } from "@/components/outreach-streaks";
 import { PasteImport } from "@/components/paste-import";
 import { formatDate, formatDateTime } from "@/lib/format";
 import type { FollowUpDetail as FollowUpDetailData, FollowUpListItem } from "@/lib/services/follow-up-sequence-service";
@@ -116,6 +118,24 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
   const [statsComplete, setStatsComplete] = useState(true);
   const [statsTimeZone, setStatsTimeZone] = useState<string | null>(null);
 
+  // Streaks. Also read-only and server-counted. The two completeness flags are
+  // server facts, not UI choices: the browser never decides whether the history
+  // it was given is the whole history.
+  const [streaks, setStreaks] = useState<{
+    currentStreak: number;
+    longestStreak: number;
+    activeDaysThisWeek: number;
+    activeDaysThisMonth: number;
+    totalActiveDays: number;
+    daysInWeek: number;
+    daysInMonth: number;
+  } | null>(null);
+  const [streaksLoading, setStreaksLoading] = useState(true);
+  const [streaksError, setStreaksError] = useState<string | null>(null);
+  const [streaksComplete, setStreaksComplete] = useState(true);
+  const [streaksCurrentExact, setStreaksCurrentExact] = useState(true);
+  const [streaksTimeZone, setStreaksTimeZone] = useState<string | null>(null);
+
   /**
    * The calendar the operator is actually reading in.
    *
@@ -152,6 +172,36 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
     const handle = setTimeout(() => void loadStats(), 0);
     return () => clearTimeout(handle);
   }, [loadStats]);
+
+  /**
+   * Load the streaks from the server.
+   *
+   * Never patched locally. A newly recorded send might be the first one today,
+   * which starts a day, or the fourth one today, which changes nothing at all —
+   * the database is the only thing that can tell those apart.
+   */
+  const loadStreaks = useCallback(async () => {
+    setStreaksLoading(true);
+    try {
+      const result = await loadOutreachStreaks({ timeZone: readerTimeZone() });
+      if (result.ok) {
+        setStreaks(result.streaks);
+        setStreaksComplete(result.complete);
+        setStreaksCurrentExact(result.currentStreakComplete);
+        setStreaksTimeZone(result.timeZone);
+        setStreaksError(null);
+      } else {
+        setStreaksError(result.error);
+      }
+    } finally {
+      setStreaksLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handle = setTimeout(() => void loadStreaks(), 0);
+    return () => clearTimeout(handle);
+  }, [loadStreaks]);
 
   const valuesRef = useRef(values);
   useEffect(() => {
@@ -468,6 +518,10 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
       // A recorded send moves every count, so stats are re-read too rather than
       // incremented locally.
       await loadStats();
+      // Streaks are re-read for the same reason, and with the same restraint:
+      // whether this send started a new active day is a fact about the
+      // database, not something the browser may assume.
+      await loadStreaks();
       await handleSelectFollowUp(messageId);
     } finally {
       setRecordingDetail(false);
@@ -589,6 +643,7 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
       void runDuplicateCheck(values.recipient);
       void loadActivity();
       void loadStats();
+      void loadStreaks();
     } finally {
       setSaving(false);
     }
@@ -742,6 +797,15 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
       ) : activityNotice ? (
         <p className="notice notice-alarm">{activityNotice.text}</p>
       ) : null}
+
+      <OutreachStreaks
+        streaks={streaks}
+        loading={streaksLoading}
+        error={streaksError}
+        complete={streaksComplete}
+        currentStreakComplete={streaksCurrentExact}
+        timeZone={streaksTimeZone}
+      />
     </div>
   );
 }

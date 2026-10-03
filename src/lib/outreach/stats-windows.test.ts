@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { isValidTimeZone, isWithin, resolveStatsWindows } from "@/lib/outreach/stats-windows";
+import {
+  isValidTimeZone,
+  isWithin,
+  localDayKeyInZone,
+  resolveStatsWindows,
+} from "@/lib/outreach/stats-windows";
 
 /**
  * Tests for the Stats calendar windows.
@@ -18,6 +23,10 @@ const PRAGUE = "Europe/Prague";
 const NEW_YORK = "America/New_York";
 /** No DST at all: a useful control for "is this offset hard-coded?". */
 const KATHMANDU = "Asia/Kathmandu";
+/** Clocks jump forward at local midnight, so that midnight never happens. */
+const SANTIAGO = "America/Santiago";
+/** A 30-minute daylight-saving step, and no whole-hour offset either. */
+const LORD_HOWE = "Australia/Lord_Howe";
 
 /** Wall-clock time in a zone, as an absolute instant. */
 function instantIn(timeZone: string, year: number, month: number, day: number, hour = 0, minute = 0) {
@@ -221,5 +230,94 @@ describe("isWithin", () => {
 
   it("treats an unparseable timestamp as outside every window", () => {
     expect(isWithin("not-a-date", windows.dayStart, windows.nextDayStart)).toBe(false);
+  });
+});
+describe("localDayKeyInZone", () => {
+  it("names the local calendar day an instant falls on", () => {
+    expect(localDayKeyInZone(PRAGUE, "2026-10-07T09:00:00.000Z")).toBe("2026-10-07");
+    expect(localDayKeyInZone(PRAGUE, new Date("2026-10-07T09:00:00.000Z"))).toBe("2026-10-07");
+    expect(localDayKeyInZone(PRAGUE, Date.parse("2026-10-07T09:00:00.000Z"))).toBe("2026-10-07");
+  });
+
+  it("changes key exactly at local midnight, not at a fixed UTC hour", () => {
+    // Prague midnight is 22:00Z in summer and 23:00Z in winter. A hard-coded
+    // offset would put one of these on the wrong day.
+    expect(localDayKeyInZone(PRAGUE, "2026-10-06T21:59:59.000Z")).toBe("2026-10-06");
+    expect(localDayKeyInZone(PRAGUE, "2026-10-06T22:00:00.000Z")).toBe("2026-10-07");
+    expect(localDayKeyInZone(PRAGUE, "2026-01-05T22:59:59.000Z")).toBe("2026-01-05");
+    expect(localDayKeyInZone(PRAGUE, "2026-01-05T23:00:00.000Z")).toBe("2026-01-06");
+  });
+
+  it("files the same instant under different days in different zones", () => {
+    const instant = "2026-10-02T22:00:00.000Z";
+    expect(localDayKeyInZone(PRAGUE, instant)).toBe("2026-10-03");
+    expect(localDayKeyInZone(NEW_YORK, instant)).toBe("2026-10-02");
+    expect(localDayKeyInZone(KATHMANDU, instant)).toBe("2026-10-03");
+  });
+
+  it("resolves a quarter-hour offset, which no whole-hour offset can express", () => {
+    // Kathmandu is UTC+05:45 with no DST; its midnight is 18:15Z.
+    expect(localDayKeyInZone(KATHMANDU, "2026-10-07T18:14:00.000Z")).toBe("2026-10-07");
+    expect(localDayKeyInZone(KATHMANDU, "2026-10-07T18:15:00.000Z")).toBe("2026-10-08");
+  });
+
+  it("gives a 23-hour day and a 25-hour day one key each", () => {
+    // Prague 2026-03-29 has 23 real hours and 2026-10-25 has 25. Both are one
+    // day, which is the whole point of counting in calendar days.
+    expect(localDayKeyInZone(PRAGUE, "2026-03-28T23:00:00.000Z")).toBe("2026-03-29");
+    expect(localDayKeyInZone(PRAGUE, "2026-03-29T21:59:59.000Z")).toBe("2026-03-29");
+    expect(localDayKeyInZone(PRAGUE, "2026-03-29T22:00:00.000Z")).toBe("2026-03-30");
+
+    expect(localDayKeyInZone(PRAGUE, "2026-10-24T22:00:00.000Z")).toBe("2026-10-25");
+    expect(localDayKeyInZone(PRAGUE, "2026-10-25T22:59:59.000Z")).toBe("2026-10-25");
+    expect(localDayKeyInZone(PRAGUE, "2026-10-25T23:00:00.000Z")).toBe("2026-10-26");
+  });
+
+  it("handles a half-hour daylight-saving step", () => {
+    // Lord Howe is +10:30 and steps to +11:00 on 2026-10-04, so its 2026-10-04
+    // begins at 2026-10-03T13:30Z. No whole-hour offset can place that.
+    expect(localDayKeyInZone(LORD_HOWE, "2026-10-03T13:29:00.000Z")).toBe("2026-10-03");
+    expect(localDayKeyInZone(LORD_HOWE, "2026-10-03T13:30:00.000Z")).toBe("2026-10-04");
+    expect(localDayKeyInZone(LORD_HOWE, "2026-10-04T12:59:00.000Z")).toBe("2026-10-04");
+    expect(localDayKeyInZone(LORD_HOWE, "2026-10-04T13:00:00.000Z")).toBe("2026-10-05");
+  });
+
+  it("agrees with the resolved day window on both sides of a transition", () => {
+    for (const [zone, now] of [
+      [PRAGUE, "2026-03-29T12:00:00.000Z"],
+      [PRAGUE, "2026-10-25T12:00:00.000Z"],
+      [NEW_YORK, "2026-03-08T12:00:00.000Z"],
+      [NEW_YORK, "2026-11-01T12:00:00.000Z"],
+      [SANTIAGO, "2026-09-06T18:00:00.000Z"],
+      [LORD_HOWE, "2026-10-04T12:00:00.000Z"],
+    ] as const) {
+      const windows = resolveStatsWindows(zone, new Date(now));
+      const justBefore = new Date(Date.parse(windows.dayStart) - 1).toISOString();
+
+      expect(localDayKeyInZone(zone, windows.dayStart)).toBe(localDayKeyInZone(zone, now));
+      expect(localDayKeyInZone(zone, justBefore)).not.toBe(localDayKeyInZone(zone, now));
+      expect(localDayKeyInZone(zone, windows.nextDayStart)).not.toBe(localDayKeyInZone(zone, now));
+    }
+  });
+
+  it("returns null rather than a guessed date for unusable input", () => {
+    expect(localDayKeyInZone("Mars/Olympus", "2026-10-07T09:00:00.000Z")).toBeNull();
+    expect(localDayKeyInZone(PRAGUE, "not-a-date")).toBeNull();
+    expect(localDayKeyInZone("", "2026-10-07T09:00:00.000Z")).toBeNull();
+  });
+});
+
+describe("resolveStatsWindows — a zone whose local midnight does not exist", () => {
+  it("starts the day at the first instant that does exist on it", () => {
+    // Santiago jumps 00:00 to 01:00 on 2026-09-06. The day must still begin on
+    // the 6th: starting it an hour early would file the last hour of the 5th
+    // into the 6th.
+    const windows = resolveStatsWindows(SANTIAGO, instantIn(SANTIAGO, 2026, 9, 6, 18, 0));
+
+    expect(localDayKeyInZone(SANTIAGO, windows.dayStart)).toBe("2026-09-06");
+    expect(localDayKeyInZone(SANTIAGO, new Date(Date.parse(windows.dayStart) - 1).toISOString())).toBe(
+      "2026-09-05",
+    );
+    expect(localDayKeyInZone(SANTIAGO, windows.nextDayStart)).toBe("2026-09-07");
   });
 });
