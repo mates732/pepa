@@ -35,9 +35,7 @@ export function TelegramTestButton() {
       {result ? (
         <p
           role="status"
-          className={`max-w-[280px] text-right text-[11px] ${
-            result.kind === "ok" ? "text-midnight" : "text-midnight"
-          }`}
+          className="max-w-[280px] text-right text-[11px] font-semibold text-midnight"
         >
           {result.text}
         </p>
