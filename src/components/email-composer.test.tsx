@@ -39,6 +39,8 @@ function render(overrides: Partial<React.ComponentProps<typeof EmailComposer>> =
     gate: null,
     gatePending: false,
     warningsConfirmed: false,
+    onOpenInGmail: () => {},
+    openingGmail: false,
     ...overrides,
     values,
   };

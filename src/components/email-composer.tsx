@@ -33,6 +33,9 @@ interface EmailComposerProps {
   gatePending: boolean;
   /** True once the operator has acknowledged the gate's warnings. */
   warningsConfirmed: boolean;
+  /** Opens the stored draft in Gmail compose. Never marks anything as sent. */
+  onOpenInGmail: () => void;
+  openingGmail: boolean;
 }
 
 export function EmailComposer(props: EmailComposerProps) {
@@ -139,6 +142,21 @@ export function EmailComposer(props: EmailComposerProps) {
             {props.saving ? "Saving…" : props.savingDone ? "Draft saved" : "Save draft"}
           </button>
 
+          {/*
+            Opening Gmail only fills a compose window. It is deliberately a
+            separate control from "Mark as sent" so the two can never be
+            confused: this button records nothing.
+          */}
+          <button
+            type="button"
+            onClick={props.onOpenInGmail}
+            disabled={props.openingGmail || !values.messageId}
+            title="Opens a Gmail draft with this text. This does not send anything and does not mark it as sent."
+            className="btn"
+          >
+            {props.openingGmail ? "Opening…" : "Open in Gmail ↗"}
+          </button>
+
           <button
             type="button"
             onClick={props.onSend}
@@ -156,6 +174,10 @@ export function EmailComposer(props: EmailComposerProps) {
           >
             Clear
           </button>
+
+          <p className="w-full pt-1 text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
+            Opening Gmail does not mark this as sent — only “Mark as sent” does.
+          </p>
         </div>
       </div>
     </section>

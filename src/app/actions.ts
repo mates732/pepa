@@ -4,9 +4,11 @@ import { revalidatePath } from "next/cache";
 
 import { requireAuthenticatedUser } from "@/lib/auth/dal";
 import { isValidEmail, normalizeEmail } from "@/lib/email";
+import { buildGmailComposeUrl } from "@/lib/outreach/gmail-compose";
 import { findLeadByEmail } from "@/lib/services/lead-service";
 import { createDraft, recordOutreachSent as recordOutreachSentService } from "@/lib/services/outreach-service";
 import { evaluateDraftQualityGate, type GateEvaluation } from "@/lib/services/outreach-quality-gate";
+import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type { DuplicateCheckResult, Lead, OutreachMessage } from "@/lib/types";
 
 /**
@@ -122,6 +124,72 @@ export type RecordOutreachSentResult =
 export type CheckQualityGateResult =
   | { ok: true; gate: GateEvaluation }
   | ActionFailure;
+
+export type OpenInGmailResult =
+  | { ok: true; url: string; sequenceNumber: number; isFollowUp: boolean }
+  | ActionFailure;
+
+/**
+ * Build a Gmail compose URL for a stored outreach message.
+ *
+ * This action READS and returns a URL. It performs no send, sets no `sent_at`,
+ * touches no status, and increments no counter. Opening Gmail is not sending:
+ * only the explicit `recordOutreachSent()` below creates the sent state.
+ *
+ * The recipient, subject and body are resolved from the database row, never from
+ * the client. The browser sends a message id and nothing else, so it cannot
+ * redirect a draft at a different address or smuggle in its own content — the
+ * values Gmail receives are exactly what PEPA stored.
+ */
+export async function openOutreachInGmail(messageId: string): Promise<OpenInGmailResult> {
+  await requireAuthenticatedUser();
+
+  if (!messageId || !UUID_PATTERN.test(messageId)) {
+    return failure("That message could not be identified.");
+  }
+
+  try {
+    const { data, error } = await getSupabaseAdmin()
+      .from("outreach_messages")
+      .select("id, lead_id, recipient_email, subject, body, sequence_number")
+      .eq("id", messageId)
+      .maybeSingle();
+
+    if (error) return failure("That message could not be opened.");
+    if (!data) return failure("That message does not exist.");
+
+    // The message must belong to a lead that actually exists, otherwise the
+    // operator could compose to an orphaned row.
+    const { data: lead } = await getSupabaseAdmin()
+      .from("leads")
+      .select("id")
+      .eq("id", String((data as { lead_id: unknown }).lead_id))
+      .maybeSingle();
+    if (!lead) return failure("That message has no lead.");
+
+    const row = data as {
+      recipient_email: string;
+      subject: string | null;
+      body: string | null;
+      sequence_number: number | null;
+    };
+    const sequenceNumber = Number(row.sequence_number ?? 0);
+
+    return {
+      ok: true,
+      url: buildGmailComposeUrl({
+        to: row.recipient_email,
+        subject: row.subject,
+        body: row.body,
+      }),
+      sequenceNumber,
+      isFollowUp: sequenceNumber > 0,
+    };
+  } catch {
+    // Never surface a raw database error to the browser.
+    return failure("That message could not be opened.");
+  }
+}
 
 /**
  * Live, advisory quality-gate evaluation for the draft in the composer.

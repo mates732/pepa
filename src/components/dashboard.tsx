@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { checkQualityGate, checkRecipient, recordOutreachSent, saveDraft } from "@/app/actions";
+import { checkQualityGate, checkRecipient, openOutreachInGmail, recordOutreachSent, saveDraft } from "@/app/actions";
 import { EmailComposer, type ComposerValues } from "@/components/email-composer";
 import { OutreachHistory } from "@/components/outreach-history";
 import { PasteImport } from "@/components/paste-import";
@@ -54,6 +54,7 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
   // Set once the operator has answered the warning confirmation, so the retry
   // is an explicit decision rather than a silent override.
   const [warningsConfirmed, setWarningsConfirmed] = useState(false);
+  const [openingGmail, setOpeningGmail] = useState(false);
 
   const valuesRef = useRef(values);
   useEffect(() => {
@@ -152,6 +153,38 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
     setGate(null);
     setWarningsConfirmed(false);
     setFocusSignal((n) => n + 1);
+  }
+
+  /**
+   * Open the stored draft in Gmail.
+   *
+   * The browser sends only a message id; the server resolves recipient, subject
+   * and body from the database and returns a compose URL. Opening it changes
+   * nothing in PEPA: no status, no `sent_at`, no counter. Recording the send stays
+   * an explicit, separate action.
+   */
+  async function handleOpenInGmail() {
+    if (!values.messageId) {
+      setNotice({ kind: "error", text: "Save the draft first, then open it in Gmail." });
+      return;
+    }
+
+    setOpeningGmail(true);
+    try {
+      const result = await openOutreachInGmail(values.messageId);
+      if (!result.ok) {
+        setNotice({ kind: "error", text: result.error });
+        return;
+      }
+
+      window.open(result.url, "_blank", "noopener,noreferrer");
+      setNotice({
+        kind: "info",
+        text: "Gmail opened with the saved text. Nothing was sent — use “Mark as sent” after you send it yourself.",
+      });
+    } finally {
+      setOpeningGmail(false);
+    }
   }
 
   async function handleSave() {
@@ -343,6 +376,8 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
           gate={gate}
           gatePending={gatePending}
           warningsConfirmed={warningsConfirmed}
+          onOpenInGmail={handleOpenInGmail}
+          openingGmail={openingGmail}
         />
       ) : null}
 

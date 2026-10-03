@@ -184,6 +184,10 @@ function seedMessage(overrides: Row = {}) {
     provider_message_id: null,
     sent_at: null,
     created_at: "2026-02-01T00:00:00.000Z",
+    // Phase 4A sequence columns. The default row is an initial outreach; the
+    // follow-up tests below override these to exercise a sequence > 0.
+    sequence_number: 0,
+    parent_message_id: null,
     ...overrides,
   });
 }
@@ -506,5 +510,122 @@ describe("recordOutreachSent — idempotency", () => {
     expect(results.filter((r) => r.data?.outcome === "recorded")).toHaveLength(1);
     expect(results.filter((r) => r.data?.outcome === "already_sent")).toHaveLength(3);
     expect(mocks.markFollowUpSent).toHaveBeenCalledOnce();
+  });
+});
+/* -------------------------------------------------------------------------- */
+/* Phase 4B — a follow-up row (sequence_number > 0) uses the same bridge      */
+/* -------------------------------------------------------------------------- */
+
+describe("recordOutreachSent — follow-up rows", () => {
+  const INITIAL_ID = "44444444-4444-4444-4444-444444444444";
+
+  beforeEach(() => {
+    // The outer beforeEach already seeded MESSAGE_ID as a slot-0 draft. Add the
+    // ancestor and re-point MESSAGE_ID at slot 1, so the lead holds a real
+    // two-message sequence without ever holding two rows with the same id.
+    seedMessage({
+      id: INITIAL_ID,
+      status: "sent",
+      sent_at: "2026-02-01T09:00:00.000Z",
+      sequence_number: 0,
+      parent_message_id: null,
+    });
+
+    const followUp = db.messages.find((m) => m.id === MESSAGE_ID)!;
+    followUp.sequence_number = 1;
+    followUp.parent_message_id = INITIAL_ID;
+    followUp.subject = "Follow-up #1";
+
+    mocks.evaluateStoredMessageQualityGate.mockImplementation(
+      async () => ({ message: { ...followUp } as never, gate: READY_GATE }),
+    );
+  });
+
+  it("records a follow-up as sent without touching the initial outreach", async () => {
+    const result = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD_ID, sentAt: SENT_AT });
+
+    expect(result.ok).toBe(true);
+    expect(result.data?.outcome).toBe("recorded");
+
+    const followUp = db.messages.find((m) => m.id === MESSAGE_ID);
+    expect(followUp).toMatchObject({
+      status: "sent",
+      sent_at: SENT_AT.toISOString(),
+    });
+
+    // The ancestor is immutable history: sequence and sent state untouched.
+    const initial = db.messages.find((m) => m.id === INITIAL_ID);
+    expect(initial).toMatchObject({
+      status: "sent",
+      sent_at: "2026-02-01T09:00:00.000Z",
+      sequence_number: 0,
+    });
+  });
+
+  it("preserves sequence_number and parent_message_id through the send", async () => {
+    await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD_ID, sentAt: SENT_AT });
+
+    const followUp = db.messages.find((m) => m.id === MESSAGE_ID);
+    // Position in the chain is history, not send state: recording a send must
+    // never renumber or re-parent a follow-up.
+    expect(followUp?.sequence_number).toBe(1);
+    expect(followUp?.parent_message_id).toBe(INITIAL_ID);
+  });
+
+  it("still runs the server-authoritative gate for a follow-up", async () => {
+    await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD_ID, sentAt: SENT_AT });
+
+    // A follow-up gets no exemption: the gate is consulted before the write.
+    expect(mocks.evaluateStoredMessageQualityGate).toHaveBeenCalledWith(MESSAGE_ID, LEAD_ID);
+  });
+
+  it("a follow-up cannot bypass the gate just because sequence_number > 0", async () => {
+    const blockedRow = db.messages.find((m) => m.id === MESSAGE_ID)!;
+    mocks.evaluateStoredMessageQualityGate.mockResolvedValue({
+      message: { ...blockedRow } as never,
+      gate: { ...READY_GATE, status: "blocked", blocked: true },
+    });
+
+    const result = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD_ID, sentAt: SENT_AT });
+
+    expect(result.data?.outcome).toBe("blocked");
+    const followUp = db.messages.find((m) => m.id === MESSAGE_ID);
+    expect(followUp?.status).toBe("draft");
+    expect(followUp?.sent_at).toBeNull();
+    // Scheduling must not run for a refused send.
+    expect(mocks.markFollowUpSent).not.toHaveBeenCalled();
+  });
+
+  it("replaying an already-sent follow-up stays idempotent", async () => {
+    const first = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD_ID, sentAt: SENT_AT });
+    const sentRow = db.messages.find((m) => m.id === MESSAGE_ID)!;
+    mocks.evaluateStoredMessageQualityGate.mockResolvedValue({
+      message: { ...sentRow } as never,
+      gate: READY_GATE,
+    });
+    const second = await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD_ID, sentAt: SENT_AT });
+
+    expect(first.data?.outcome).toBe("recorded");
+    expect(second.data?.outcome).toBe("already_sent");
+    // The follow-up is scheduled exactly once, however many times it is replayed.
+    expect(mocks.markFollowUpSent).toHaveBeenCalledOnce();
+    expect(db.messages.find((m) => m.id === MESSAGE_ID)?.sequence_number).toBe(1);
+  });
+
+  it("invokes the existing follow-up scheduling after the send", async () => {
+    await recordOutreachSent({ messageId: MESSAGE_ID, leadId: LEAD_ID, sentAt: SENT_AT });
+
+    expect(mocks.markFollowUpSent).toHaveBeenCalledWith({ leadId: LEAD_ID, sentAt: SENT_AT });
+  });
+
+  it("refuses to record a follow-up against the wrong lead", async () => {
+    const result = await recordOutreachSent({
+      messageId: MESSAGE_ID,
+      leadId: OTHER_LEAD_ID,
+      sentAt: SENT_AT,
+    });
+
+    expect(result.ok).toBe(false);
+    expect(db.messages.find((m) => m.id === MESSAGE_ID)?.status).toBe("draft");
   });
 });
