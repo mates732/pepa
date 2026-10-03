@@ -85,7 +85,7 @@ export async function listDueFollowUps(
   const { data, error } = await supabase
     .from("due_followups")
     .select(
-      "lead_id, email, company_name, contact_name, lead_status, created_at, updated_at, last_contacted_at, next_followup_at, followup_count, outreach_id, recipient_email, subject, body, outreach_status, sent_at, outreach_created_at, followup_number",
+      "lead_id, email, company_name, contact_name, lead_status, created_at, updated_at, last_contacted_at, next_followup_at, followup_count, outreach_id, recipient_email, subject, body, outreach_status, sent_at, outreach_created_at, followup_number, anchor_sequence_number",
     )
     .order("next_followup_at", { ascending: true })
     .limit(limit);
@@ -126,6 +126,10 @@ function toDueFollowUp(row: Record<string, unknown>): ResolvedDueFollowUp | null
       provider_message_id: null,
       sent_at: (row.sent_at ?? null) as string | null,
       created_at: String(row.outreach_created_at),
+      // The view anchors a follow-up on the highest *sent* message in the
+      // sequence, so this is the position of the email it hangs off.
+      sequence_number: Number(row.anchor_sequence_number ?? 0),
+      parent_message_id: null,
     },
     dueAt: String(row.next_followup_at),
     attempt: followUpNumber,

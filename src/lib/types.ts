@@ -36,6 +36,14 @@ export interface OutreachMessage {
   provider_message_id: string | null;
   sent_at: string | null;
   created_at: string;
+  /**
+   * Position in this lead's outreach sequence: 0 is the initial outreach, 1 is
+   * follow-up #1, and so on. Persisted rather than derived, so the chain can be
+   * read back without counting anything.
+   */
+  sequence_number: number;
+  /** The message this one follows. Null for an initial outreach. */
+  parent_message_id: string | null;
 }
 
 export interface ParsedOutreachInput {

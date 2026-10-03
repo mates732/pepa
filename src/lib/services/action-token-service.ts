@@ -22,7 +22,7 @@ export interface ResolvedActionTarget {
 }
 
 const MESSAGE_COLUMNS =
-  "id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at";
+  "id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at, sequence_number, parent_message_id";
 
 function fail(error: string): ServiceResult<never> {
   return { ok: false, data: null, error };
@@ -124,7 +124,7 @@ export async function resolveActionToken(
   const { data, error } = await supabase
     .from("action_tokens")
     .select(
-      "id, purpose, lead_id, outreach_id, expires_at, used_at, leads(id, email, company_name, contact_name, status, created_at, updated_at, last_contacted_at, next_followup_at, followup_count), outreach_messages(id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at)",
+      "id, purpose, lead_id, outreach_id, expires_at, used_at, leads(id, email, company_name, contact_name, status, created_at, updated_at, last_contacted_at, next_followup_at, followup_count), outreach_messages(id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at, sequence_number, parent_message_id)",
     )
     .eq("token_hash", digest)
     .eq("purpose", purpose)
@@ -162,8 +162,7 @@ export async function resolveActionToken(
 /**
  * Attach an edited follow-up draft to the token's lead.
  * Caller must already have resolved the token (and therefore have a session).
- */
-export async function saveFollowUpDraft(input: {
+ */export async function saveFollowUpDraft(input: {
   rawToken: string;
   subject: string;
   body: string;
@@ -185,28 +184,109 @@ export async function saveFollowUpDraft(input: {
     status: "draft" as const,
   };
 
-  if (outreach) {
+  if (!outreach) {
+    // No anchor message: this is an initial outreach, which always occupies
+    // sequence slot 0. Upserting on the sequence key keeps the pre-existing
+    // "one open draft per recipient" behaviour.
+    const { data, error } = await supabase
+      .from("outreach_messages")
+      .upsert({ ...payload, sequence_number: 0, parent_message_id: null }, {
+        onConflict: "lead_id,recipient_normalized,sequence_number",
+        ignoreDuplicates: false,
+      })
+      .select(MESSAGE_COLUMNS)
+      .maybeSingle();
+
+    if (error) return fail(error.message);
+    if (!data) return fail("The follow-up draft could not be saved.");
+
+    return { ok: true, error: null, data: { lead, message: data as OutreachMessage, created: true } };
+  }
+
+  // The token carries an anchor: this draft is a follow-up to `outreach`.
+  //
+  // It gets its OWN row at the next sequence slot. It must never be written
+  // over the anchor, because the anchor is the historical record of what was
+  // actually sent to this recipient; overwriting it destroyed that history.
+  //
+  // Re-saving an unsent follow-up updates that same follow-up row rather than
+  // appending a new one, so pressing save twice cannot inflate the sequence.
+  const existing = await openFollowUpAfter(supabase, lead.id, outreach.id);
+  if (existing) {
     const { data, error } = await supabase
       .from("outreach_messages")
       .update(payload)
-      .eq("id", outreach.id)
+      .eq("id", existing.id)
       .select(MESSAGE_COLUMNS)
       .maybeSingle();
+
     if (error) return fail(error.message);
     if (!data) return fail("The follow-up draft could not be updated.");
     return { ok: true, error: null, data: { lead, message: data as OutreachMessage, created: false } };
   }
 
+  const next = await nextSequenceNumber(supabase, lead.id, lead.email);
+  if (next === null) return fail("The follow-up draft could not be saved.");
+
   const { data, error } = await supabase
     .from("outreach_messages")
-    .upsert(payload, { onConflict: "lead_id,recipient_normalized", ignoreDuplicates: false })
+    .insert({
+      ...payload,
+      sequence_number: next,
+      parent_message_id: outreach.id,
+    })
     .select(MESSAGE_COLUMNS)
     .maybeSingle();
 
-  if (error) return fail(error.message);
+  if (error) {
+    // A concurrent save claimed the same slot. The unique index is the
+    // authority, so report a conflict rather than writing a duplicate.
+    if (error.code === "23505") {
+      return fail("A follow-up draft for this recipient is already open. Reopen it instead.");
+    }
+    return fail(error.message);
+  }
   if (!data) return fail("The follow-up draft could not be saved.");
 
   return { ok: true, error: null, data: { lead, message: data as OutreachMessage, created: true } };
+}
+
+/** The unsent follow-up that already follows `anchorMessageId`, if any. */
+async function openFollowUpAfter(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  leadId: string,
+  anchorMessageId: string,
+): Promise<{ id: string } | null> {
+  const { data, error } = await supabase
+    .from("outreach_messages")
+    .select("id")
+    .eq("parent_message_id", anchorMessageId)
+    .eq("lead_id", leadId)
+    .in("status", ["draft", "ready"])
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return (data as { id: string } | null) ?? null;
+}
+
+/** The next free sequence slot for this lead/recipient. */
+async function nextSequenceNumber(
+  supabase: ReturnType<typeof getSupabaseAdmin>,
+  leadId: string,
+  recipientEmail: string,
+): Promise<number | null> {
+  const { data, error } = await supabase
+    .from("outreach_messages")
+    .select("sequence_number")
+    .eq("lead_id", leadId)
+    .eq("recipient_email", recipientEmail)
+    .order("sequence_number", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  const highest = Number((data as { sequence_number?: number } | null)?.sequence_number ?? -1);
+  return Number.isFinite(highest) ? highest + 1 : null;
 }
 
 /** One message for every failure mode — never distinguishes cause. */

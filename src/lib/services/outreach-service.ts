@@ -11,7 +11,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type { Lead, OutreachHistoryRow, OutreachMessage, ServiceResult } from "@/lib/types";
 
 const MESSAGE_COLUMNS =
-  "id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at";
+  "id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at, sequence_number, parent_message_id";
 
 function fail(error: string): ServiceResult<never> {
   return { ok: false, data: null, error };
@@ -61,6 +61,10 @@ export async function createDraft(
     subject: input.subject.trim() || null,
     body: input.body.trim() || null,
     status: "draft" as const,
+    // The composer creates the initial outreach, which is always slot 0.
+    // Follow-ups get their own rows via `saveFollowUpDraft()`.
+    sequence_number: 0,
+    parent_message_id: null,
   };
 
   if (input.messageId) {
@@ -78,7 +82,9 @@ export async function createDraft(
   const { data, error } = await supabase
     .from("outreach_messages")
     .upsert(payload, {
-      onConflict: "lead_id,recipient_normalized",
+      // Keyed on the sequence slot, so re-saving an initial draft refreshes it
+      // while a follow-up at slot 1+ is left untouched.
+      onConflict: "lead_id,recipient_normalized,sequence_number",
       ignoreDuplicates: false,
     })
     .select(MESSAGE_COLUMNS)

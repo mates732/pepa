@@ -40,7 +40,7 @@ import type { Lead, OutreachMessage } from "@/lib/types";
 export const IMPORT_PURPOSE = "outreach_import";
 
 const MESSAGE_COLUMNS =
-  "id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at";
+  "id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at, sequence_number, parent_message_id";
 
 /**
  * A message in one of these states has either gone out or been closed off.
@@ -111,13 +111,21 @@ export async function createOutreachImport(
     provider: null,
     provider_message_id: null,
     sent_at: null,
+    // An import is an initial outreach, so it occupies slot 0. A follow-up
+    // already recorded at slot 1+ is never touched by an import.
+    sequence_number: 0,
+    parent_message_id: null,
   };
 
-  // Upsert on the existing unique key: a repeated import of the same recipient
-  // refreshes one draft instead of piling up outreach records.
+  // Upsert on the sequence key: a repeated import of the same recipient refreshes
+  // the initial-outreach draft instead of piling up records or disturbing any
+  // follow-up already in the chain.
   const { data, error } = await supabase
     .from("outreach_messages")
-    .upsert(payload, { onConflict: "lead_id,recipient_normalized", ignoreDuplicates: false })
+    .upsert(payload, {
+      onConflict: "lead_id,recipient_normalized,sequence_number",
+      ignoreDuplicates: false,
+    })
     .select(MESSAGE_COLUMNS)
     .maybeSingle();
 
@@ -238,7 +246,14 @@ function alreadyContactedMessage(message: OutreachMessage): string {
   return `Lead already contacted — this recipient has a ${message.status} message.${when}`;
 }
 
-/** The single existing message row for (lead, normalized recipient), if any. */
+/**
+ * The lead's initial outreach for this recipient, if any.
+ *
+ * Scoped to `sequence_number = 0` because a lead can now hold several messages
+ * (the initial outreach plus its follow-ups). Without that filter `maybeSingle`
+ * would see more than one row and refuse, which would turn a normal re-import
+ * into a failure.
+ */
 async function currentMessage(
   leadId: string,
   recipient: string,
@@ -249,6 +264,7 @@ async function currentMessage(
     .select(MESSAGE_COLUMNS)
     .eq("lead_id", leadId)
     .eq("recipient_email", recipient)
+    .eq("sequence_number", 0)
     .maybeSingle();
 
   if (error) return null;

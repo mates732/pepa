@@ -99,11 +99,15 @@ const { db, makeSupabase } = vi.hoisted(() => {
     const apply = (): Row[] => {
       const stored: Row[] = [];
       if (mode === "upsert" && onConflict) {
-        const [left, right] = onConflict.split(",").map((c) => c.trim());
+        // The conflict target can name any number of columns. It used to be
+        // (lead_id, recipient_normalized); the sequence model makes it
+        // (lead_id, recipient_normalized, sequence_number), so destructuring a
+        // fixed pair would silently match the wrong row.
+        const conflictColumns = onConflict.split(",").map((c) => c.trim()).filter(Boolean);
         for (const raw of rows) {
           const row = withGenerated(table, raw);
-          const existing = db[TABLES[table]].find(
-            (candidate) => candidate[left] === row[left] && candidate[right] === row[right],
+          const existing = db[TABLES[table]].find((candidate) =>
+            conflictColumns.every((column) => candidate[column] === row[column]),
           );
           if (existing) {
             Object.assign(existing, row);
@@ -246,6 +250,9 @@ function seedExistingMessage(overrides: Partial<Row> = {}) {
     provider_message_id: null,
     sent_at: null,
     created_at: "2026-09-01T00:00:00.000Z",
+    // The initial outreach always occupies slot 0 of the sequence.
+    sequence_number: 0,
+    parent_message_id: null,
     ...overrides,
   });
   return leadId;

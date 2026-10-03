@@ -22,19 +22,34 @@ const supabaseMock = {
     return {
       select(columns: string, options?: { head?: boolean }) {
         state.selects.push(`${table}:${columns}`);
-
         // PostgREST AND-s every .eq() in the chain.
         const filters: Array<[string, unknown]> = [];
         const builder: Record<string, unknown> = {};
+        let order: { column: string; ascending: boolean } | null = null;
+        let limit: number | null = null;
 
-        const matched = () =>
-          rowsFor().filter((row) =>
+        const matched = () => {
+          const filtered = rowsFor().filter((row) =>
             filters.every(([column, value]) =>
               Array.isArray(value)
                 ? value.includes(row[column])
                 : row[column] === value,
             ),
           );
+          // PostgREST applies ORDER BY before LIMIT, and the sequence code depends
+          // on it: "the highest sequence_number" is only correct if the fake
+          // actually sorts.
+          const by = order;
+          if (by) {
+            const direction = by.ascending ? 1 : -1;
+            filtered.sort((a, b) => {
+              const av = String(a[by.column] ?? "");
+              const bv = String(b[by.column] ?? "");
+              return av.localeCompare(bv) * direction;
+            });
+          }
+          return limit === null ? filtered : filtered.slice(0, limit);
+        };
 
         const resolve = () => {
           const rows = matched();
@@ -62,10 +77,20 @@ const supabaseMock = {
           filters.push([column, value]);
           return builder;
         };
+        builder.in = (column: string, values: unknown[]) => {
+          filters.push([column, values]);
+          return builder;
+        };
         builder.maybeSingle = resolve;
         builder.single = resolve;
-        builder.limit = () => builder;
-        builder.order = () => builder;
+        builder.limit = (n: number) => {
+          limit = n;
+          return builder;
+        };
+        builder.order = (column: string, opts?: { ascending?: boolean }) => {
+          order = { column, ascending: opts?.ascending ?? true };
+          return builder;
+        };
         // Thenable so `await supabase.from(..).select(..).eq(..)` works too.
         builder.then = (resolve_: (value: unknown) => unknown) =>
           Promise.resolve(resolve()).then(resolve_);
@@ -73,21 +98,29 @@ const supabaseMock = {
       },
       insert(payload: Array<Record<string, unknown>> | Record<string, unknown>) {
         const rows = Array.isArray(payload) ? payload : [payload];
+        let inserted: () => Array<Record<string, unknown>>;
         if (table === "action_tokens") {
-          state.tokens.push(
-            ...rows.map((row) => ({
-              id: `token-${state.tokens.length + rows.length}`,
-              ...row,
-            })),
-          );
+          const start = state.tokens.length;
+          for (const row of rows) {
+            state.tokens.push({ id: `token-${state.tokens.length + 1}`, ...row });
+          }
+          // The engine only needs the stored row back, which is what
+          // `.select().maybeSingle()` returns in production.
+          inserted = () => state.tokens.slice(start);
+        } else if (table === "outreach_messages") {
+          // A follow-up draft is a NEW row: Postgres assigns the id and stores it.
+          // This is what the sequence model depends on.
+          const start = state.messages.length;
+          for (const row of rows) {
+            state.messages.push({ id: `msg-${state.messages.length + 1}`, ...row });
+          }
+          inserted = () => state.messages.slice(start);
+        } else {
+          inserted = () => [];
         }
 
         // PostgREST: insert() is thenable and can chain .select().maybeSingle()
-        // to read the stored row back (the engine needs the token id).
-        const inserted = () =>
-          rows.map((_, index) => ({
-            id: `token-${state.tokens.length - rows.length + index + 1}`,
-          }));
+        // to read the stored row back.
         const builder: Record<string, unknown> = {
           select: () => builder,
           maybeSingle: async () => ({ data: inserted()[0] ?? null, error: null }),
@@ -167,6 +200,9 @@ beforeEach(() => {
     provider_message_id: "abc123",
     sent_at: "2026-09-30T00:00:00Z",
     created_at: "2026-09-30T00:00:00Z",
+    // This is the initial outreach: slot 0, no predecessor.
+    sequence_number: 0,
+    parent_message_id: null,
   });
 });
 
@@ -305,7 +341,18 @@ describe("saveFollowUpDraft", () => {
     const result = await saveFollowUpDraft({ rawToken: raw, subject: "Re: AI recepce", body: "Navazuji" });
     expect(result.ok).toBe(true);
     expect(result.data?.message.lead_id).toBe(LEAD_ID);
-    expect(state.messages[0].subject).toBe("Re: AI recepce");
+    // The follow-up is a NEW row in the sequence, not an overwrite of the
+    // anchor, so the anchor must still be there and still be slot 0.
+    expect(state.messages).toHaveLength(2);
+    expect(result.data?.message.id).not.toBe(MESSAGE_ID);
+    expect(result.data?.message.sequence_number).toBe(1);
+    expect(result.data?.message.parent_message_id).toBe(MESSAGE_ID);
+    expect(state.messages[0]).toMatchObject({
+      id: MESSAGE_ID,
+      sequence_number: 0,
+      parent_message_id: null,
+      body: "Dobrý den,",
+    });
   });
 
   it("refuses an invalid token without writing anything", async () => {

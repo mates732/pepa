@@ -29,7 +29,7 @@ import type { OutreachMessage } from "@/lib/types";
  */
 
 const MESSAGE_COLUMNS =
-  "id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at";
+  "id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at, sequence_number, parent_message_id";
 
 export interface GateEvaluation extends QualityGateResult {
   /** Resolved lead, or null when the recipient does not exist yet. */
