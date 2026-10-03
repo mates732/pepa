@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { loadOutreachActivity, loadOutreachActivityDetail } from "@/app/activity-actions";
 import {
   checkQualityGate,
   checkRecipient,
@@ -14,10 +15,16 @@ import {
 import { EmailComposer, type ComposerValues } from "@/components/email-composer";
 import { FollowUpDetail } from "@/components/follow-up-detail";
 import { FollowUpWorkspace } from "@/components/follow-up-workspace";
+import { OutreachActivity } from "@/components/outreach-activity";
+import { OutreachActivityDetail } from "@/components/outreach-activity-detail";
 import { OutreachHistory } from "@/components/outreach-history";
 import { PasteImport } from "@/components/paste-import";
 import { formatDate, formatDateTime } from "@/lib/format";
 import type { FollowUpDetail as FollowUpDetailData, FollowUpListItem } from "@/lib/services/follow-up-sequence-service";
+import type {
+  OutreachActivityDetail as OutreachActivityDetailData,
+  OutreachActivityItem,
+} from "@/lib/services/outreach-activity-service";
 import type { GateEvaluation } from "@/lib/services/outreach-quality-gate";
 import type { DuplicateCheckResult, OutreachHistoryRow, ParsedOutreachInput } from "@/lib/types";
 
@@ -77,6 +84,18 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailNotice, setDetailNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
   const [recordingDetail, setRecordingDetail] = useState(false);
+
+  // Activity workspace. Read-only: opening it records nothing, and it exposes no
+  // mutation controls, so there is nothing here that can write.
+  const [activity, setActivity] = useState<OutreachActivityItem[]>([]);
+  const [activityLoading, setActivityLoading] = useState(true);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const [activityTruncated, setActivityTruncated] = useState(false);
+  const [activityLimit, setActivityLimit] = useState(0);
+  const [activitySelectedId, setActivitySelectedId] = useState<string | null>(null);
+  const [activityDetail, setActivityDetail] = useState<OutreachActivityDetailData | null>(null);
+  const [activityDetailLoading, setActivityDetailLoading] = useState(false);
+  const [activityNotice, setActivityNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
 
   const valuesRef = useRef(values);
   useEffect(() => {
@@ -232,6 +251,79 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
     return () => clearTimeout(handle);
   }, [loadWorkspace]);
 
+  /** Load the recent window of sent outreach. Read-only, like the workspace. */
+  const loadActivity = useCallback(async () => {
+    setActivityLoading(true);
+    try {
+      const result = await loadOutreachActivity();
+      if (result.ok) {
+        setActivity(result.activity);
+        setActivityTruncated(result.truncated);
+        setActivityLimit(result.limit);
+        setActivityError(null);
+      } else {
+        setActivityError(result.error);
+      }
+    } finally {
+      setActivityLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const handle = setTimeout(() => void loadActivity(), 0);
+    return () => clearTimeout(handle);
+  }, [loadActivity]);
+
+  /**
+   * Open one activity item's exact sent outreach.
+   *
+   * The browser sends only a message id, so the server decides what this view
+   * contains. A message that was never recorded as sent is not reachable here.
+   */
+  const handleSelectActivity = useCallback(async (messageId: string) => {
+    setActivitySelectedId(messageId);
+    setActivityNotice(null);
+    setActivityDetailLoading(true);
+    try {
+      const result = await loadOutreachActivityDetail(messageId);
+      if (result.ok) {
+        setActivityDetail(result.detail);
+      } else {
+        setActivityDetail(null);
+        setActivityNotice({ kind: "error", text: result.error });
+      }
+    } finally {
+      setActivityDetailLoading(false);
+    }
+  }, []);
+
+  /**
+   * Hand a sent message to Gmail.
+   *
+   * Reuses the Phase 4 `openOutreachInGmail()` action, which resolves recipient,
+   * subject and body from the stored row. It fills a compose window and writes
+   * nothing: no status, no `sent_at`, no counter, no schedule. A message already
+   * recorded as sent is not re-sent by opening it.
+   */
+  async function handleOpenActivityInGmail(messageId: string) {
+    setOpeningGmail(true);
+    setActivityNotice(null);
+    try {
+      const result = await openOutreachInGmail(messageId);
+      if (!result.ok) {
+        setActivityNotice({ kind: "error", text: result.error });
+        return;
+      }
+      window.open(result.url, "_blank", "noopener,noreferrer");
+      setActivityNotice({
+        kind: "info",
+        text: "Gmail opened with the stored text. Nothing in PEPA changed — this outreach is already recorded as sent.",
+      });
+    } finally {
+      setOpeningGmail(false);
+    }
+  }
+
   /** Open one follow-up's exact message. */
   const handleSelectFollowUp = useCallback(async (messageId: string) => {
     setSelectedId(messageId);
@@ -314,6 +406,9 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
       // Re-read from the server rather than patching local state, so the UI can
       // never claim a send the database does not hold.
       await loadWorkspace();
+      // A newly recorded send is a new activity row, so the window is re-read
+      // too. Activity is never patched locally either.
+      await loadActivity();
       await handleSelectFollowUp(messageId);
     } finally {
       setRecordingDetail(false);
@@ -430,8 +525,10 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
         });
       }
 
-      // The duplicate badge is derived from sent_at, so it must be re-read.
+      // The duplicate badge is derived from sent_at, so it must be re-read. The
+      // same send is also a new activity record.
       void runDuplicateCheck(values.recipient);
+      void loadActivity();
     } finally {
       setSaving(false);
     }
@@ -544,6 +641,38 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
           recording={recordingDetail}
           notice={detailNotice}
         />
+      ) : null}
+
+      <OutreachActivity
+        activity={activity}
+        onSelect={(id) => void handleSelectActivity(id)}
+        loading={activityLoading}
+        error={activityError}
+        selectedId={activitySelectedId}
+        truncated={activityTruncated}
+        limit={activityLimit}
+      />
+
+      {activityDetailLoading ? (
+        <section className="sticker">
+          <p className="m-5 rounded-[1.25rem] border-[3px] border-dashed border-midnight-line bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
+            Loading sent outreach…
+          </p>
+        </section>
+      ) : activityDetail ? (
+        <OutreachActivityDetail
+          detail={activityDetail}
+          onClose={() => {
+            setActivityDetail(null);
+            setActivitySelectedId(null);
+            setActivityNotice(null);
+          }}
+          onOpenInGmail={(id) => void handleOpenActivityInGmail(id)}
+          openingGmail={openingGmail}
+          notice={activityNotice}
+        />
+      ) : activityNotice ? (
+        <p className="notice notice-alarm">{activityNotice.text}</p>
       ) : null}
     </div>
   );
