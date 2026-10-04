@@ -15,6 +15,10 @@ import type { FollowUpListItem } from "@/lib/services/follow-up-sequence-service
  * Nothing here is inferred from `leads.followup_count`. A lead whose follow-ups
  * predate the sequence model simply has no rows here, and the empty state says
  * so honestly rather than implying no follow-up ever existed.
+ *
+ * Phase 8C: the header carries the actionable count, because "3 recorded" is not
+ * an answer to "what do I do this morning?" — most of those three are already
+ * sent. The count is the number the operator can actually act on now.
  */
 
 interface FollowUpWorkspaceProps {
@@ -58,6 +62,19 @@ export function FollowUpWorkspace({
     { key: 2, title: "Sent" },
   ] as const;
 
+  /**
+   * Phase 8C — the morning glance.
+   *
+   * `attention === 0` is the server's own definition of "needs attention now":
+   * an unsent follow-up whose deadline has passed. It is counted here rather than
+   * re-derived, so the header can never disagree with the group below it.
+   *
+   * This is a pure derivation of data the workspace already loaded: no extra
+   * query, no new API, no new state. It is a count, never a control — deciding
+   * what to do about a follow-up stays an explicit click on that follow-up.
+   */
+  const needsAttention = followUps.filter((item) => item.attention === 0).length;
+
   return (
     <section className="sticker">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
@@ -65,7 +82,13 @@ export function FollowUpWorkspace({
           <span className="chip chip-solid mr-2 align-middle">4</span>
           Follow-ups
         </h2>
-        <span className="chip">{loading ? "Loading…" : `${followUps.length} recorded`}</span>
+        <span className="chip">
+          {loading
+            ? "Loading…"
+            : needsAttention > 0
+              ? `${needsAttention} need attention · ${followUps.length} recorded`
+              : `${followUps.length} recorded`}
+        </span>
       </header>
 
       {error ? (
