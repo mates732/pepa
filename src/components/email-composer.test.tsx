@@ -13,7 +13,11 @@ import { EmailComposer, type ComposerValues } from "./email-composer";
  * These assertions pin the reachable button and the wording that stops the
  * operator from believing PEPA delivered their mail.
  */
-function render(overrides: Partial<React.ComponentProps<typeof EmailComposer>> = {}) {
+function render(
+  overrides: Partial<Omit<React.ComponentProps<typeof EmailComposer>, "values">> & {
+    values?: Partial<ComposerValues>;
+  } = {},
+) {
   const values: ComposerValues = {
     recipient: "info@example.com",
     subject: "Test subject",
@@ -51,6 +55,39 @@ function render(overrides: Partial<React.ComponentProps<typeof EmailComposer>> =
 function buttonsOf(markup: string): string[] {
   return markup.match(/<button[^>]*>[\s\S]*?<\/button>/g) ?? [];
 }
+
+describe("EmailComposer — the Open in Gmail safety rule", () => {
+  // The compose text is read from the STORED message, so an unsaved draft has
+  // nothing to open. That rule is deliberate and must survive; what changed is
+  // that a disabled button no longer leaves the reason to be guessed at.
+  it("is disabled while the draft is unsaved, and says why", () => {
+    const markup = render({ values: { messageId: null } });
+
+    const gmailButton = buttonsOf(markup).find((b) => b.includes("Open in Gmail"));
+    expect(gmailButton).toBeDefined();
+    expect(gmailButton).toContain("disabled");
+    expect(markup).toContain("Save the draft to enable");
+  });
+
+  it("is enabled once the draft is saved, and drops the explanation", () => {
+    const markup = render({
+      values: { messageId: "99999999-9999-4999-8999-999999999999" },
+    });
+
+    const gmailButton = buttonsOf(markup).find((b) => b.includes("Open in Gmail"));
+    expect(gmailButton).toBeDefined();
+    expect(gmailButton).not.toContain("disabled");
+    expect(markup).not.toContain("Save the draft to enable");
+  });
+
+  it("keeps stating that opening Gmail sends nothing", () => {
+    const markup = render({
+      values: { messageId: "99999999-9999-4999-8999-999999999999" },
+    });
+
+    expect(markup).toContain("does not send anything and does not mark it as sent");
+  });
+});
 
 describe("EmailComposer send button", () => {
   it("is rendered and enabled when the draft is saved", () => {

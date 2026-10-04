@@ -151,11 +151,25 @@ export function EmailComposer(props: EmailComposerProps) {
             type="button"
             onClick={props.onOpenInGmail}
             disabled={props.openingGmail || !values.messageId}
-            title="Opens a Gmail draft with this text. This does not send anything and does not mark it as sent."
+            title={
+              values.messageId
+                ? "Opens a Gmail draft with this text. This does not send anything and does not mark it as sent."
+                : "Save the draft first. Gmail is filled from the saved message, so there is nothing stored to open yet."
+            }
             className="btn"
           >
             {props.openingGmail ? "Opening…" : "Open in Gmail ↗"}
           </button>
+
+          {/* The safety rule above is deliberate: the compose text is read from
+              the stored message, so an unsaved draft has nothing to open. That
+              is invisible on a disabled button, so it is stated here rather than
+              left for the operator to work out. */}
+          {!values.messageId ? (
+            <p className="w-full text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
+              Save the draft to enable “Open in Gmail” — it uses the saved text.
+            </p>
+          ) : null}
 
           <button
             type="button"

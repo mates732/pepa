@@ -26,6 +26,11 @@ import { OutreachStats } from "@/components/outreach-stats";
 import { OutreachStreaks } from "@/components/outreach-streaks";
 import { PasteImport } from "@/components/paste-import";
 import { formatDate, formatDateTime } from "@/lib/format";
+import {
+  closeComposeWindow,
+  navigateComposeWindow,
+  preopenComposeWindow,
+} from "@/lib/outreach/open-compose-window";
 import type { FollowUpDetail as FollowUpDetailData, FollowUpListItem } from "@/lib/services/follow-up-sequence-service";
 import type {
   OutreachActivityDetail as OutreachActivityDetailData,
@@ -332,14 +337,23 @@ export function Dashboard({
     }
 
     setOpeningGmail(true);
+    // Reserved synchronously, inside the click, so the popup blocker still
+    // accepts it. See lib/outreach/open-compose-window.ts for why.
+    const tab = preopenComposeWindow();
     try {
       const result = await openOutreachInGmail(values.messageId);
       if (!result.ok) {
+        closeComposeWindow(tab);
         setNotice({ kind: "error", text: result.error });
         return;
       }
-
-      window.open(result.url, "_blank", "noopener,noreferrer");
+      if (!navigateComposeWindow(tab, result.url)) {
+        setNotice({
+          kind: "error",
+          text: `Your browser blocked the new tab. Open this link manually: ${result.url}`,
+        });
+        return;
+      }
       setNotice({
         kind: "info",
         text: "Gmail opened with the saved text. Nothing was sent — use “Mark as sent” after you send it yourself.",
@@ -429,13 +443,23 @@ export function Dashboard({
   async function handleOpenActivityInGmail(messageId: string) {
     setOpeningGmail(true);
     setActivityNotice(null);
+    const tab = preopenComposeWindow();
     try {
       const result = await openOutreachInGmail(messageId);
       if (!result.ok) {
+        closeComposeWindow(tab);
         setActivityNotice({ kind: "error", text: result.error });
         return;
       }
-      window.open(result.url, "_blank", "noopener,noreferrer");
+      if (!navigateComposeWindow(tab, result.url)) {
+        // The browser refused even the blank tab. Say so and hand over the URL
+        // rather than reporting an open Gmail that does not exist.
+        setActivityNotice({
+          kind: "error",
+          text: `Your browser blocked the new tab. Open this link manually: ${result.url}`,
+        });
+        return;
+      }
       setActivityNotice({
         kind: "info",
         text: "Gmail opened with the stored text. Nothing in PEPA changed — this outreach is already recorded as sent.",
@@ -492,13 +516,21 @@ export function Dashboard({
   async function handleOpenDetailInGmail(messageId: string) {
     setOpeningGmail(true);
     setDetailNotice(null);
+    const tab = preopenComposeWindow();
     try {
       const result = await openOutreachInGmail(messageId);
       if (!result.ok) {
+        closeComposeWindow(tab);
         setDetailNotice({ kind: "error", text: result.error });
         return;
       }
-      window.open(result.url, "_blank", "noopener,noreferrer");
+      if (!navigateComposeWindow(tab, result.url)) {
+        setDetailNotice({
+          kind: "error",
+          text: `Your browser blocked the new tab. Open this link manually: ${result.url}`,
+        });
+        return;
+      }
       setDetailNotice({
         kind: "info",
         text: "Gmail opened with the saved text. Nothing was sent — use “Mark as sent” after you send it yourself.",
