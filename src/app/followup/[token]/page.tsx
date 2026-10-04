@@ -20,6 +20,10 @@ import {
  *
  * The URL contains nothing but a random token. The lead is resolved server-side
  * from the token digest, so `/followup/123` cannot be used to enumerate leads.
+ *
+ * Opening this page records nothing: no status, no `sent_at`, no counter, no
+ * schedule. The send transition stays an explicit, separate action behind the
+ * authenticated quality gate.
  */
 export default async function FollowUpPage({ params }: PageProps<"/followup/[token]">) {
   // Server remains the source of truth: Proxy is only an optimistic redirect.
@@ -33,7 +37,12 @@ export default async function FollowUpPage({ params }: PageProps<"/followup/[tok
   }
 
   const { lead, outreach } = resolved.data;
-  const attempt = lead.followup_count + 1;
+  // The token usually carries a follow-up row (the Phase 8A notification link),
+  // and then that row's own `sequence_number` is the number to show. Only a token
+  // that anchors on an initial outreach has to fall back to the counter, because
+  // in that case no follow-up has been written yet.
+  const attempt =
+    outreach && outreach.sequence_number > 0 ? outreach.sequence_number : lead.followup_count + 1;
   const since = daysAgo(lead.last_contacted_at);
   const channel = getNotificationService();
 

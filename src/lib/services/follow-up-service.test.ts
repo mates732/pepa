@@ -17,6 +17,8 @@ const { db, makeSupabase } = vi.hoisted(() => {
     notifications: [] as Row[],
     tokens: [] as Row[],
     leads: [] as Row[],
+    /** Phase 8A: the real sequence rows a notification can point at. */
+    messages: [] as Row[],
     /** Makes markNotified() fail, i.e. a send that cannot be booked. */
     failBookkeeping: false,
   };
@@ -27,6 +29,7 @@ const { db, makeSupabase } = vi.hoisted(() => {
     followup_notifications: "notifications",
     action_tokens: "tokens",
     leads: "leads",
+    outreach_messages: "messages",
   } as const;
 
   type Table = keyof typeof TABLES;
@@ -38,23 +41,63 @@ const { db, makeSupabase } = vi.hoisted(() => {
     db.notifications = [];
     db.tokens = [];
     db.leads = [];
+    db.messages = [];
   };
 
-  function builder(table: Table, filters: Array<[string, unknown]>) {
-    const matched = () =>
-      (db[TABLES[table]] as Row[]).filter((row) =>
-        filters.every(([column, value]) =>
-          Array.isArray(value) ? value.includes(row[column]) : row[column] === value,
-        ),
+  type Filter = { column: string; op: "eq" | "in" | "is" | "gt"; value: unknown };
+
+  function builder(table: Table, filters: Filter[]) {
+    let order: { column: string; ascending: boolean } | null = null;
+    let limit: number | null = null;
+
+    const matched = () => {
+      const filtered = (db[TABLES[table]] as Row[]).filter((row) =>
+        filters.every(({ column, op, value }) => {
+          if (op === "eq") return row[column] === value;
+          if (op === "is") return value === null ? (row[column] ?? null) === null : row[column] === value;
+          if (op === "in") return (value as unknown[]).includes(row[column]);
+          return Number(row[column] ?? Number.NEGATIVE_INFINITY) > Number(value);
+        }),
       );
+      // PostgREST applies ORDER BY before LIMIT, and the Phase 8A resolution
+      // depends on it: "the highest open sequence row" is only correct if the
+      // fake actually sorts.
+      if (order) {
+        const direction = order.ascending ? 1 : -1;
+        filtered.sort((a, b) => {
+          const av = Number(a[order!.column] ?? 0);
+          const bv = Number(b[order!.column] ?? 0);
+          return (av - bv) * direction;
+        });
+      }
+      return limit === null ? filtered : filtered.slice(0, limit);
+    };
 
     const b: Record<string, unknown> = {};
     b.eq = (column: string, value: unknown) => {
-      filters.push([column, value]);
+      filters.push({ column, op: "eq", value });
       return b;
     };
-    b.order = () => b;
-    b.limit = () => b;
+    b.in = (column: string, value: unknown[]) => {
+      filters.push({ column, op: "in", value });
+      return b;
+    };
+    b.is = (column: string, value: unknown) => {
+      filters.push({ column, op: "is", value });
+      return b;
+    };
+    b.gt = (column: string, value: number) => {
+      filters.push({ column, op: "gt", value });
+      return b;
+    };
+    b.order = (column: string, options?: { ascending?: boolean }) => {
+      order = { column, ascending: options?.ascending ?? true };
+      return b;
+    };
+    b.limit = (count: number) => {
+      limit = count;
+      return b;
+    };
     b.select = () => b;
     b.maybeSingle = async () => ({ data: matched()[0] ?? null, error: null });
     b.then = (onFulfilled: (value: unknown) => unknown) =>
@@ -222,7 +265,37 @@ const notifier: ActionNotifier = {
 };
 
 const LEAD_ID = "11111111-1111-1111-1111-111111111111";
+/** The already-sent initial outreach the due view anchors on. */
 const OUTREACH_ID = "22222222-2222-2222-2222-222222222222";
+/** The real, stored follow-up row a Phase 8A notification points at. */
+const FOLLOW_UP_ID = "55555555-5555-5555-5555-555555555555";
+
+/**
+ * The stored follow-up the notification is about.
+ *
+ * Defaults to an open (draft) child of the anchor at slot 1, which is the only
+ * shape that may be notified at all. `overrides` are merged so a test can make
+ * it already sent, or put it at a different slot.
+ */
+function seedFollowUpRow(overrides: Partial<Row> = {}): Row {
+  const row = {
+    id: FOLLOW_UP_ID,
+    lead_id: LEAD_ID,
+    recipient_email: "hello@example.cz",
+    subject: "AI recepce pro Example",
+    body: "Dobrý den,...",
+    status: "draft",
+    provider: null,
+    provider_message_id: null,
+    sent_at: null,
+    created_at: "2026-09-29T00:00:00.000Z",
+    sequence_number: 1,
+    parent_message_id: OUTREACH_ID,
+    ...overrides,
+  };
+  db.messages.push(row);
+  return row;
+}
 
 function seedDueFollowUp(overrides: Partial<Row> = {}) {
   const row = {
@@ -253,6 +326,9 @@ function seedDueFollowUp(overrides: Partial<Row> = {}) {
     next_followup_at: "2026-10-01T08:00:00.000Z",
     ...overrides,
   });
+  // Scheduling alone never justifies a notification: the follow-up row itself
+  // must exist, so the default seed always stores one.
+  seedFollowUpRow({ sequence_number: Number(row.followup_number) });
   return row;
 }
 
@@ -264,6 +340,7 @@ beforeEach(() => {
   db.notifications = [];
   db.tokens = [];
   db.leads = [];
+  db.messages = [];
   db.failBookkeeping = false;
 });
 
@@ -375,9 +452,11 @@ describe("processDueFollowUps — idempotency", () => {
     expect(row.status).toBe("sent");
     expect(row.sent_at).toBeTruthy();
     expect(row.action_token_id).toBe("token-1");
-    // The token is minted server-side, bound to lead + outreach.
+    // The token is minted server-side and bound to the exact follow-up row, so
+    // the link, the ledger and the operator all land on the same message.
     expect(db.tokens[0].lead_id).toBe(LEAD_ID);
-    expect(db.tokens[0].outreach_id).toBe(OUTREACH_ID);
+    expect(db.tokens[0].outreach_id).toBe(FOLLOW_UP_ID);
+    expect(row.outreach_id).toBe(FOLLOW_UP_ID);
   });
 
   it("treats an in-flight claim from another worker as busy", async () => {
@@ -514,6 +593,11 @@ describe("processDueFollowUps — failure handling", () => {
       followup_count: 0,
       next_followup_at: "2026-10-01T08:00:00.000Z",
     });
+    seedFollowUpRow({
+      id: "66666666-6666-6666-6666-666666666666",
+      lead_id: "33333333-3333-3333-3333-333333333333",
+      parent_message_id: "44444444-4444-4444-4444-444444444444",
+    });
 
     const outcome = await processDueFollowUps({ notifier });
     expect(outcome.examined).toBe(2);
@@ -563,5 +647,296 @@ describe("notification channel wiring", () => {
     } finally {
       if (previous !== undefined) process.env.TELEGRAM_BOT_TOKEN = previous;
     }
+  });
+});
+
+describe("Phase 8A — due follow-up resolution to a real message", () => {
+  it("resolves a due lead to its stored follow-up row, not the anchor", async () => {
+    seedDueFollowUp();
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(1);
+
+    // The ledger names the follow-up row, never the already-sent anchor.
+    const [row] = db.notifications;
+    expect(row.outreach_id).toBe(FOLLOW_UP_ID);
+    expect(row.outreach_id).not.toBe(OUTREACH_ID);
+  });
+
+  it("takes the follow-up number from sequence_number, not followup_count + 1", async () => {
+    // Unrecorded history: the counter claims two follow-ups went out that were
+    // never stored, so the stored follow-up really IS follow-up #1.
+    seedDueFollowUp({ followup_count: 2, followup_number: 3 });
+    db.messages[0].sequence_number = 1;
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(1);
+    expect(notifications[0].body).toContain("Follow-up #1");
+    expect(db.notifications[0].followup_number).toBe(1);
+  });
+
+  it("notifies the highest open sequence slot when several follow-ups are open", async () => {
+    seedDueFollowUp();
+    // A second, later follow-up that is already out; the open one is still #1.
+    seedFollowUpRow({ id: "77777777-7777-7777-7777-777777777777", sequence_number: 2, status: "sent", sent_at: "2026-09-30T00:00:00.000Z" });
+    seedFollowUpRow({ id: "88888888-8888-8888-8888-888888888888", sequence_number: 3 });
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(1);
+    expect(notifications[0].body).toContain("Follow-up #3");
+    expect(db.notifications[0].outreach_id).toBe("88888888-8888-8888-8888-888888888888");
+  });
+
+  it("uses the notified row's own recipient", async () => {
+    seedDueFollowUp();
+    db.messages[0].recipient_email = "hello@example.cz";
+
+    await processDueFollowUps({ notifier });
+    expect(notifications[0].body).toContain("hello@example.cz");
+  });
+
+  it("excludes a follow-up that was already sent", async () => {
+    seedDueFollowUp();
+    db.messages[0].status = "sent";
+    db.messages[0].sent_at = "2026-09-30T09:00:00.000Z";
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(0);
+    expect(outcome.skippedAlreadySent).toBe(1);
+    expect(notifications).toHaveLength(0);
+    expect(db.notifications).toHaveLength(0);
+  });
+
+  it("excludes a follow-up row that no longer exists (unrecorded history)", async () => {
+    // Scheduling says due, the counter claims follow-ups were sent, but the
+    // sequence holds nothing: nothing may be fabricated from that.
+    seedDueFollowUp({ followup_count: 2 });
+    db.messages.length = 0;
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(0);
+    expect(outcome.skippedUnrecorded).toBe(1);
+    expect(notifications).toHaveLength(0);
+    expect(db.notifications).toHaveLength(0);
+    expect(db.tokens).toHaveLength(0);
+  });
+
+  it("ignores a follow-up belonging to a different lead", async () => {
+    seedDueFollowUp();
+    db.messages[0].lead_id = "99999999-9999-9999-9999-999999999999";
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(0);
+    expect(outcome.skippedUnrecorded).toBe(1);
+    expect(notifications).toHaveLength(0);
+  });
+
+  it("ignores an initial outreach (sequence 0) as a notification target", async () => {
+    seedDueFollowUp();
+    db.messages[0].sequence_number = 0;
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(0);
+    expect(outcome.skippedUnrecorded).toBe(1);
+  });
+
+  it("sends nothing when two recipients share a sequence slot", async () => {
+    // The ledger is keyed (lead, follow-up number) and cannot separate these.
+    seedDueFollowUp();
+    seedFollowUpRow({ id: "aaaa1111-1111-1111-1111-111111111111", recipient_email: "other@example.cz" });
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(0);
+    expect(outcome.skippedAmbiguous).toBe(1);
+    expect(notifications).toHaveLength(0);
+  });
+});
+
+describe("Phase 8A — ledger identity and duplicate suppression", () => {
+  it("keys the ledger by the notified message's sequence", async () => {
+    seedDueFollowUp();
+    await processDueFollowUps({ notifier });
+
+    expect(db.notifications).toHaveLength(1);
+    const [row] = db.notifications;
+    expect(row.followup_number).toBe(1);
+    expect(row.outreach_id).toBe(FOLLOW_UP_ID);
+  });
+
+  it("does not re-notify a follow-up already booked under the old counter numbering", async () => {
+    // A ledger row written before Phase 8A: followup_count + 1 == 3.
+    seedDueFollowUp({ followup_count: 2, followup_number: 3 });
+    db.notifications.push({
+      lead_id: LEAD_ID,
+      outreach_id: OUTREACH_ID,
+      followup_number: 3,
+      status: "sent",
+      claimed_at: "2026-09-30T00:00:00.000Z",
+      sent_at: "2026-09-30T00:00:00.000Z",
+    });
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(0);
+    expect(outcome.skippedAlreadyNotified).toBe(1);
+    expect(notifications).toHaveLength(0);
+    // Nothing new was written: the existing row is left exactly as it was.
+    expect(db.notifications).toHaveLength(1);
+  });
+
+  it("still ignores a stale claim row that was never delivered", async () => {
+    seedDueFollowUp({ followup_count: 2, followup_number: 3 });
+    db.messages[0].sequence_number = 1;
+    db.notifications.push({
+      lead_id: LEAD_ID,
+      outreach_id: OUTREACH_ID,
+      followup_number: 3,
+      status: "claimed",
+      claimed_at: new Date().toISOString(),
+      sent_at: null,
+    });
+
+    // The legacy row was never sent, so it must not suppress a real notification.
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(1);
+  });
+
+  it("three consecutive runs produce exactly one notification event", async () => {
+    seedDueFollowUp();
+
+    await processDueFollowUps({ notifier });
+    await processDueFollowUps({ notifier });
+    await processDueFollowUps({ notifier });
+
+    expect(notifications).toHaveLength(1);
+    expect(db.notifications).toHaveLength(1);
+  });
+
+  it("handles a duplicate ledger insert as a conflict, not a second send", async () => {
+    seedDueFollowUp();
+    db.notifications.push({
+      lead_id: LEAD_ID,
+      outreach_id: FOLLOW_UP_ID,
+      followup_number: 1,
+      status: "claimed",
+      claimed_at: new Date().toISOString(),
+      sent_at: null,
+    });
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(0);
+    expect(outcome.skippedBusy).toBe(1);
+    expect(notifications).toHaveLength(0);
+  });
+
+  it("four concurrent runs still send one notification for one follow-up row", async () => {
+    seedDueFollowUp();
+
+    await Promise.all([
+      processDueFollowUps({ notifier }),
+      processDueFollowUps({ notifier }),
+      processDueFollowUps({ notifier }),
+      processDueFollowUps({ notifier }),
+    ]);
+
+    expect(notifications).toHaveLength(1);
+    expect(db.notifications).toHaveLength(1);
+  });
+});
+
+describe("Phase 8A — notification surface and security", () => {
+  it("announces attention, never a send", async () => {
+    seedDueFollowUp();
+    await processDueFollowUps({ notifier });
+
+    const text = `${notifications[0].title}\n${notifications[0].body}`;
+    expect(text).toContain("FOLLOW-UP DUE");
+    expect(text).not.toMatch(/\bsent\b/i);
+    expect(text).not.toMatch(/\bdelivered\b/i);
+  });
+
+  it("never leaks the follow-up's subject or body", async () => {
+    seedDueFollowUp();
+    db.messages[0].subject = "Tajny predmet";
+    db.messages[0].body = "Tajne telo";
+
+    await processDueFollowUps({ notifier });
+    const text = notifications[0].title + notifications[0].body + notifications[0].actionUrl;
+    expect(text).not.toContain("Tajny predmet");
+    expect(text).not.toContain("Tajne telo");
+  });
+
+  it("carries an opaque deep link and no message id in the payload", async () => {
+    seedDueFollowUp();
+    await processDueFollowUps({ notifier });
+
+    const url = notifications[0].actionUrl;
+    expect(url).toMatch(/^https:\/\/pepa\.example\.com\/followup\/fp1_/);
+    expect(url).not.toContain(LEAD_ID);
+    expect(url).not.toContain(FOLLOW_UP_ID);
+    expect(url).not.toContain(OUTREACH_ID);
+  });
+
+  it("cannot be pointed at an arbitrary message: candidates come from the due view only", async () => {
+    seedDueFollowUp();
+    const orphan = seedFollowUpRow({
+      id: "dddddddd-dddd-dddd-dddd-dddddddddddd",
+      sequence_number: 1,
+      lead_id: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+    });
+
+    // There is no parameter for a message id: injecting one changes nothing,
+    // because a row is only ever considered when the due view already selected
+    // its lead, and the resolution is scoped to that lead.
+    await processDueFollowUps({ notifier, ...({ messageId: orphan.id } as object) });
+
+    expect(notifications).toHaveLength(1);
+    expect(db.tokens[0].outreach_id).toBe(FOLLOW_UP_ID);
+    expect(db.notifications[0].outreach_id).not.toBe(orphan.id);
+  });
+});
+
+describe("Phase 8A — failure safety", () => {
+  it("never records a failed Telegram delivery as delivered", async () => {
+    seedDueFollowUp();
+    failNextSend = true;
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(0);
+    expect(outcome.failed).toBe(1);
+    expect(db.notifications).toHaveLength(0);
+  });
+
+  it("retries the same follow-up row after a delivery failure", async () => {
+    seedDueFollowUp();
+    failNextSend = true;
+    await processDueFollowUps({ notifier });
+
+    const retry = await processDueFollowUps({ notifier });
+    expect(retry.notified).toBe(1);
+    expect(db.notifications[0].followup_number).toBe(1);
+    expect(db.notifications[0].outreach_id).toBe(FOLLOW_UP_ID);
+  });
+
+  it("releases the claim under the authoritative key, not the counter", async () => {
+    seedDueFollowUp({ followup_count: 2, followup_number: 3 });
+    failNextSend = true;
+
+    await processDueFollowUps({ notifier });
+    // The released row must be gone entirely, so the next run is not blocked by
+    // a claim recorded under a number the follow-up does not own.
+    expect(db.notifications).toHaveLength(0);
+  });
+
+  it("does not notify a follow-up that went out before the processor ran", async () => {
+    seedDueFollowUp();
+    // Operator sends it manually from the workspace, ahead of any cron run.
+    db.messages[0].status = "sent";
+    db.messages[0].sent_at = "2026-10-01T09:00:00.000Z";
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(0);
+    expect(outcome.skippedAlreadySent).toBe(1);
+    expect(notifications).toHaveLength(0);
+    expect(db.notifications).toHaveLength(0);
   });
 });

@@ -13,6 +13,9 @@ const { processDueFollowUps } = vi.hoisted(() => ({
     skippedAlreadyNotified: 0,
     skippedBusy: 0,
     skippedMaxCadence: 0,
+    skippedAlreadySent: 0,
+    skippedUnrecorded: 0,
+    skippedAmbiguous: 0,
     failed: 0,
   })),
 }));
@@ -73,6 +76,9 @@ describe("GET /api/cron/followups", () => {
       skippedAlreadyNotified: 1,
       skippedBusy: 0,
       skippedMaxCadence: 0,
+      skippedAlreadySent: 0,
+      skippedUnrecorded: 0,
+      skippedAmbiguous: 0,
       failed: 0,
     });
 
@@ -91,6 +97,9 @@ describe("GET /api/cron/followups", () => {
       skippedAlreadyNotified: 0,
       skippedBusy: 0,
       skippedMaxCadence: 0,
+      skippedAlreadySent: 0,
+      skippedUnrecorded: 0,
+      skippedAmbiguous: 0,
       failed: 0,
     });
 
@@ -113,6 +122,33 @@ describe("GET /api/cron/followups", () => {
     expect(text).toContain("scheduler_failed");
     expect(text).not.toContain("supabase exploded");
     expect(text).not.toContain(SECRET);
+  });
+
+  it("reports the Phase 8A skip reasons as counts", async () => {
+    processDueFollowUps.mockResolvedValueOnce({
+      examined: 4,
+      notified: 1,
+      skippedAlreadyNotified: 1,
+      skippedBusy: 0,
+      skippedMaxCadence: 0,
+      skippedAlreadySent: 1,
+      skippedUnrecorded: 1,
+      skippedAmbiguous: 0,
+      failed: 0,
+    });
+
+    const response = await GET(request(`Bearer ${SECRET}`));
+    const body = await response.json();
+
+    // An already-sent follow-up and an unrecorded one are reported honestly
+    // rather than passing silently, so a misconfigured lead is visible in the
+    // cron response instead of looking like a healthy run.
+    expect(body).toMatchObject({
+      ok: true,
+      notified: 1,
+      skippedAlreadySent: 1,
+      skippedUnrecorded: 1,
+    });
   });
 
   it("refuses POST", async () => {

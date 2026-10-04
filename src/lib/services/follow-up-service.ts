@@ -18,17 +18,44 @@ import type { Lead, OutreachMessage } from "@/lib/types";
  * Follow-up engine.
  *
  * Per due follow-up, in order:
- *   1. CLAIM it atomically via a unique constraint (not a JS mutex);
- *   2. mint the opaque deep link;
- *   3. hand a channel-agnostic ActionNotification to NotificationService;
- *   4. record success — or release the claim so the next run retries.
+ *   1. RESOLVE the real follow-up row this due event is about;
+ *   2. CLAIM it atomically via a unique constraint (not a JS mutex);
+ *   3. mint the opaque deep link;
+ *   4. hand a channel-agnostic ActionNotification to NotificationService;
+ *   5. record success — or release the claim so the next run retries.
  *
  * It never sends email. The operator reviews and sends manually.
  *
  * Design note on scheduling: `next_followup_at` is deliberately NOT advanced
  * when a follow-up is notified. Doing so would queue follow-ups #2 and #3 for
- * messages that were never sent. It advances in `markFollowUpSent()`, which the
- * future EmailProvider calls at actual send time.
+ * messages that were never sent. It advances in `markFollowUpSent()`, which
+ * `recordOutreachSent()` calls at actual send time.
+ *
+ * ---------------------------------------------------------------------------
+ * Notification identity (Phase 8A)
+ * ---------------------------------------------------------------------------
+ * The scheduler answers two separate questions, and they must not be confused:
+ *
+ *   "Is this lead due?"            → `next_followup_at`, i.e. SCHEDULING.
+ *   "Which follow-up is it about?" → a real `outreach_messages` row with
+ *                                    `sequence_number > 0`, i.e. IDENTITY.
+ *
+ * `due_followups.followup_number` is `leads.followup_count + 1`, and the view's
+ * `outreach_id` is the last message that actually went out. Neither is the
+ * follow-up being announced: the counter is a scheduling tally (and drifts
+ * permanently on leads whose follow-ups predate the Phase 4A sequence model),
+ * and the anchor is by definition an email that was already sent. Notifying from
+ * those two values produced a Telegram message reading "Follow-up #2" for a row
+ * that did not exist, with a deep link pointing at the previous email.
+ *
+ * So the number a notification carries is now read, never computed: it is
+ * `message.sequence_number` of a stored, unsent follow-up row. A due lead with
+ * no such row is skipped and counted (`skippedUnrecorded`), because there is
+ * nothing true to announce — the Phase 4C workspace already lists it as pending.
+ *
+ * The same number keys the ledger (`unique (lead_id, followup_number)`), which
+ * keeps one notification per (lead, follow-up row) and keeps the deep link and
+ * the ledger pointing at the same message.
  */
 
 /** How long a `claimed` row is honoured before another run may take it over. */
@@ -47,6 +74,23 @@ export interface ProcessOutcome {
   skippedAlreadyNotified: number;
   skippedBusy: number;
   skippedMaxCadence: number;
+  /**
+   * A due lead whose next follow-up has already gone out. Reported separately
+   * from `notified` so a stale "still due" signal is visible rather than silent.
+   */
+  skippedAlreadySent: number;
+  /**
+   * A due lead with no stored follow-up row at all — either nothing was ever
+   * drafted, or `followup_count` describes follow-ups that predate the sequence
+   * model and were never stored. Reported, never reconstructed.
+   */
+  skippedUnrecorded: number;
+  /**
+   * A lead carrying two recipients at the same sequence slot. The ledger is
+   * keyed per (lead, follow-up number) and cannot tell those apart, so no
+   * notification is sent rather than the wrong one.
+   */
+  skippedAmbiguous: number;
   failed: number;
 }
 
@@ -134,6 +178,136 @@ function toDueFollowUp(row: Record<string, unknown>): ResolvedDueFollowUp | null
     dueAt: String(row.next_followup_at),
     attempt: followUpNumber,
   };
+}
+
+/**
+ * Columns needed to decide whether a stored follow-up may be notified.
+ *
+ * `subject` and `body` are read because the deep link lands the operator on that
+ * row's own composer. Neither ever reaches the Telegram payload.
+ */
+const FOLLOW_UP_COLUMNS =
+  "id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at, sequence_number, parent_message_id";
+
+/**
+ * Statuses that mean the message has left the outbox for good. Mirrors the
+ * exclusions in the `due_followups` view and `outreach-service`'s
+ * `SENDABLE_STATUSES`, so "still actionable" means the same thing everywhere.
+ */
+const CLOSED_STATUSES: ReadonlySet<string> = new Set(["sent", "replied", "completed", "blocked"]);
+
+/** A follow-up that has not gone out yet, and therefore still needs attention. */
+function isOpenFollowUp(message: OutreachMessage): boolean {
+  return message.sent_at === null && !CLOSED_STATUSES.has(message.status);
+}
+
+function toStoredMessage(row: Record<string, unknown>): OutreachMessage {
+  return {
+    id: String(row.id),
+    lead_id: String(row.lead_id),
+    recipient_email: String(row.recipient_email),
+    subject: (row.subject ?? null) as string | null,
+    body: (row.body ?? null) as string | null,
+    status: row.status as OutreachMessage["status"],
+    provider: (row.provider ?? null) as OutreachMessage["provider"],
+    provider_message_id: (row.provider_message_id ?? null) as string | null,
+    sent_at: (row.sent_at ?? null) as string | null,
+    created_at: String(row.created_at),
+    sequence_number: Number(row.sequence_number ?? 0),
+    parent_message_id: (row.parent_message_id ?? null) as string | null,
+  };
+}
+
+/** Why a due lead did or did not yield a notification. */
+export type FollowUpState =
+  /** A real, stored, unsent follow-up row. This is what may be notified. */
+  | "due"
+  /** The next follow-up already went out; announcing it would be stale. */
+  | "already_sent"
+  /** No follow-up row exists. Never reconstructed, never notified. */
+  | "not_stored"
+  /** Two recipients occupy the same sequence slot; the ledger cannot separate them. */
+  | "ambiguous";
+
+export interface FollowUpResolution {
+  state: FollowUpState;
+  /** Non-null only when `state === "due"`. */
+  message: OutreachMessage | null;
+}
+
+/**
+ * Resolve a due lead to the exact follow-up row it should be notified about.
+ *
+ * Scoped to `parent_message_id = anchorMessageId`, the same anchor the
+ * `due_followups` view picked: the latest message that actually went out. The
+ * follow-up that follows it is the next unsent step in that conversation, and
+ * following the real parent link is what keeps the notification on the same
+ * sequence the view is already reporting — no counter arithmetic is involved.
+ *
+ * Rows are read newest-slot-first and at most two are fetched: the second one is
+ * only needed to detect two recipients sharing a slot, which `unique (lead_id,
+ * followup_number)` in the ledger cannot represent.
+ */
+export async function resolveFollowUpTarget(
+  leadId: string,
+  anchorMessageId: string,
+): Promise<FollowUpResolution> {
+  const supabase = getSupabaseAdmin();
+
+  const { data, error } = await supabase
+    .from("outreach_messages")
+    .select(FOLLOW_UP_COLUMNS)
+    .eq("lead_id", leadId)
+    .eq("parent_message_id", anchorMessageId)
+    .gt("sequence_number", 0)
+    .order("sequence_number", { ascending: false })
+    .limit(2);
+
+  if (error) throw new Error(error.message);
+
+  const rows = ((data ?? []) as Array<Record<string, unknown>>).map(toStoredMessage);
+  const open = rows.filter(isOpenFollowUp);
+
+  if (open.length === 0) {
+    return { state: rows.length > 0 ? "already_sent" : "not_stored", message: null };
+  }
+
+  const target = open[0];
+  if (open.length > 1 && open[1].sequence_number === target.sequence_number) {
+    return { state: "ambiguous", message: null };
+  }
+
+  return { state: "due", message: target };
+}
+
+/**
+ * True when this follow-up was already notified under the pre-Phase-8A numbering.
+ *
+ * Ledger rows written before this phase used `leads.followup_count + 1`, which on
+ * a lead with unrecorded history is a different number from the row's own
+ * `sequence_number`. Reading only the new key would let those leads be announced
+ * a second time. The old key is therefore still honoured: one delivery per
+ * follow-up, whichever numbering created it, with no migration and no way to
+ * distinguish the two cases in the data.
+ */
+async function hasLegacyNotification(
+  leadId: string,
+  legacyNumber: number,
+  sequenceNumber: number,
+): Promise<boolean> {
+  if (legacyNumber === sequenceNumber) return false;
+
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("followup_notifications")
+    .select("id")
+    .eq("lead_id", leadId)
+    .eq("followup_number", legacyNumber)
+    .eq("status", "sent")
+    .maybeSingle();
+
+  if (error) throw new Error(error.message);
+  return Boolean(data);
 }
 
 type ClaimResult = "claimed" | "already_notified" | "busy";
@@ -257,6 +431,9 @@ export async function processDueFollowUps(options: ProcessOptions = {}): Promise
     skippedAlreadyNotified: 0,
     skippedBusy: 0,
     skippedMaxCadence: 0,
+    skippedAlreadySent: 0,
+    skippedUnrecorded: 0,
+    skippedAmbiguous: 0,
     failed: 0,
   };
 
@@ -284,9 +461,47 @@ export async function processDueFollowUps(options: ProcessOptions = {}): Promise
       continue;
     }
 
+    // Identity before idempotency: a claim is only ever taken for a follow-up
+    // row that actually exists, so the ledger can never record a notification
+    // for a message the database does not hold.
+    let resolution: FollowUpResolution;
+    try {
+      resolution = await resolveFollowUpTarget(entry.lead.id, entry.lastMessage.id);
+    } catch {
+      outcome.failed += 1;
+      continue;
+    }
+
+    if (resolution.state === "already_sent") {
+      outcome.skippedAlreadySent += 1;
+      continue;
+    }
+    if (resolution.state === "not_stored") {
+      outcome.skippedUnrecorded += 1;
+      continue;
+    }
+    if (resolution.state === "ambiguous" || !resolution.message) {
+      outcome.skippedAmbiguous += 1;
+      continue;
+    }
+
+    // The authoritative follow-up number, read from the row itself.
+    const followUp = resolution.message;
+    const sequenceNumber = followUp.sequence_number;
+
+    try {
+      if (await hasLegacyNotification(entry.lead.id, entry.attempt, sequenceNumber)) {
+        outcome.skippedAlreadyNotified += 1;
+        continue;
+      }
+    } catch {
+      outcome.failed += 1;
+      continue;
+    }
+
     let claim: ClaimResult;
     try {
-      claim = await claimFollowUp(entry.lead.id, entry.lastMessage.id, entry.attempt, now);
+      claim = await claimFollowUp(entry.lead.id, followUp.id, sequenceNumber, now);
     } catch {
       outcome.failed += 1;
       continue;
@@ -303,16 +518,20 @@ export async function processDueFollowUps(options: ProcessOptions = {}): Promise
 
     let delivered = false;
     try {
+      // The token carries the follow-up itself, not the message it follows, so
+      // the link resolves to the exact row and the ledger's `outreach_id`
+      // names the same message the operator was told about.
       const token = await mintFollowUpToken({
         leadId: entry.lead.id,
-        outreachId: entry.lastMessage.id,
+        outreachId: followUp.id,
       });
       if (!token.ok || !token.data) throw new Error(token.error ?? "Could not mint a deep link.");
 
       const notification = toActionNotification({
         leadName: entry.lead.company_name ?? entry.lead.contact_name,
-        email: entry.lead.email,
-        attempt: entry.attempt,
+        email: followUp.recipient_email,
+        // Read, never computed: this is the row's own position in the sequence.
+        attempt: sequenceNumber,
         lastContactedAt: entry.lead.last_contacted_at,
         deepLink: await buildDeepLink(token.data.token),
       });
@@ -320,13 +539,13 @@ export async function processDueFollowUps(options: ProcessOptions = {}): Promise
       await send(notification);
       delivered = true;
 
-      await markNotified(entry.lead.id, entry.attempt, token.data.id, now);
+      await markNotified(entry.lead.id, sequenceNumber, token.data.id, now);
       outcome.notified += 1;
     } catch {
       outcome.failed += 1;
       if (!delivered) {
         // Never sent: release immediately so the next run retries.
-        await releaseClaim(entry.lead.id, entry.attempt).catch(() => undefined);
+        await releaseClaim(entry.lead.id, sequenceNumber).catch(() => undefined);
       }
       // If it WAS sent but bookkeeping failed, the claim is left alone: the lease
       // expires and a later run reclaims it. Better a delayed retry than a second

@@ -205,10 +205,30 @@ export async function resolveActionToken(
 
   // The token carries an anchor: this draft is a follow-up to `outreach`.
   //
-  // It gets its OWN row at the next sequence slot. It must never be written
-  // over the anchor, because the anchor is the historical record of what was
-  // actually sent to this recipient; overwriting it destroyed that history.
+  // Normally that means writing a NEW row at the next sequence slot. It must
+  // never be written over the anchor, because the anchor is the historical
+  // record of what was actually sent to this recipient; overwriting it
+  // destroyed that history.
   //
+  // One exception: when the anchor is itself an unsent follow-up — which is
+  // what a Phase 8A notification deep link carries — the follow-up being
+  // notified already exists, so it is updated in place. Creating a child here
+  // would spawn a phantom follow-up #2 on every save of the linked follow-up,
+  // and the edits the operator just made would land on the wrong row.
+  if (isOpenFollowUpRow(outreach)) {
+    const { data: updated, error: updateError } = await supabase
+      .from("outreach_messages")
+      .update(payload)
+      .eq("id", outreach.id)
+      .eq("lead_id", lead.id)
+      .select(MESSAGE_COLUMNS)
+      .maybeSingle();
+
+    if (updateError) return fail(updateError.message);
+    if (!updated) return fail("The follow-up draft could not be saved.");
+    return { ok: true, error: null, data: { lead, message: updated, created: false } };
+  }
+
   // Re-saving an unsent follow-up updates that same follow-up row rather than
   // appending a new one, so pressing save twice cannot inflate the sequence.
   const existing = await openFollowUpAfter(supabase, lead.id, outreach.id);
@@ -249,6 +269,20 @@ export async function resolveActionToken(
   if (!data) return fail("The follow-up draft could not be saved.");
 
   return { ok: true, error: null, data: { lead, message: data as OutreachMessage, created: true } };
+}
+
+/**
+ * A stored follow-up that has not gone out, i.e. one that can still be edited.
+ *
+ * Plain boolean rather than a type predicate: narrowing `OutreachMessage | null`
+ * on a predicate would make the negative branch `never`, which is wrong here —
+ * a null anchor is a perfectly valid case that falls through to the append path.
+ */
+function isOpenFollowUpRow(message: OutreachMessage | null): boolean {
+  if (!message) return false;
+  if (message.sequence_number <= 0) return false;
+  if (message.sent_at !== null) return false;
+  return message.status !== "sent" && message.status !== "replied" && message.status !== "completed" && message.status !== "blocked";
 }
 
 /** The unsent follow-up that already follows `anchorMessageId`, if any. */

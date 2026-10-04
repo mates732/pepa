@@ -132,17 +132,23 @@ const supabaseMock = {
       update(patch: Record<string, unknown>) {
         // Mirrors the real builder: chainable synchronously, thenable so `await`
         // on a bare update() still resolves to { error }.
+        //
+        // PostgREST ANDs every filter, so a row is patched only when it matches
+        // all of them. Applying each filter independently would let an update
+        // scoped to one id silently write another row that merely shares a column
+        // value — which is exactly the kind of bug this fake exists to catch.
+        const filters: Array<[string, unknown]> = [];
         let updated: Record<string, unknown> | null = null;
         const builder: Record<string, unknown> = {
           select: () => ({ maybeSingle: async () => ({ data: updated, error: null }) }),
           then: (resolve: (value: { error: null }) => unknown) => Promise.resolve({ error: null }).then(resolve),
         };
         builder.eq = (column: string, value: unknown) => {
+          filters.push([column, value]);
           for (const row of rowsFor()) {
-            if (row[column] === value) {
-              Object.assign(row, patch);
-              updated = row;
-            }
+            if (!filters.every(([column_, wanted]) => row[column_] === wanted)) continue;
+            Object.assign(row, patch);
+            updated = row;
           }
           return builder;
         };
@@ -362,5 +368,48 @@ describe("saveFollowUpDraft", () => {
     const result = await saveFollowUpDraft({ rawToken: "1", subject: "x", body: "y" });
     expect(result.ok).toBe(false);
     expect(state.messages.length).toBe(before);
+  });
+
+  it("updates the linked follow-up in place instead of spawning the next one", async () => {
+    // Phase 8A: a notification deep link carries the follow-up row itself, so
+    // saving from that link must edit that row. Writing a child here would
+    // create a phantom follow-up #2 and drop the operator's edits on the floor.
+    const existing = {
+      id: "f1111111-1111-1111-1111-111111111111",
+      lead_id: LEAD_ID,
+      recipient_email: "info@thearchive.cz",
+      subject: "Stary predmet",
+      body: "Stare telo",
+      status: "draft",
+      sent_at: null,
+      created_at: "2026-09-29T00:00:00.000Z",
+      sequence_number: 1,
+      parent_message_id: MESSAGE_ID,
+    };
+    state.messages.push(existing as unknown as Record<string, unknown>);
+    const raw = seedToken({ outreach_id: existing.id });
+
+    const { saveFollowUpDraft } = await load();
+    const result = await saveFollowUpDraft({ rawToken: raw, subject: "Novy predmet", body: "Nove telo" });
+
+    expect(result.ok).toBe(true);
+    expect(result.data?.message.id).toBe(existing.id);
+    expect(result.data?.created).toBe(false);
+    expect(result.data?.message.sequence_number).toBe(1);
+    // No new row: the sequence is untouched and the anchor is untouched.
+    expect(state.messages).toHaveLength(2);
+    expect(state.messages[0]).toMatchObject({ id: MESSAGE_ID, sequence_number: 0, body: "Dobrý den," });
+  });
+
+  it("still appends when the linked message is an initial outreach", async () => {
+    // Regression guard for the branch above: slot 0 is an anchor, never an
+    // editable follow-up, so the original behaviour must be untouched.
+    const raw = seedToken();
+    const { saveFollowUpDraft } = await load();
+
+    const result = await saveFollowUpDraft({ rawToken: raw, subject: "Re: AI recepce", body: "Navazuji" });
+    expect(result.ok).toBe(true);
+    expect(result.data?.message.sequence_number).toBe(1);
+    expect(state.messages).toHaveLength(2);
   });
 });
