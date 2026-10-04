@@ -26,6 +26,7 @@ import { OutreachStats } from "@/components/outreach-stats";
 import { OutreachStreaks } from "@/components/outreach-streaks";
 import { PasteImport } from "@/components/paste-import";
 import { formatDate, formatDateTime } from "@/lib/format";
+import { composerValuesFromSavedMessage } from "@/lib/outreach/composer-values";
 import {
   closeComposeWindow,
   navigateComposeWindow,
@@ -108,6 +109,7 @@ export function Dashboard({
   const [recordingDetail, setRecordingDetail] = useState(false);
   const [creatingFollowUp, setCreatingFollowUp] = useState(false);
   const [openingDetailId, setOpeningDetailId] = useState<string | null>(null);
+  const [openingComposerRowId, setOpeningComposerRowId] = useState<string | null>(null);
 
   // Activity workspace. Read-only: opening it records nothing, and it exposes no
   // mutation controls, so there is nothing here that can write.
@@ -785,22 +787,66 @@ export function Dashboard({
     }
   }
 
-  function handleOpenFromHistory(row: OutreachHistoryRow) {
-    setValues({
-      recipient: row.email,
-      subject: row.latestSubject ?? "",
-      body: "",
-      companyName: row.company_name ?? "",
-      contactName: row.contact_name ?? "",
-      messageId: null,
-      // The overview view exposes the lead id but not the message id, so a
-      // re-opened row must be saved before it can be recorded as sent.
-      leadId: row.id,
-    });
-    setHasContent(true);
-    setSaved(false);
-    void runDuplicateCheck(row.email);
-    window.scrollTo({ top: 0 });
+  /**
+   * Outreach history → composer.
+   *
+   * The composer is filled from the message the DATABASE says is this lead's
+   * initial outreach, resolved server-side by `loadInitialOutreachDetail`. The
+   * browser names a lead, never a message: the row in the history table carries
+   * no message id at all, which is exactly why rebuilding the composer from the
+   * row used to force `messageId: null` and leave "Open in Gmail" permanently
+   * disabled.
+   *
+   * This is a read. It writes nothing, sends nothing and marks nothing, and the
+   * fallback below is the only case where no stored message exists at all.
+   */
+  async function handleOpenFromHistory(row: OutreachHistoryRow) {
+    setOpeningComposerRowId(row.id);
+    setNotice(null);
+    try {
+      const result = await loadInitialOutreachDetail({ leadId: row.id });
+
+      if (!result.ok || !result.detail) {
+        // No stored initial outreach for this lead. Fall back to what the row
+        // genuinely knows, say so, and let the disabled Gmail button explain
+        // itself rather than looking like a button that simply refuses.
+        setValues({
+          recipient: row.email,
+          subject: row.latestSubject ?? "",
+          body: "",
+          companyName: row.company_name ?? "",
+          contactName: row.contact_name ?? "",
+          messageId: null,
+          leadId: row.id,
+        });
+        setHasContent(true);
+        setSaved(false);
+        setNotice({
+          kind: "error",
+          text:
+            result.error ??
+            "That lead has no saved draft yet. Save this one before opening it in Gmail.",
+        });
+        void runDuplicateCheck(row.email);
+        window.scrollTo({ top: 0 });
+        return;
+      }
+
+      setValues(composerValuesFromSavedMessage(result.detail));
+      setHasContent(true);
+      // The content in the composer IS the stored draft, so it is saved by
+      // definition. Saying otherwise would grey out the controls that are
+      // actually valid here.
+      setSaved(true);
+      setNotice({
+        kind: "info",
+        text: "Loaded the saved draft. “Open in Gmail” now uses that saved text.",
+      });
+      void runDuplicateCheck(row.email);
+      window.scrollTo({ top: 0 });
+    } finally {
+      setOpeningComposerRowId(null);
+    }
   }
 
   // Global shortcuts: ⌘S save draft, ⌘K clear, ⌘/ focus the paste box.
@@ -872,7 +918,8 @@ export function Dashboard({
 
       <OutreachHistory
         rows={initialRows}
-        onLoadIntoComposer={handleOpenFromHistory}
+        onLoadIntoComposer={(row) => void handleOpenFromHistory(row)}
+        openingComposerRowId={openingComposerRowId}
         onOpenDetail={(row) => void handleOpenHistoryDetail(row)}
         openingDetailId={openingDetailId}
       />

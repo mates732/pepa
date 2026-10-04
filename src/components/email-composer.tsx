@@ -2,19 +2,16 @@
 
 import { DuplicateNotice } from "@/components/duplicate-notice";
 import { QualityGatePanel } from "@/components/quality-gate-panel";
+import type { ComposerValues } from "@/lib/outreach/composer-values";
 import type { GateEvaluation } from "@/lib/services/outreach-quality-gate";
 import type { DuplicateCheckResult } from "@/lib/types";
 
-export interface ComposerValues {
-  recipient: string;
-  subject: string;
-  body: string;
-  companyName: string;
-  contactName: string;
-  messageId: string | null;
-  /** Set once the draft is saved, so a send can be recorded against its lead. */
-  leadId: string | null;
-}
+/**
+ * Re-exported so the dashboard keeps importing the composer's state shape from
+ * the composer, while the definition itself lives with the mapping that fills
+ * it. One definition, two consumers.
+ */
+export type { ComposerValues };
 
 interface EmailComposerProps {
   values: ComposerValues;
@@ -163,11 +160,15 @@ export function EmailComposer(props: EmailComposerProps) {
 
           {/* The safety rule above is deliberate: the compose text is read from
               the stored message, so an unsaved draft has nothing to open. That
-              is invisible on a disabled button, so it is stated here rather than
-              left for the operator to work out. */}
+              is invisible on a disabled button — a real diagnostic found
+              operators clicking it and reporting that "Gmail does not open" —
+              so the reason is stated here rather than left to be worked out. */}
           {!values.messageId ? (
-            <p className="w-full text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
-              Save the draft to enable “Open in Gmail” — it uses the saved text.
+            <p
+              role="status"
+              className="w-full text-[11px] font-bold uppercase tracking-wider text-midnight-soft"
+            >
+              Save the draft to open in Gmail — it fills from the saved text.
             </p>
           ) : null}
 

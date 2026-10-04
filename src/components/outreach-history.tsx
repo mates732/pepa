@@ -19,6 +19,14 @@ interface OutreachHistoryProps {
    */
   onOpenDetail: (row: OutreachHistoryRow) => void;
   openingDetailId: string | null;
+  /**
+   * Row currently being resolved into the composer.
+   *
+   * Loading a row is a server round trip now, so the row's own button reports
+   * progress and refuses a second click. Optional so existing callers can omit
+   * it; the button is simply never then in a loading state.
+   */
+  openingComposerRowId?: string | null;
 }
 
 export function OutreachHistory({
@@ -26,6 +34,7 @@ export function OutreachHistory({
   onLoadIntoComposer,
   onOpenDetail,
   openingDetailId,
+  openingComposerRowId = null,
 }: OutreachHistoryProps) {
   return (
     <section className="sticker">
@@ -112,9 +121,10 @@ export function OutreachHistory({
                       <button
                         type="button"
                         onClick={() => onLoadIntoComposer(row)}
+                        disabled={openingComposerRowId === row.id}
                         className="btn btn-sm"
                       >
-                        Open
+                        {openingComposerRowId === row.id ? "Opening…" : "Open"}
                       </button>
                     </div>
                   </td>

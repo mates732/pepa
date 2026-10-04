@@ -60,13 +60,25 @@ describe("EmailComposer — the Open in Gmail safety rule", () => {
   // The compose text is read from the STORED message, so an unsaved draft has
   // nothing to open. That rule is deliberate and must survive; what changed is
   // that a disabled button no longer leaves the reason to be guessed at.
+  //
+  // The real-browser diagnostic is why: opening a lead from Outreach history
+  // used to load the composer with `messageId: null`, so this button was dead
+  // there with no visible cause, and operators reported that clicking it did
+  // nothing at all.
   it("is disabled while the draft is unsaved, and says why", () => {
     const markup = render({ values: { messageId: null } });
 
     const gmailButton = buttonsOf(markup).find((b) => b.includes("Open in Gmail"));
     expect(gmailButton).toBeDefined();
     expect(gmailButton).toContain("disabled");
-    expect(markup).toContain("Save the draft to enable");
+    expect(markup).toContain("Save the draft to open in Gmail");
+  });
+
+  it("states the reason in the button's own tooltip as well as beside it", () => {
+    const markup = render({ values: { messageId: null } });
+
+    // Two places, because the label alone was not enough to stop the click.
+    expect(markup).toContain("Save the draft first. Gmail is filled from the saved message");
   });
 
   it("is enabled once the draft is saved, and drops the explanation", () => {
@@ -77,7 +89,24 @@ describe("EmailComposer — the Open in Gmail safety rule", () => {
     const gmailButton = buttonsOf(markup).find((b) => b.includes("Open in Gmail"));
     expect(gmailButton).toBeDefined();
     expect(gmailButton).not.toContain("disabled");
-    expect(markup).not.toContain("Save the draft to enable");
+    expect(markup).not.toContain("Save the draft to open in Gmail");
+  });
+
+  it("is enabled purely on the presence of a saved message id", () => {
+    // No other field decides it. A draft with no subject, no body and no lead
+    // is still reachable, because the stored row is what Gmail reads.
+    const markup = render({
+      values: {
+        messageId: "99999999-9999-4999-8999-999999999999",
+        subject: "",
+        body: "",
+        leadId: null,
+      },
+    });
+
+    const gmailButton = buttonsOf(markup).find((b) => b.includes("Open in Gmail"));
+    expect(gmailButton).toBeDefined();
+    expect(gmailButton).not.toContain("disabled");
   });
 
   it("keeps stating that opening Gmail sends nothing", () => {

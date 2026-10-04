@@ -130,3 +130,60 @@ describe("OutreachHistory — the Phase 8F sequence entry", () => {
     expect(markup).not.toContain("Sequence");
   });
 });
+
+describe("OutreachHistory — loading a row into the composer", () => {
+  // Loading a row is a server round trip now: the dashboard asks the server for
+  // that lead's stored message rather than rebuilding the composer from the
+  // row. The button therefore reports progress and refuses a second click,
+  // because two clicks would be two identical reads and one confusing label.
+  it("reports progress on the row being loaded and nothing else", () => {
+    const markup = render(
+      <OutreachHistory
+        rows={[row({ id: "aaaaaaaa-1111-4111-8111-111111111111" }), row({ id: "bbbbbbbb-1111-4111-8111-111111111111" })]}
+        onLoadIntoComposer={noop}
+        onOpenDetail={noop}
+        openingDetailId={null}
+        openingComposerRowId="aaaaaaaa-1111-4111-8111-111111111111"
+      />,
+    );
+
+    expect(markup).toContain("Opening…");
+    // Exactly one row is in flight; the other stays labelled "Open" and usable.
+    expect(markup.match(/>Open</g)).toHaveLength(1);
+    // Only the in-flight row's button is disabled.
+    expect(markup.match(/disabled=""/g)).toHaveLength(1);
+  });
+
+  it("leaves every row clickable when nothing is loading", () => {
+    const markup = render(
+      <OutreachHistory
+        rows={[row({ id: "aaaaaaaa-1111-4111-8111-111111111111" }), row({ id: "bbbbbbbb-1111-4111-8111-111111111111" })]}
+        onLoadIntoComposer={noop}
+        onOpenDetail={noop}
+        openingDetailId={null}
+      />,
+    );
+
+    expect(markup.match(/>Open</g)).toHaveLength(2);
+    expect(markup).not.toContain("Opening…");
+    expect(markup).not.toContain("disabled");
+  });
+
+  it("does not confuse the composer load with the sequence detail load", () => {
+    // Both controls can be in flight on different rows. The composer load must
+    // never disable the "Sequence" button, which is a separate read.
+    const markup = render(
+      <OutreachHistory
+        rows={[row({ id: "aaaaaaaa-1111-4111-8111-111111111111" }), row({ id: "bbbbbbbb-1111-4111-8111-111111111111" })]}
+        onLoadIntoComposer={noop}
+        onOpenDetail={noop}
+        openingDetailId="bbbbbbbb-1111-4111-8111-111111111111"
+        openingComposerRowId="aaaaaaaa-1111-4111-8111-111111111111"
+      />,
+    );
+
+    expect(markup.match(/>Sequence</g)).toHaveLength(1);
+    expect(markup.match(/>Open</g)).toHaveLength(1);
+    expect(markup.match(/disabled=""/g)).toHaveLength(2);
+  });
+});
