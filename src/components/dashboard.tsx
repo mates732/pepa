@@ -61,7 +61,18 @@ interface Notice {
   text: string;
 }
 
-export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }) {
+export function Dashboard({
+  initialRows,
+  initialFollowUpId,
+}: {
+  initialRows: OutreachHistoryRow[];
+  /**
+   * Phase 8B. Set by the server from a `?followup=<token>` deep link, after that
+   * token was resolved server-side. Never a client-supplied id, which is why the
+   * server passes it down rather than reading it here.
+   */
+  initialFollowUpId?: string | null;
+}) {
   const [values, setValues] = useState<ComposerValues>(EMPTY);
   const [hasContent, setHasContent] = useState(false);
   const [duplicate, setDuplicate] = useState<DuplicateCheckResult | null>(null);
@@ -448,6 +459,24 @@ export function Dashboard({ initialRows }: { initialRows: OutreachHistoryRow[] }
       setDetailLoading(false);
     }
   }, []);
+
+  /**
+   * Phase 8B: open the follow-up a notification pointed at.
+   *
+   * Reuses `handleSelectFollowUp`, so the destination is the ordinary Phase 4C
+   * detail and the ordinary read-only `loadFollowUpDetail` action — nothing new
+   * is fetched, and nothing is written. Selecting is not sending: the detail's
+   * "Mark as sent" still requires its own explicit click through the existing
+   * quality-gated send-recording path.
+   *
+   * Deferred for the same reason the workspace load is: a fetch that flips
+   * loading state synchronously would cascade a second render.
+   */
+  useEffect(() => {
+    if (!initialFollowUpId) return;
+    const handle = setTimeout(() => void handleSelectFollowUp(initialFollowUpId), 0);
+    return () => clearTimeout(handle);
+  }, [initialFollowUpId, handleSelectFollowUp]);
 
   /**
    * Open a follow-up in Gmail from the detail view.

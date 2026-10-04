@@ -1,7 +1,9 @@
+import { redirect } from "next/navigation";
+
 import { FollowUpEditor } from "@/components/follow-up-editor";
 import { InvalidDeepLink } from "@/components/invalid-deep-link";
 import { verifySession } from "@/lib/auth/dal";
-import { buildDeepLink } from "@/lib/config/base-url";
+import { buildDeepLink, buildFollowUpWorkspaceDeepLink } from "@/lib/config/base-url";
 import { daysAgo, formatDateTime } from "@/lib/format";
 import { getNotificationService } from "@/lib/providers/registry";
 import "@/lib/providers/notifications";
@@ -16,7 +18,8 @@ import {
  * Mobile flow (Telegram → browser):
  *   unauthenticated → Proxy redirects to /login?next=/followup/<token>
  *                    → after login the operator returns straight here
- *   authenticated   → the token is resolved and the composer renders directly
+ *   authenticated   → a notification token continues to the Phase 4C detail;
+ *                      a composer token renders the composer directly
  *
  * The URL contains nothing but a random token. The lead is resolved server-side
  * from the token digest, so `/followup/123` cannot be used to enumerate leads.
@@ -24,6 +27,19 @@ import {
  * Opening this page records nothing: no status, no `sent_at`, no counter, no
  * schedule. The send transition stays an explicit, separate action behind the
  * authenticated quality gate.
+ *
+ * Phase 8B — where a Telegram notification lands:
+ *   A token that already points at a real follow-up (`sequence_number > 0`) is
+ *   handed straight to the Phase 4C Follow-up Detail inside the dashboard, which
+ *   is where Open in Gmail and Mark as sent already live. A token that carries no
+ *   message, or only an initial outreach, still renders the composer below,
+ *   because that is what those tokens are for.
+ *
+ *   The redirect carries the SAME opaque token and never the resolved message id.
+ *   That is deliberate, and it is also what makes the destination survive an
+ *   unauthenticated visit: Proxy preserves an internal *path* in `next=`, and this
+ *   route is one. No auth code had to change, and no database id is ever exposed
+ *   in a URL.
  */
 export default async function FollowUpPage({ params }: PageProps<"/followup/[token]">) {
   // Server remains the source of truth: Proxy is only an optimistic redirect.
@@ -37,12 +53,23 @@ export default async function FollowUpPage({ params }: PageProps<"/followup/[tok
   }
 
   const { lead, outreach } = resolved.data;
-  // The token usually carries a follow-up row (the Phase 8A notification link),
-  // and then that row's own `sequence_number` is the number to show. Only a token
-  // that anchors on an initial outreach has to fall back to the counter, because
-  // in that case no follow-up has been written yet.
-  const attempt =
-    outreach && outreach.sequence_number > 0 ? outreach.sequence_number : lead.followup_count + 1;
+
+  // A notification token names a real follow-up. Hand it to the Phase 4C detail
+  // rather than re-implementing one here. Only the token crosses over; the
+  // message id is resolved again from the token's digest on the other side.
+  //
+  // `redirect()` throws a control-flow exception, so it stays out of any
+  // try/catch and runs before the composer path below.
+  if (outreach && outreach.sequence_number > 0) {
+    redirect(await buildFollowUpWorkspaceDeepLink(token));
+  }
+
+  // Everything that reaches this point is a composer token: either no message at
+  // all, or an initial outreach to follow up from. No follow-up row can get here,
+  // because the redirect above already claimed those. So the number to show is the
+  // one the counter implies for a follow-up that does not exist yet — which is
+  // exactly what this page is for.
+  const attempt = lead.followup_count + 1;
   const since = daysAgo(lead.last_contacted_at);
   const channel = getNotificationService();
 

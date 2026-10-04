@@ -28,6 +28,28 @@ describe("proxy", () => {
     expect(response.headers.get("location")).toBe("https://pepa.internal/login?next=%2Fleads%2F42");
   });
 
+  // Phase 8B relies on this: the link Telegram sends out is `/followup/<token>`,
+  // a path, so an unauthenticated tap survives the login round trip and the
+  // operator arrives at the right place instead of the dashboard root. This is
+  // also why the notification link was NOT changed to a query string.
+  it("preserves a follow-up deep link through an unauthenticated login", () => {
+    const token = "fp1_testtokenaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const response = proxy(request(`/followup/${token}`));
+
+    expect(response.status).toBe(307);
+    expect(response.headers.get("location")).toBe(
+      `https://pepa.internal/login?next=%2Ffollowup%2F${token}`,
+    );
+  });
+
+  it("drops a query string rather than trusting it as a destination", () => {
+    // Only the path is echoed back. A crafted `?next=` can therefore never be
+    // reflected into the login redirect, and the authenticated side of Phase 8B
+    // resolves its own token under an already-verified session.
+    const response = proxy(request("/?next=https%3A%2F%2Fevil.example"));
+    expect(response.headers.get("location")).toBe("https://pepa.internal/login");
+  });
+
   it("lets /login through for anonymous visitors", () => {
     const response = proxy(request("/login"));
     expect(response.status).toBe(200);

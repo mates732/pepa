@@ -54,3 +54,15 @@ export async function buildImportDeepLink(token: string): Promise<string> {
   const base = await getBaseUrl();
   return `${base}/import/${encodeURIComponent(token)}`;
 }
+
+/**
+ * Phase 8B: `/followup/<token>` → the Phase 4C Follow-up Detail on the dashboard.
+ *
+ * Takes the raw token and returns the dashboard URL that re-resolves it. Kept
+ * separate from `buildDeepLink` so the *outbound* Telegram link stays exactly the
+ * path-based shape that survives an unauthenticated visit.
+ */
+export async function buildFollowUpWorkspaceDeepLink(token: string): Promise<string> {
+  const base = await getBaseUrl();
+  return `${base}/?followup=${encodeURIComponent(token)}`;
+}
