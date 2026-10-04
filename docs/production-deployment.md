@@ -50,7 +50,7 @@ supabase link --project-ref <project-ref>
 supabase db push
 ```
 
-`supabase db push` applies the four migrations in `supabase/migrations/` in
+`supabase db push` applies the six migrations in `supabase/migrations/` in
 order. They are the only schema source of truth — do not edit the database by
 hand.
 
@@ -66,7 +66,7 @@ correct database reports:
 ```
  object_type  | found
 --------------+-------
- indexes      | 18
+ indexes      | 20
  rls_policies | 0
  tables       | 4
  views        | 2
@@ -282,23 +282,27 @@ same table and the same token model as composer links, not a second system.
 This is the step that cannot be faked with a mock. It proves the notification
 path against a real bot token, and it is a release gate.
 
-> **This gate cannot be completed yet.** The chain below starts from a message
-> that actually left the outbox (`outreach_messages.sent_at` set). **PEPA has no
-> send-recording path yet** — nothing in the codebase writes `sent_at`, and
-> `markFollowUpSent()` (which would arm `next_followup_at`) has no caller. Until
-> that lands, every step from 1 onwards is unreachable and **PEPA is not
-> production-verified**. The steps are written against the system as it is
-> designed to behave, so they can be executed unchanged once it does.
+> **This gate is reachable now.** The chain below starts from a message that
+> actually left the outbox (`outreach_messages.sent_at` set). Send recording
+> exists: the composer's **Mark as sent** action calls
+> `recordOutreachSent()` in `src/lib/services/outreach-service.ts`, which runs
+> the authoritative quality gate, writes `status = 'sent'` with `sent_at`, and
+> then calls `markFollowUpSent()` to arm `next_followup_at`. Step 2 below is
+> that button. Submitting it twice is safe — the second call reports
+> `already_sent` and schedules nothing further.
 >
-> Do not report a green build as verification. A working `/api/cron/followups`
-> returning `{"ok":true}` with `examined: 0` means the engine found nothing
-> because nothing is ever due — not that the chain works.
+> The rest of the chain is still unproven until you run it against a real bot
+> token, and **PEPA is not production-verified until you do**. No local test,
+> rehearsal or green build substitutes for this: a working
+> `/api/cron/followups` returning `{"ok":true}` with `examined: 0` means the
+> engine found nothing because nothing was ever due — not that the chain works.
 
 1. Create a lead with your real email and save a composer draft, so the lead and
    its outreach message exist.
 2. Record that the outreach actually went out, so `outreach_messages.sent_at`
-   is set and the message status is `sent`. This is the send-recording step and
-   it does not exist yet; today you cannot complete this gate.
+   is set and the message status is `sent`. This is the composer's **Mark as
+   sent** button. PEPA never sends mail itself: send from your own client
+   first, then record the fact.
 3. Ensure the lead has a `next_followup_at` in the past, so it is due.
 4. Trigger the job by hand with the real secret, or wait for the scheduled run:
    ```bash

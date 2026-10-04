@@ -9,6 +9,30 @@
 -- or paste it into Supabase Studio -> SQL Editor and run it.
 --
 -- It never inserts, updates or deletes: running it twice is harmless.
+--
+-- ---------------------------------------------------------------------------
+-- Sequence identity (migration 20260101000500_outreach_sequence.sql)
+-- ---------------------------------------------------------------------------
+-- This file originally demanded `outreach_messages_lead_recipient_key`, a
+-- UNIQUE (lead_id, recipient_normalized) constraint that the sequence migration
+-- deliberately REPLACED. Against a correctly migrated database the gate failed
+-- with MISSING CONSTRAINT, and the obvious operator response — re-creating that
+-- constraint — would have undone Phase 4A: one row per lead/recipient leaves a
+-- follow-up with nowhere to live, which is the defect the migration exists to
+-- fix. The gate now asserts the objects that are actually load-bearing.
+--
+-- KNOWN DEFECT, deliberately not fixed here:
+--   The trigger `outreach_messages_parent_same_lead` checks its cross-recipient
+--   relationship against `NEW.recipient_normalized`, which
+--   is a GENERATED column. Postgres computes generated columns AFTER before-row
+--   triggers, so that value is NULL during the trigger and the recipient half of
+--   the check never fires. The same-LEAD half works, because `lead_id` is an
+--   ordinary column. PEPA's own writers always copy the recipient from the
+--   anchor, so no supported write path produces an offending row, and the
+--   sequence unique key plus the engine's `skippedAmbiguous` refusal stand
+--   behind it. Recorded here so the assertion below is not mistaken for a
+--   guarantee it does not currently provide. Fixing it requires a migration and
+--   is deferred to an explicitly authorised phase.
 
 -- ---------------------------------------------------------------------------
 -- 1. Tables exist and Row Level Security is enabled on all of them
@@ -62,9 +86,13 @@ declare
   c text;
 begin
   foreach c in array array[
-    -- dedupe guarantees
+    -- dedupe guarantee
     'leads_email_normalized_key',
-    'outreach_messages_lead_recipient_key',
+    -- sequence identity (replaces outreach_messages_lead_recipient_key)
+    'outreach_messages_sequence_key',
+    'outreach_messages_sequence_number_nonnegative',
+    'outreach_messages_parent_is_followup',
+    'outreach_messages_parent_message_id_fkey',
     -- token model
     'action_tokens_token_hash_key',
     'action_tokens_purpose_check',
@@ -89,6 +117,7 @@ do $$
 declare
   purpose_def text;
   unique_def text;
+  sequence_def text;
 begin
   select pg_get_constraintdef(oid) into purpose_def
     from pg_constraint where conname = 'action_tokens_purpose_check';
@@ -101,6 +130,38 @@ begin
     from pg_constraint where conname = 'followup_notifications_unique';
   if unique_def !~ 'lead_id.*followup_number' then
     raise exception 'followup_notifications_unique is not (lead_id, followup_number)';
+  end if;
+
+  -- One message per sequence slot per lead/recipient. This is what lets a
+  -- follow-up exist at all, and what makes concurrent saves conflict instead
+  -- of duplicating. A bare (lead_id, recipient_normalized) would mean
+  -- migration 005 has not been applied.
+  select pg_get_constraintdef(oid) into sequence_def
+    from pg_constraint where conname = 'outreach_messages_sequence_key';
+  if sequence_def !~ 'lead_id.*recipient_normalized.*sequence_number' then
+    raise exception
+      'outreach_messages_sequence_key is not (lead_id, recipient_normalized, sequence_number) — apply 20260101000500_outreach_sequence.sql';
+  end if;
+end
+$$;
+
+-- The parent-link trigger must exist. See the KNOWN DEFECT note at the top of
+-- this file: its recipient half is currently inert, so this asserts presence,
+-- not correctness.
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    join pg_namespace n on n.oid = c.relnamespace
+    where n.nspname = 'public'
+      and c.relname = 'outreach_messages'
+      and t.tgname = 'outreach_messages_parent_same_lead'
+      and not t.tgisinternal
+  ) then
+    raise exception
+      'MISSING TRIGGER: outreach_messages_parent_same_lead — apply 20260101000500_outreach_sequence.sql';
   end if;
 end
 $$;
@@ -115,7 +176,10 @@ begin
   foreach i in array array[
     'leads_next_followup_idx',
     'leads_email_normalized_key',
-    'outreach_messages_lead_recipient_key',
+    -- sequence lookups (replace outreach_messages_lead_recipient_key)
+    'outreach_messages_sequence_key',
+    'outreach_messages_sequence_idx',
+    'outreach_messages_parent_idx',
     'outreach_messages_provider_id_idx',
     'action_tokens_token_hash_key',
     'action_tokens_expires_at_idx',
