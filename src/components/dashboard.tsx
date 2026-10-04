@@ -15,6 +15,7 @@ import {
 import { EmailComposer, type ComposerValues } from "@/components/email-composer";
 import { FollowUpDetail } from "@/components/follow-up-detail";
 import { FollowUpWorkspace } from "@/components/follow-up-workspace";
+import { createFollowUp } from "@/app/followup-actions";
 import { loadOutreachStats } from "@/app/stats-actions";
 import { loadOutreachStreaks } from "@/app/streak-actions";
 import { OutreachActivity } from "@/components/outreach-activity";
@@ -99,6 +100,7 @@ export function Dashboard({
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailNotice, setDetailNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
   const [recordingDetail, setRecordingDetail] = useState(false);
+  const [creatingFollowUp, setCreatingFollowUp] = useState(false);
 
   // Activity workspace. Read-only: opening it records nothing, and it exposes no
   // mutation controls, so there is nothing here that can write.
@@ -557,6 +559,44 @@ export function Dashboard({
     }
   }
 
+  /**
+   * Phase 8F: draft the next follow-up in a sequence from the detail view.
+   *
+   * The anchor is the message on screen and the server resolves everything else,
+   * so the browser cannot choose a lead or a recipient. Refusals (`conflict`,
+   * `anchor_not_latest`, `not_found`) are shown as-is and nothing is patched
+   * locally: the new row exists in the UI only after the database has it.
+   */
+  async function handleCreateDetailFollowUp(
+    parentMessageId: string,
+    subject: string,
+    body: string,
+  ) {
+    setCreatingFollowUp(true);
+    setDetailNotice(null);
+    try {
+      const result = await createFollowUp({ parentMessageId, subject, body });
+
+      if (!result.ok) {
+        setDetailNotice({ kind: "error", text: result.error });
+        return;
+      }
+
+      await loadWorkspace();
+      // Open the row the server actually wrote, so the operator continues from
+      // the stored sequence rather than from anything the browser predicted.
+      await handleSelectFollowUp(result.messageId);
+      setDetailNotice({
+        kind: "info",
+        text: result.created
+          ? `Follow-up #${result.sequenceNumber} saved as a draft. Nothing was sent and nobody was notified.`
+          : "That follow-up was updated in place — no second row was created.",
+      });
+    } finally {
+      setCreatingFollowUp(false);
+    }
+  }
+
   async function handleSave() {
     setSaving(true);
     setNotice(null);
@@ -789,8 +829,12 @@ export function Dashboard({
           }}
           onOpenInGmail={(id) => void handleOpenDetailInGmail(id)}
           onMarkSent={(id, leadId) => void handleMarkDetailSent(id, leadId)}
+          onCreateFollowUp={(id, subject, body) =>
+            void handleCreateDetailFollowUp(id, subject, body)
+          }
           openingGmail={openingGmail}
           recording={recordingDetail}
+          creating={creatingFollowUp}
           notice={detailNotice}
         />
       ) : null}

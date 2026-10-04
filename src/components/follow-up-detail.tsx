@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+
 import { StatusBadge } from "@/components/status-badge";
 import { formatDate, formatDateTime } from "@/lib/format";
 import type { FollowUpDetail } from "@/lib/services/follow-up-sequence-service";
@@ -27,8 +29,10 @@ interface FollowUpDetailProps {
   onClose: () => void;
   onOpenInGmail: (messageId: string) => void;
   onMarkSent: (messageId: string, leadId: string) => void;
+  onCreateFollowUp: (parentMessageId: string, subject: string, body: string) => void;
   openingGmail: boolean;
   recording: boolean;
+  creating: boolean;
   notice: { kind: "info" | "error"; text: string } | null;
 }
 
@@ -108,13 +112,19 @@ export function FollowUpDetail({
   onClose,
   onOpenInGmail,
   onMarkSent,
+  onCreateFollowUp,
   openingGmail,
   recording,
+  creating,
   notice,
 }: FollowUpDetailProps) {
   const { lead, message } = detail;
   const sent = message.sent_at !== null || message.status === "sent";
   const leadLabel = lead.company_name || lead.contact_name || lead.email;
+
+  // Phase 8F — the next follow-up in this sequence, drafted in place.
+  const [followUpSubject, setFollowUpSubject] = useState("");
+  const [followUpBody, setFollowUpBody] = useState("");
 
   return (
     <section className="sticker">
@@ -241,6 +251,60 @@ export function FollowUpDetail({
             Opening Gmail does not mark this as sent.
           </p>
         </div>
+
+        {/* --- Next follow-up ---------------------------------------------
+            Phase 8F. Drafting a follow-up used to be impossible from here:
+            the composer token was only ever minted as a side effect of the
+            scheduler notifying the operator on Telegram, so writing a
+            follow-up required sending a notification first. This form calls
+            the session-gated action directly.
+
+            It saves the next sequence row and notifies nobody. The anchor is
+            the message on screen, and the server refuses if a later follow-up
+            already exists for this recipient — re-saving or branching is not
+            something the client can talk its way into. */}
+        <form
+          className="space-y-2 border-t-[3px] border-dashed border-midnight-line pt-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!followUpSubject.trim() || creating) return;
+            onCreateFollowUp(message.id, followUpSubject, followUpBody);
+            setFollowUpSubject("");
+            setFollowUpBody("");
+          }}
+        >
+          <h3 className="field-label">Next follow-up</h3>
+          <input
+            type="text"
+            value={followUpSubject}
+            onChange={(event) => setFollowUpSubject(event.target.value)}
+            maxLength={998}
+            placeholder={message.subject ? `Re: ${message.subject}` : "Subject"}
+            aria-label="Follow-up subject"
+            className="field"
+          />
+          <textarea
+            value={followUpBody}
+            onChange={(event) => setFollowUpBody(event.target.value)}
+            rows={4}
+            placeholder="Body"
+            aria-label="Follow-up body"
+            className="field"
+          />
+          <button
+            type="submit"
+            disabled={creating || !followUpSubject.trim()}
+            className="btn btn-primary"
+            title="Save the next follow-up in this sequence. Nothing is sent and nobody is notified."
+          >
+            {creating
+              ? "Saving…"
+              : `Save follow-up #${message.sequence_number + 1}`}
+          </button>
+          <p className="w-full pt-1 text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
+            Saving a follow-up sends nothing and notifies nobody.
+          </p>
+        </form>
       </div>
     </section>
   );

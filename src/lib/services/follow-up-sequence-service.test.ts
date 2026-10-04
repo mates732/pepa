@@ -417,6 +417,37 @@ describe("re-saving and conflicts", () => {
     expect(db.messages.filter((m) => m.sequence_number === 1)).toHaveLength(1);
   });
 
+  it("two simultaneous requests produce exactly one follow-up", async () => {
+    seedLead();
+    const initial = seedMessage();
+    const { createFollowUpDraft } = await load();
+
+    // Both requests are issued before either is awaited, which is the shape a
+    // double-click produces. The unique constraint — not application logic —
+    // decides the outcome, so exactly one may win.
+    const [a, b] = await Promise.all([
+      createFollowUpDraft({ anchorMessageId: initial.id, subject: "FU1", body: "První." }),
+      createFollowUpDraft({ anchorMessageId: initial.id, subject: "FU1", body: "První." }),
+    ]);
+
+    const winners = [a, b].filter((r) => r.ok && r.data?.created);
+    expect(winners).toHaveLength(1);
+
+    const slot = db.messages.filter((m) => m.sequence_number === 1);
+    expect(slot).toHaveLength(1);
+    expect(slot[0].parent_message_id).toBe(initial.id);
+
+    // The loser is never a second row: it either resolves the same follow-up or
+    // reports the conflict, and in both cases the store still holds one row.
+    for (const result of [a, b]) {
+      if (result.ok) {
+        expect(result.data!.message.id).toBe(slot[0].id);
+      } else {
+        expect(["conflict", "store_failed"]).toContain(result.reason);
+      }
+    }
+  });
+
   it("refuses to branch from a superseded anchor", async () => {
     seedLead();
     const initial = seedMessage();
