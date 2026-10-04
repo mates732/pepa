@@ -8,9 +8,25 @@ import type { OutreachHistoryRow } from "@/lib/types";
 interface OutreachHistoryProps {
   rows: OutreachHistoryRow[];
   onLoadIntoComposer: (row: OutreachHistoryRow) => void;
+  /**
+   * Phase 8F: open this lead's sequence detail.
+   *
+   * Distinct from `onLoadIntoComposer`, which is unchanged and still loads the
+   * row into the composer for editing. This one opens the read-only detail,
+   * which is where the "Next follow-up" form lives — reachable for a lead whose
+   * newest row is still the sequence-0 draft, because the Follow-ups workspace
+   * lists only `sequence_number > 0`.
+   */
+  onOpenDetail: (row: OutreachHistoryRow) => void;
+  openingDetailId: string | null;
 }
 
-export function OutreachHistory({ rows, onLoadIntoComposer }: OutreachHistoryProps) {
+export function OutreachHistory({
+  rows,
+  onLoadIntoComposer,
+  onOpenDetail,
+  openingDetailId,
+}: OutreachHistoryProps) {
   return (
     <section className="sticker">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
@@ -83,13 +99,24 @@ export function OutreachHistory({ rows, onLoadIntoComposer }: OutreachHistoryPro
                     {formatDate(row.created_at)}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => onLoadIntoComposer(row)}
-                      className="btn btn-sm"
-                    >
-                      Open
-                    </button>
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => onOpenDetail(row)}
+                        disabled={openingDetailId === row.id}
+                        className="btn btn-sm"
+                        title="Open this outreach's sequence detail, where the next follow-up can be drafted. Nothing is sent."
+                      >
+                        {openingDetailId === row.id ? "Opening…" : "Sequence"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onLoadIntoComposer(row)}
+                        className="btn btn-sm"
+                      >
+                        Open
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

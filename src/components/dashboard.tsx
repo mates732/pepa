@@ -7,6 +7,7 @@ import {
   checkQualityGate,
   checkRecipient,
   loadFollowUpDetail,
+  loadInitialOutreachDetail,
   loadFollowUpWorkspace,
   openOutreachInGmail,
   recordOutreachSent,
@@ -101,6 +102,7 @@ export function Dashboard({
   const [detailNotice, setDetailNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
   const [recordingDetail, setRecordingDetail] = useState(false);
   const [creatingFollowUp, setCreatingFollowUp] = useState(false);
+  const [openingDetailId, setOpeningDetailId] = useState<string | null>(null);
 
   // Activity workspace. Read-only: opening it records nothing, and it exposes no
   // mutation controls, so there is nothing here that can write.
@@ -718,6 +720,39 @@ export function Dashboard({
     }
   }
 
+  /**
+   * Phase 8F: open a lead's sequence detail from Outreach history.
+   *
+   * The browser sends the lead id only; the server resolves which stored row is
+   * that lead's sequence head, so this cannot open an arbitrary message. The
+   * resulting detail is the ordinary one, which means the "Next follow-up" form
+   * is reachable even when the newest row is still the sequence-0 draft — the
+   * case the Follow-ups workspace cannot show.
+   *
+   * Read-only: nothing is written, and the composer action beside it is
+   * untouched.
+   */
+  async function handleOpenHistoryDetail(row: OutreachHistoryRow) {
+    setOpeningDetailId(row.id);
+    setDetailNotice(null);
+    setDetailLoading(true);
+    try {
+      const result = await loadInitialOutreachDetail({ leadId: row.id });
+      if (!result.ok) {
+        setDetail(null);
+        setSelectedId(null);
+        setDetailNotice({ kind: "error", text: result.error });
+        return;
+      }
+      // Selected id comes from the resolved detail, not from the row.
+      setDetail(result.detail);
+      setSelectedId(result.detail.message.id);
+    } finally {
+      setDetailLoading(false);
+      setOpeningDetailId(null);
+    }
+  }
+
   function handleOpenFromHistory(row: OutreachHistoryRow) {
     setValues({
       recipient: row.email,
@@ -803,7 +838,12 @@ export function Dashboard({
         />
       ) : null}
 
-      <OutreachHistory rows={initialRows} onLoadIntoComposer={handleOpenFromHistory} />
+      <OutreachHistory
+        rows={initialRows}
+        onLoadIntoComposer={handleOpenFromHistory}
+        onOpenDetail={(row) => void handleOpenHistoryDetail(row)}
+        openingDetailId={openingDetailId}
+      />
 
       <FollowUpWorkspace
         followUps={followUps}

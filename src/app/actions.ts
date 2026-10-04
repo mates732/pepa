@@ -252,6 +252,63 @@ export async function loadFollowUpDetail(messageId: string): Promise<FollowUpDet
 }
 
 /**
+ * Phase 8F follow-up entry: open the sequence detail for a lead's initial
+ * outreach.
+ *
+ * The gap this closes. The Follow-ups workspace lists only `sequence_number > 0`,
+ * so a lead whose newest row is the sequence-0 draft had no way to reach a
+ * follow-up detail — and the detail is where the "Next follow-up" form lives.
+ * The other routes in were the Telegram notification deep link and the
+ * mark-as-sent path, both of which require an action this operator may not
+ * always want to take just to draft the next email. So the very first follow-up
+ * in a sequence was unreachable from the UI.
+ *
+ * This is read-only. It resolves nothing from the client: the browser sends a
+ * lead id and the database decides which row that lead's sequence head is. The
+ * resolved message id is then handed to the ordinary `getFollowUpDetail()`,
+ * which is the same service the workspace uses — the detail rendering, the
+ * chain, `unrecordedHistory` and every other rule are unchanged and not
+ * reimplemented here.
+ *
+ * Nothing is fabricated. A lead with no stored sequence-0 row gets a plain
+ * failure, never a placeholder detail, and no row is written by this action.
+ */
+export async function loadInitialOutreachDetail(input: {
+  leadId: string;
+}): Promise<FollowUpDetailResult> {
+  await requireAuthenticatedUser();
+
+  const leadId = typeof input.leadId === "string" ? input.leadId.trim() : "";
+  if (!UUID_PATTERN.test(leadId)) {
+    return failure("That lead could not be identified.");
+  }
+
+  let messageId: string;
+  try {
+    // DB-authoritative: the browser cannot name the message, only the lead.
+    const { data, error } = await getSupabaseAdmin()
+      .from("outreach_messages")
+      .select("id")
+      .eq("lead_id", leadId)
+      .eq("sequence_number", 0)
+      .maybeSingle();
+
+    if (error) return failure("That initial outreach could not be loaded.");
+    if (!data) return failure("That lead has no initial outreach stored yet.");
+    messageId = String((data as { id: unknown }).id);
+  } catch {
+    return failure("That initial outreach could not be loaded.");
+  }
+
+  if (!UUID_PATTERN.test(messageId)) {
+    return failure("That initial outreach could not be loaded.");
+  }
+
+  // Reuse the existing loader rather than assembling a detail here.
+  return loadFollowUpDetail(messageId);
+}
+
+/**
  * Live, advisory quality-gate evaluation for the draft in the composer.
  *
  * Never authorises anything on its own: the send path re-runs the gate against
