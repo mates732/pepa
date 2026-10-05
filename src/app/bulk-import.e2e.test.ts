@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createSessionToken, SESSION_COOKIE } from "@/lib/auth/token";
+import { BULK_IMPORT_CHUNK_SIZE } from "@/lib/import/bulk-plan";
 
 /**
  * Paste Emails — end-to-end verification of the real operator workflow.
@@ -341,7 +342,7 @@ function seedHistory(email: string, company: string, lastContacted: string) {
  *   1  plain, matches an existing lead
  *   2  a `---` INSIDE the body (a table divider) — must not split
  *   3  a `---` inside the body AND a copied mail-client header block
- *   4  an unknown recipient — no lead match
+ *   4  an unknown recipient — no lead exists yet, still importable
  *   5  an address in the legacy history — blocked
  *   6  a different address at a legacy company's domain — blocked by the domain guard
  *   7  a repeat of email 1 in different casing — duplicate in paste
@@ -349,8 +350,8 @@ function seedHistory(email: string, company: string, lastContacted: string) {
  *   9  Czech labels (`Adresát` / `Předmět`)
  *  10  an address on a shared mailbox provider, unrelated to any history
  *
- * Expectation: 5 ready (1, 2, 3, 9, 10), 2 blocked, 1 duplicate, 1 no-lead,
- * 1 needs review = 10 blocks, 5 drafts.
+ * Expectation: 6 ready (1, 2, 3, 4, 9, 10), 2 blocked, 1 duplicate,
+ * 1 needs review = 10 blocks, 6 drafts.
  */
 const BATCH = `To: info@bistrot.cz
 Subject: Váš web a rezervace
@@ -582,22 +583,22 @@ describe("Paste Emails — end to end with a realistic batch of ten", () => {
     /* ---------------------------------------------------------------- */
     /* 6, 7, 8, 9. The statuses, one per case                             */
     /* ---------------------------------------------------------------- */
-    expect(plan.summary.ready).toBe(5);
+    expect(plan.summary.ready).toBe(6);
     expect(plan.summary.alreadyContacted).toBe(2);
-    expect(plan.summary.noLeadMatch).toBe(1);
     expect(plan.summary.duplicates).toBe(1);
     expect(plan.summary.needsReview).toBe(1);
-    expect(plan.summary.importable).toBe(5);
+    expect(plan.summary.importable).toBe(6);
 
     // 6. Existing leads matched, with their real company names.
     expect(plan.rows[0]!.leadCompany).toBe("Bistro U Lva");
     expect(plan.rows[1]!.leadCompany).toBe("Vinotéka Na Půl");
     expect(plan.rows[8]!.leadCompany).toBe("Sklep");
 
-    // 7. Unknown recipient: no lead match, and no lead invented.
-    expect(plan.rows[3]!.status).toBe("no_lead_match");
+    // 7. Unknown recipient: still READY. The lead it needs is created on import.
+    expect(plan.rows[3]!.status).toBe("ready");
+    expect(plan.rows[3]!.reason).toBeNull();
     expect(plan.rows[3]!.leadId).toBeNull();
-    expect(plan.rows[3]!.reason).toContain("will not create one");
+    expect(plan.rows[3]!.leadCompany).toBeNull();
 
     // 8. The legacy address, and its domain sibling, are both refused.
     expect(plan.rows[4]!.status).toBe("already_contacted");
@@ -634,13 +635,21 @@ describe("Paste Emails — end to end with a realistic batch of ten", () => {
     const imported = await importBulkEmails(requests);
     if (!imported.ok) throw new Error(imported.error);
 
-    expect(imported.rows).toHaveLength(5);
+    expect(imported.rows).toHaveLength(6);
     expect(imported.rows.every((row) => row.outcome === "created")).toBe(true);
-    expect(db.messages).toHaveLength(5);
+    expect(db.messages).toHaveLength(6);
 
-    // Exactly the five ready recipients became drafts. No sixth, no seventh.
+    // Exactly the six ready recipients became drafts — including the unknown
+    // one. No seventh.
     expect(new Set(db.messages.map((m) => m.recipient_email))).toEqual(
-      new Set(["info@bistrot.cz", "info@vinoteka.cz", "hello@thearchive.cz", "rezervace@sklep.cz", "nekdo.jiny@gmail.com"]),
+      new Set([
+        "info@bistrot.cz",
+        "info@vinoteka.cz",
+        "hello@thearchive.cz",
+        "objednavky@firma-co-nem-existuje.cz",
+        "rezervace@sklep.cz",
+        "nekdo.jiny@gmail.com",
+      ]),
     );
 
     /* ---------------------------------------------------------------- */
@@ -656,13 +665,19 @@ describe("Paste Emails — end to end with a realistic batch of ten", () => {
     expect(stored("rezervace@sklep.cz").subject).toBe("Večera na míru");
 
     /* ---------------------------------------------------------------- */
-    /* 7 and 8. No lead for the unknown recipient, no draft for the blocked */
+    /* 7 and 8. A lead for the unknown recipient, none for the blocked */
     /* ---------------------------------------------------------------- */
-    expect(emailOf(db.leads, "objednavky@firma-co-nem-existuje.cz")).toBe(false);
-    expect(emailOf(db.messages, "objednavky@firma-co-nem-existuje.cz")).toBe(false);
+    // The unknown recipient now has both a lead and a draft. The lead carries
+    // no invented company identity — the operator supplied none.
+    expect(emailOf(db.leads, "objednavky@firma-co-nem-existuje.cz")).toBe(true);
+    expect(emailOf(db.messages, "objednavky@firma-co-nem-existuje.cz")).toBe(true);
+    const newLead = db.leads.find((l) => l.email === "objednavky@firma-co-nem-existuje.cz")!;
+    expect(newLead.company_name).toBeNull();
+    expect(newLead.contact_name).toBeNull();
+
     expect(emailOf(db.messages, "objednavky@manihi.cz")).toBe(false);
     expect(emailOf(db.messages, "100catering@manihi.cz")).toBe(false);
-    // And no lead was created for them either.
+    // And no lead was created for the blocked addresses either.
     expect(emailOf(db.leads, "objednavky@manihi.cz")).toBe(false);
     expect(emailOf(db.leads, "100catering@manihi.cz")).toBe(false);
 
@@ -686,15 +701,24 @@ describe("Paste Emails — end to end with a realistic batch of ten", () => {
     const historyEmails = new Set(history.data.map((row) => row.email));
     expect(historyEmails.has("info@bistrot.cz")).toBe(true);
     expect(historyEmails.has("hello@thearchive.cz")).toBe(true);
-    // The blocked and unknown recipients are absent from the UI too.
+    // The historically blocked recipients are absent from the UI too.
     expect(historyEmails.has("100catering@manihi.cz")).toBe(false);
-    expect(historyEmails.has("objednavky@firma-co-nem-existuje.cz")).toBe(false);
+    expect(historyEmails.has("objednavky@manihi.cz")).toBe(false);
 
     const histRow = history.data.find((row) => row.email === "info@bistrot.cz")!;
     expect(histRow.latestSubject).toBe("Váš web a rezervace");
     expect(histRow.latestMessageStatus).toBe("draft");
     expect(histRow.messageCount).toBe(1);
     expect(histRow.company_name).toBe("Bistro U Lva");
+    // The unknown recipient is in the same history table, as a normal draft.
+    expect(historyEmails.has("objednavky@firma-co-nem-existuje.cz")).toBe(true);
+    const newHistRow = history.data.find(
+      (row) => row.email === "objednavky@firma-co-nem-existuje.cz",
+    )!;
+    expect(newHistRow.latestSubject).toBe("Spolupráce");
+    expect(newHistRow.latestMessageStatus).toBe("draft");
+    expect(newHistRow.messageCount).toBe(1);
+    expect(newHistRow.company_name).toBeNull();
     // It is a draft in the history table, exactly like one typed in the composer.
     expect(histRow.status).toBe("draft");
     expect(histRow.last_contacted_at).toBeNull();
@@ -732,7 +756,7 @@ describe("Paste Emails — end to end with a realistic batch of ten", () => {
       body: "Dobrý den,\n\nupravený text.",
     });
     expect(edited.ok).toBe(true);
-    expect(db.messages).toHaveLength(5);
+    expect(db.messages).toHaveLength(6);
     expect(stored("info@bistrot.cz").subject).toBe("Váš web a rezervace (upraveno)");
     expect(stored("info@bistrot.cz").sent_at).toBeNull();
 
@@ -742,10 +766,10 @@ describe("Paste Emails — end to end with a realistic batch of ten", () => {
     const again = await importBulkEmails(requests);
     if (!again.ok) throw new Error(again.error);
 
-    expect(db.messages).toHaveLength(5);
-    expect(db.leads).toHaveLength(5);
-    expect(new Set(db.messages.map((m) => m.id)).size).toBe(5);
-    // The second pass refreshed the same five rows rather than adding five.
+    expect(db.messages).toHaveLength(6);
+    expect(db.leads).toHaveLength(6);
+    expect(new Set(db.messages.map((m) => m.id)).size).toBe(6);
+    // The second pass refreshed the same six rows rather than adding six.
     expect(again.rows.every((row) => row.outcome === "already_present")).toBe(true);
     expect(db.messages.find((m) => m.id === messageId)!.subject).toBe("Váš web a rezervace");
 
@@ -769,7 +793,7 @@ describe("Paste Emails — end to end with a realistic batch of ten", () => {
     expect(manual.ok).toBe(true);
 
     // The composer's own save refreshes the same slot-0 draft — no pile-up.
-    expect(db.messages).toHaveLength(5);
+    expect(db.messages).toHaveLength(6);
     expect(stored("info@bistrot.cz").subject).toBe("Ruční test");
   });
 
@@ -788,16 +812,20 @@ describe("Paste Emails — end to end with a realistic batch of ten", () => {
 
     if (!result.ok) throw new Error(result.error);
 
-    // The one address that is allowed gets a draft; the three refused do not.
-    expect(result.rows.filter((row) => row.outcome === "created")).toHaveLength(1);
-    expect(result.rows.filter((row) => row.outcome === "skipped")).toHaveLength(3);
-    expect(db.messages).toHaveLength(1);
-    expect(db.messages[0]!.recipient_email).toBe("info@bistrot.cz");
-    // The five leads that already existed, and no sixth.
-    expect(db.leads).toHaveLength(5);
-
-    // No lead was invented for the unknown recipient.
-    expect(db.leads.some((l) => l.email === "objednavky@firma-co-nem-existuje.cz")).toBe(false);
+    // The two allowed addresses get drafts; the two historically blocked ones do
+    // not. A missing lead is no longer a reason to refuse.
+    expect(result.rows.filter((row) => row.outcome === "created")).toHaveLength(2);
+    expect(result.rows.filter((row) => row.outcome === "skipped")).toHaveLength(2);
+    expect(db.messages).toHaveLength(2);
+    expect(new Set(db.messages.map((m) => m.recipient_email))).toEqual(
+      new Set(["info@bistrot.cz", "objednavky@firma-co-nem-existuje.cz"]),
+    );
+    // The five leads that already existed, plus one created for the unknown
+    // recipient — and none for either blocked address.
+    expect(db.leads).toHaveLength(6);
+    expect(db.leads.some((l) => l.email === "objednavky@firma-co-nem-existuje.cz")).toBe(true);
+    expect(db.leads.some((l) => l.email === "objednavky@manihi.cz")).toBe(false);
+    expect(db.leads.some((l) => l.email === "100catering@manihi.cz")).toBe(false);
   });
 
   it("does not send anything, even if every send flag is set on the request", async () => {
@@ -822,5 +850,325 @@ describe("Paste Emails — end to end with a realistic batch of ten", () => {
     // And the send action refuses a historical contact taken from the same batch.
     const refused = await recordOutreachSent({ messageId: "does-not-exist", leadId: "does-not-exist" });
     expect(refused.ok).toBe(false);
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* the brief's five-email case                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Five emails: three with existing leads, one with none, one in the history.
+ *
+ * This is the scenario the brief spells out, and it is the one that used to fail:
+ * the unknown recipient came back as `no_lead_match` and no draft was made for
+ * it. The point of the batch is that a finished email is enough — the operator
+ * should not have to open the composer and create a lead first.
+ */
+const FIVE = `To: info@bistrot.cz
+Subject: Váš web a rezervace
+Dobrý den,
+
+rád bych vám ukázal, jak lze zjednodušit rezervace na webu.
+
+S pozdravem
+Petr
+
+---
+
+To: objednavky@firma-co-nem-existuje.cz
+Subject: Spolupráce
+Dobrý den,
+
+tuhle firmu vPepě neznáme, ale e-mail je platný a hotový.
+
+S pozdravem
+Petr
+
+---
+
+To: hello@thearchive.cz
+Subject: AI recepce pro archiv
+Dobrý den,
+
+nabízím AI recepci pro vaše muzeum.
+
+S pozdravem
+Petr
+
+---
+
+To: 100catering@manihi.cz
+Subject: Catering na míru
+Dobrý den,
+
+rád bych vám ukázal možnosti pro vaše akce.
+
+S pozdravem
+Petr
+
+---
+
+To: rezervace@sklep.cz
+Subject: Večera na míru
+Dobrý den,
+
+rád bych vám nabídl večeři.
+
+S pozdravem
+Petr`;
+
+describe("five emails: three known leads, one unknown, one historical", () => {
+  it("creates four drafts, one new lead, and one refusal", async () => {
+    await authenticate();
+    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+
+    /* ---------------------------------------------------------------- */
+    /* PREVIEW: 4 ready, 1 already contacted, 0 no-lead-match             */
+    /* ---------------------------------------------------------------- */
+    const preview = await previewBulkEmails(FIVE);
+    if (!preview.ok) throw new Error(preview.error);
+
+    const { plan } = preview;
+    expect(plan.summary.total).toBe(5);
+    expect(plan.summary.ready).toBe(4);
+    expect(plan.summary.alreadyContacted).toBe(1);
+    expect(plan.summary.needsReview).toBe(0);
+    expect(plan.summary.duplicates).toBe(0);
+    expect(plan.summary.failed).toBe(0);
+    // There is no no-lead-match counter any more, because the status is gone.
+    expect(plan.summary.importable).toBe(4);
+
+    expect(plan.rows.map((row) => row.status)).toEqual([
+      "ready",
+      "ready", // the unknown recipient
+      "ready",
+      "already_contacted",
+      "ready",
+    ]);
+
+    // Nothing was written by the preview.
+    expect(db.leads).toHaveLength(5);
+    expect(db.messages).toHaveLength(0);
+
+    /* ---------------------------------------------------------------- */
+    /* IMPORT: 4 drafts, 1 new lead, 1 refusal                          */
+    /* ---------------------------------------------------------------- */
+    const requests = plan.rows
+      .filter((row) => row.status === "ready")
+      .map((row) => ({ index: row.index, recipient: row.recipient!, subject: row.subject, body: row.body }));
+
+    const imported = await importBulkEmails(requests);
+    if (!imported.ok) throw new Error(imported.error);
+
+    expect(imported.rows).toHaveLength(4);
+    expect(imported.rows.every((row) => row.outcome === "created")).toBe(true);
+    expect(db.messages).toHaveLength(4);
+
+    // Exactly one new lead: the four pre-existing ones plus the unknown one.
+    expect(db.leads).toHaveLength(6);
+    const newLead = db.leads.find((l) => l.email === "objednavky@firma-co-nem-existuje.cz");
+    expect(newLead).toBeDefined();
+    // No company identity was invented for it.
+    expect(newLead!.company_name).toBeNull();
+
+    // The historical recipient got nothing — not a draft, not a lead.
+    expect(db.messages.some((m) => m.recipient_email === "100catering@manihi.cz")).toBe(false);
+    expect(db.leads.some((l) => l.email === "100catering@manihi.cz")).toBe(false);
+
+    /* ---------------------------------------------------------------- */
+    /* OPEN THE NEW DRAFT FOR THE UNKNOWN RECIPIENT IN THE COMPOSER      */
+    /* ---------------------------------------------------------------- */
+    const unknownBody = plan.rows[1]!.body!;
+    const storedUnknown = db.messages.find(
+      (m) => m.recipient_email === "objednavky@firma-co-nem-existuje.cz",
+    )!;
+
+    // Byte-identical in the database.
+    expect(storedUnknown.subject).toBe(plan.rows[1]!.subject);
+    expect(storedUnknown.body).toBe(unknownBody);
+    expect(storedUnknown.sequence_number).toBe(0);
+    expect(storedUnknown.status).toBe("draft");
+    expect(storedUnknown.sent_at).toBeNull();
+
+    // And byte-identical again through the real composer load path.
+    const { loadInitialOutreachDetail } = await import("@/app/actions");
+    const detail = await loadInitialOutreachDetail({ leadId: newLead!.id as string });
+
+    expect(detail.ok).toBe(true);
+    if (!detail.ok) throw new Error(detail.error);
+
+    expect(detail.detail.message.id).toBe(storedUnknown.id);
+    expect(detail.detail.message.recipient_email).toBe("objednavky@firma-co-nem-existuje.cz");
+    expect(detail.detail.message.subject).toBe(plan.rows[1]!.subject);
+    expect(detail.detail.message.body).toBe(unknownBody);
+    expect(detail.detail.message.status).toBe("draft");
+    expect(detail.detail.message.sent_at).toBeNull();
+    expect(detail.detail.message.sequence_number).toBe(0);
+    expect(detail.detail.isInitial).toBe(true);
+    expect(detail.detail.lead.id).toBe(newLead!.id);
+    expect(detail.detail.lead.company_name).toBeNull();
+    expect(detail.detail.lead.followup_count).toBe(0);
+
+    /* ---------------------------------------------------------------- */
+    /* The send flow is available on it — and is NOT taken                */
+    /* ---------------------------------------------------------------- */
+    // `recordOutreachSent` is the composer's own action; asserting its shape
+    // is the point, so nothing here can send an email even by accident.
+    const { recordOutreachSent } = await import("@/app/actions");
+    expect(typeof recordOutreachSent).toBe("function");
+
+    // Opening the draft did not change its state, and no follow-up exists.
+    expect(storedUnknown.sent_at).toBeNull();
+    expect(storedUnknown.status).toBe("draft");
+    expect(newLead!.last_contacted_at).toBeNull();
+    expect(newLead!.followup_count).toBe(0);
+
+    /* ---------------------------------------------------------------- */
+    /* IDEMPOTENCY: re-importing makes no second slot-0 draft            */
+    /* ---------------------------------------------------------------- */
+    const again = await importBulkEmails(requests);
+    if (!again.ok) throw new Error(again.error);
+
+    expect(db.messages).toHaveLength(4);
+    expect(db.leads).toHaveLength(6);
+    expect(again.rows.every((row) => row.outcome === "already_present")).toBe(true);
+    expect(again.rows.find((row) => row.recipient === "objednavky@firma-co-nem-existuje.cz")!.messageId).toBe(
+      storedUnknown.id,
+    );
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* the brief's thirty-email case                                               */
+/* -------------------------------------------------------------------------- */
+
+/** Thirty finished emails, seven of them on the legacy blocklist. */
+function thirtyEmails(): string {
+  return Array.from({ length: 30 }, (_, i) => {
+    const n = i + 1;
+    // Emails 1–7 sit on the blocked domain; the rest are ordinary unknowns.
+    const recipient = n <= 7 ? `objednavky${n}@blokovana-firma.cz` : `info@firma${n}.cz`;
+    return [
+      `To: ${recipient}`,
+      `Subject: Nabídka číslo ${n}`,
+      `Dobrý den,`,
+      ``,
+      `text firmy číslo ${n} — původní znění, nedotčené.`,
+      ``,
+      `S pozdravem`,
+      `Petr Novák`,
+      `jednatel`,
+    ].join("\n");
+  }).join("\n\n---\n\n");
+}
+
+describe("thirty emails: 7 already contacted, 23 ready", () => {
+  it("produces exactly the summary the brief asks for and 23 drafts", async () => {
+    // The legacy account pitched the first seven.
+    for (let n = 1; n <= 7; n += 1) {
+      seedHistory(`objednavky${n}@blokovana-firma.cz`, `Blokovaná firma ${n}`, "2026-09-20T08:00:00.000Z");
+    }
+    await authenticate();
+    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { summarizeOutcomes } = await import("@/lib/import/bulk-plan");
+
+    const preview = await previewBulkEmails(thirtyEmails());
+    if (!preview.ok) throw new Error(preview.error);
+
+    const { plan } = preview;
+
+    // DETECTED: 30 EMAILS / 23 READY / 7 ALREADY CONTACTED / 0 NEEDS REVIEW /
+    // 0 DUPLICATE — and no no-lead-match line at all.
+    expect(plan.summary.total).toBe(30);
+    expect(plan.summary.ready).toBe(23);
+    expect(plan.summary.alreadyContacted).toBe(7);
+    expect(plan.summary.needsReview).toBe(0);
+    expect(plan.summary.duplicates).toBe(0);
+    expect(plan.summary.failed).toBe(0);
+    expect(plan.summary.importable).toBe(23);
+
+    // None of the thirty was blocked for lacking a lead.
+    expect(plan.rows.filter((row) => row.status === "ready")).toHaveLength(23);
+    expect(plan.rows.every((row) => row.reason === null || row.status === "already_contacted")).toBe(true);
+
+    // Twenty-three leads exist; the twenty-three unknown recipients do not.
+    expect(db.leads).toHaveLength(5);
+    expect(db.messages).toHaveLength(0);
+
+    /* ---------------------------------------------------------------- */
+    /* CREATE 23 DRAFTS                                                   */
+    /* ---------------------------------------------------------------- */
+    const requests = plan.rows
+      .filter((row) => row.status === "ready")
+      .map((row) => ({ index: row.index, recipient: row.recipient!, subject: row.subject, body: row.body }));
+
+    // The client chunks in tens; the server caps at three chunks per request.
+    const totals = { created: 0, alreadyPresent: 0, skipped: 0, failed: 0 };
+    const ids = new Set<string>();
+    for (let i = 0; i < requests.length; i += BULK_IMPORT_CHUNK_SIZE) {
+      const chunk = requests.slice(i, i + BULK_IMPORT_CHUNK_SIZE);
+      const result = await importBulkEmails(chunk);
+      if (!result.ok) throw new Error(result.error);
+      const t = summarizeOutcomes(result.rows);
+      totals.created += t.ready;
+      totals.alreadyPresent += t.alreadyPresent;
+      totals.skipped += t.skipped;
+      totals.failed += t.failed;
+      for (const row of result.rows) if (row.messageId) ids.add(row.messageId);
+    }
+
+    expect(totals).toEqual({ created: 23, alreadyPresent: 0, skipped: 0, failed: 0 });
+    expect(ids.size).toBe(23);
+
+    // Every ready recipient became its own lead and its own slot-0 draft.
+    expect(db.leads).toHaveLength(28);
+    expect(db.messages).toHaveLength(23);
+    expect(new Set(db.messages.map((m) => m.lead_id)).size).toBe(23);
+    expect(new Set(db.messages.map((m) => m.recipient_email))).toEqual(
+      new Set(plan.rows.filter((r) => r.status === "ready").map((r) => r.recipient)),
+    );
+
+    // The seven blocked recipients exist nowhere.
+    for (let n = 1; n <= 7; n += 1) {
+      const address = `objednavky${n}@blokovana-firma.cz`;
+      expect(db.messages.some((m) => m.recipient_email === address)).toBe(false);
+      expect(db.leads.some((l) => l.email === address)).toBe(false);
+    }
+
+    // Every draft is an ordinary unsent slot-0 draft, with its own text intact.
+    expect(db.messages.every((m) => m.status === "draft")).toBe(true);
+    expect(db.messages.every((m) => m.sent_at === null)).toBe(true);
+    expect(db.messages.every((m) => m.sequence_number === 0)).toBe(true);
+    for (const m of db.messages) {
+      const row = plan.rows.find((r) => r.recipient === m.recipient_email)!;
+      expect(m.subject).toBe(row.subject);
+      expect(m.body).toBe(row.body);
+      expect(String(m.body)).toContain(`text firmy číslo ${row.index} — původní znění, nedotčené.`);
+    }
+
+    // No lead gained an invented company name, and nothing was contacted.
+    expect(
+      db.leads
+        .filter((l) => String(l.email).startsWith("info@firma"))
+        .every((l) => l.company_name === null),
+    ).toBe(true);
+    expect(db.leads.every((l) => l.last_contacted_at === null)).toBe(true);
+    expect(db.leads.every((l) => l.next_followup_at === null)).toBe(true);
+    expect(db.leads.every((l) => l.followup_count === 0)).toBe(true);
+
+    /* ---------------------------------------------------------------- */
+    /* Re-running the whole batch refreshes all 23                       */
+    /* ---------------------------------------------------------------- */
+    for (let i = 0; i < requests.length; i += BULK_IMPORT_CHUNK_SIZE) {
+      const result = await importBulkEmails(requests.slice(i, i + BULK_IMPORT_CHUNK_SIZE));
+      if (!result.ok) throw new Error(result.error);
+      expect(summarizeOutcomes(result.rows).alreadyPresent).toBe(
+        Math.min(BULK_IMPORT_CHUNK_SIZE, requests.length - i),
+      );
+    }
+
+    expect(db.messages).toHaveLength(23);
+    expect(db.leads).toHaveLength(28);
   });
 });

@@ -78,6 +78,19 @@ function tableOf(name: string): Row[] {
   throw new Error(`unexpected table ${name}`);
 }
 
+/**
+ * The "this table cannot be read" switch.
+ *
+ * `findHistoricalContact()` must PROPAGATE a failed lookup rather than treat it
+ * as "nothing on record" — an outreach system that fails open is the bug this
+ * whole guard exists to prevent. Seeding `{ __throw: true }` puts a marker row
+ * in the table; every read of it returns a Supabase error, which is what the
+ * real database does when a query fails.
+ */
+function throwOnRead(name: string): boolean {
+  return tableOf(name).some((row) => row.__throw === true);
+}
+
 function selectBuilder(table: string, columns: string) {
   const filters: Array<[string, unknown]> = [];
   let order: { column: string; ascending: boolean } | null = null;
@@ -130,9 +143,14 @@ function selectBuilder(table: string, columns: string) {
   };
   b.limit = () => b;
   b.select = () => b;
-  b.maybeSingle = async () => ({ data: decorate(matched()[0] ?? null), error: null });
+  b.maybeSingle = async () =>
+    throwOnRead(table)
+      ? { data: null, error: { message: `${table} is unreadable` } }
+      : { data: decorate(matched()[0] ?? null), error: null };
   b.then = (onFulfilled: (value: unknown) => unknown) =>
-    Promise.resolve(onFulfilled({ data: matched().map(decorate), error: null }));
+    throwOnRead(table)
+      ? Promise.resolve(onFulfilled?.({ data: null, error: { message: `${table} is unreadable` } }))
+      : Promise.resolve(onFulfilled({ data: matched().map(decorate), error: null }));
 
   return b;
 }
@@ -493,41 +511,129 @@ describe("TEST 5 — an existing lead is matched", () => {
   });
 });
 
-describe("TEST 6 — no lead match does NOT create a lead", () => {
-  it("reports NO LEAD MATCH, skips the draft and invents nothing", async () => {
+describe("TEST 6 — a missing lead is NOT a blocker", () => {
+  it("plans an unknown recipient as READY and creates the lead and the draft", async () => {
     await authenticate();
     const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+
+    // No lead exists, and that changes nothing about a finished email.
+    expect(db.leads).toHaveLength(0);
 
     const preview = await previewBulkEmails(email("neznama@firma-ktera-nemexistuje.cz", "Nabídka"));
     if (!preview.ok) throw new Error(preview.error);
 
     const row = preview.plan.rows[0]!;
-    expect(row.status).toBe("no_lead_match");
+    expect(row.status).toBe("ready");
+    expect(row.reason).toBeNull();
+    expect(preview.plan.summary.ready).toBe(1);
+    expect(preview.plan.summary.importable).toBe(1);
+    // The preview still writes nothing, so `leadId` is genuinely absent here.
     expect(row.leadId).toBeNull();
-    expect(row.reason).toContain("will not create one");
-    expect(preview.plan.summary.importable).toBe(0);
+    expect(db.leads).toHaveLength(0);
 
-    // Nothing is importable, and asking anyway still creates nothing.
     const result = await importBulkEmails([
-      { index: 1, recipient: "neznama@firma-ktera-nemexistuje.cz", subject: "Nabídka", body: "text" },
+      { index: 1, recipient: row.recipient!, subject: row.subject, body: row.body },
     ]);
     if (!result.ok) throw new Error(result.error);
 
-    expect(result.rows[0]!.outcome).toBe("skipped");
-    expect(db.leads).toHaveLength(0);
-    expect(db.messages).toHaveLength(0);
+    // A lead was created for the recipient, and the draft hangs off it.
+    expect(result.rows[0]!.outcome).toBe("created");
+    expect(db.leads).toHaveLength(1);
+    expect(db.leads[0]!.email).toBe("neznama@firma-ktera-nemexistuje.cz");
+    expect(db.messages).toHaveLength(1);
+    expect(db.messages[0]!.lead_id).toBe(db.leads[0]!.id);
+
+    // And it is an ordinary slot-0 draft, not a special one.
+    expect(db.messages[0]!.sequence_number).toBe(0);
+    expect(db.messages[0]!.status).toBe("draft");
+    expect(db.messages[0]!.sent_at).toBeNull();
+    expect(db.messages[0]!.subject).toBe("Nabídka");
+    expect(result.rows[0]!.leadId).toBe(db.leads[0]!.id);
   });
 
   it("does not derive a company name from the email domain", async () => {
     await authenticate();
-    const { previewBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
 
     const preview = await previewBulkEmails(email("info@bella.cz", "Nabídka"));
     if (!preview.ok) throw new Error(preview.error);
 
     // "bella" is inferable from the domain, and Pepa still does not.
     expect(preview.plan.rows[0]!.leadCompany).toBeNull();
+
+    await importBulkEmails([
+      { index: 1, recipient: "info@bella.cz", subject: "Nabídka", body: "text" },
+    ]);
+
+    // The lead exists, but with no invented identity written into it.
+    expect(db.leads).toHaveLength(1);
+    expect(db.leads[0]!.company_name).toBeNull();
+    expect(db.leads[0]!.contact_name).toBeNull();
+    // And certainly nothing guessed appears in the email itself.
+    expect(db.messages[0]!.subject).toBe("Nabídka");
+    expect(String(db.messages[0]!.body)).toBe("text");
+  });
+
+  it("reuses an existing lead as-is rather than making a second one", async () => {
+    seedLead("info@bella.cz", { company_name: "Kadeřnictví Bella" });
+    await authenticate();
+    const { importBulkEmails } = await import("@/app/bulk-actions");
+
+    await importBulkEmails([
+      { index: 1, recipient: "info@bella.cz", subject: "Nabídka", body: "text" },
+    ]);
+
+    expect(db.leads).toHaveLength(1);
+    // `createLead` upserts with ignoreDuplicates, so the operator's own company
+    // name survives an import rather than being blanked by a NULL upsert.
+    expect(db.leads[0]!.company_name).toBe("Kadeřnictví Bella");
+  });
+
+  it("re-importing an unknown recipient refreshes the draft instead of duplicating it", async () => {
+    await authenticate();
+    const { importBulkEmails } = await import("@/app/bulk-actions");
+    const row = {
+      index: 1,
+      recipient: "neznama@firma-ktera-nemexistuje.cz",
+      subject: "Nabídka",
+      body: "text",
+    };
+
+    const first = await importBulkEmails([row]);
+    if (!first.ok) throw new Error(first.error);
+    expect(first.rows[0]!.outcome).toBe("created");
+
+    const second = await importBulkEmails([row]);
+    if (!second.ok) throw new Error(second.error);
+    expect(second.rows[0]!.outcome).toBe("already_present");
+
+    expect(db.leads).toHaveLength(1);
+    expect(db.messages).toHaveLength(1);
+    expect(second.rows[0]!.messageId).toBe(first.rows[0]!.messageId);
+    expect(second.rows[0]!.leadId).toBe(first.rows[0]!.leadId);
+  });
+
+  it("still refuses an unknown address that history has already reached", async () => {
+    // No lead, no prior Pepa contact — but the legacy account pitched it, so
+    // the missing lead must not open the door history closes.
+    seedHistory("info@salonabc.cz");
+    await authenticate();
+    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+
+    const preview = await previewBulkEmails(email("info@salonabc.cz", "AI recepce"));
+    if (!preview.ok) throw new Error(preview.error);
+
+    expect(preview.plan.rows[0]!.status).toBe("already_contacted");
+    expect(preview.plan.summary.importable).toBe(0);
+
+    const result = await importBulkEmails([
+      { index: 1, recipient: "info@salonabc.cz", subject: "AI recepce", body: "text" },
+    ]);
+    if (!result.ok) throw new Error(result.error);
+
+    expect(result.rows[0]!.outcome).toBe("skipped");
     expect(db.leads).toHaveLength(0);
+    expect(db.messages).toHaveLength(0);
   });
 });
 
@@ -794,13 +900,25 @@ describe("bulk import — resilience and bounds", () => {
   it("fails a row closed when the history lookup throws", async () => {
     db.historical.push({ __throw: true } as Row);
     await authenticate();
-    const { previewBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
 
     const result = await previewBulkEmails(email("info@bella.cz", "X"));
 
     if (!result.ok) throw new Error(result.error);
-    // Whatever the outcome, the row is never quietly `ready`.
-    expect(result.plan.rows[0]!.status).not.toBe("ready");
+    // The table could not be read, so the row is FAILED — never quietly ready,
+    // because "I could not check" is not "nothing is on record".
+    expect(result.plan.rows[0]!.status).toBe("failed");
+    expect(result.plan.summary.ready).toBe(0);
+    expect(result.plan.summary.importable).toBe(0);
+
+    // And asking the import directly still writes nothing.
+    const imported = await importBulkEmails([
+      { index: 1, recipient: "info@bella.cz", subject: "X", body: "text" },
+    ]);
+    if (!imported.ok) throw new Error(imported.error);
+    expect(imported.rows[0]!.outcome).toBe("skipped");
+    expect(db.leads).toHaveLength(0);
+    expect(db.messages).toHaveLength(0);
   });
 
   it("rejects an oversized request instead of acting on part of it silently", async () => {

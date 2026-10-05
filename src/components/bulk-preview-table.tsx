@@ -14,7 +14,6 @@ import { formatDate } from "@/lib/format";
  */
 const STATUS_TONE: Record<BulkEmailStatus, string> = {
   ready: "border-midnight bg-midnight-faint text-midnight",
-  no_lead_match: "border-midnight-line bg-paper text-midnight-soft border-dashed",
   already_contacted: "border-midnight bg-midnight text-cream",
   duplicate: "border-midnight bg-midnight/35 text-midnight",
   needs_review: "border-midnight-line bg-paper text-midnight-soft border-dashed",
@@ -23,7 +22,6 @@ const STATUS_TONE: Record<BulkEmailStatus, string> = {
 
 const STATUS_LABEL: Record<BulkEmailStatus, string> = {
   ready: "Ready",
-  no_lead_match: "No lead match",
   already_contacted: "Already contacted",
   duplicate: "Duplicate",
   needs_review: "Needs review",
@@ -45,11 +43,6 @@ export function BulkSummary({ summary, splitBy }: { summary: BulkEmailSummary; s
       label: "Already contacted",
       value: summary.alreadyContacted,
       tone: "bg-midnight text-cream border-midnight",
-    },
-    {
-      label: "No lead match",
-      value: summary.noLeadMatch,
-      tone: "bg-paper text-midnight-soft border-midnight-line border-dashed",
     },
     {
       label: "Needs review",

@@ -13,9 +13,11 @@
  *     composing in Gmail and recording the send stay the explicit per-email
  *     actions in the composer, where the quality gate and the historical hard
  *     stop live.
- *   * **No lead is ever invented.** A recipient with no lead is reported as
- *     `no_lead_match` and skipped. Deriving a company name from a domain would
- *     be a guess written into the database as though it were known.
+ *   * **A missing lead is not a blocker.** The operator wrote a finished email;
+ *     whether Pepa already has a lead for the address does not change that. The
+ *     lead `createDraft()` needs is created for them, with no company name —
+ *     because none was supplied, and a name guessed from a domain would be a
+ *     fiction written into the database as though it were known.
  *   * **The client is never trusted about eligibility.** The browser sends back
  *     the rows it wants imported; this file re-derives every one of them through
  *     `findLeadByEmail()` — the same function behind the composer's duplicate
@@ -115,8 +117,8 @@ async function checkRecipient(index: number, recipient: string | null): Promise<
  * Parse a pasted block and describe every email, without writing anything.
  *
  * The preview is advisory, which is why the import re-checks. It exists so the
- * operator sees "17 ready, 2 already contacted, 1 no lead match" before
- * committing to anything, rather than after.
+ * operator sees "23 ready, 7 already contacted" before committing to anything,
+ * rather than after.
  */
 export async function previewBulkEmails(text: string): Promise<BulkPreviewActionResult> {
   await requireAuthenticatedUser();
@@ -151,11 +153,12 @@ export async function previewBulkEmails(text: string): Promise<BulkPreviewAction
  * Create the drafts for one chunk of a paste.
  *
  * `rows` is a request, not an instruction. Every row is re-checked against the
- * same identity rules the composer uses, and only a row that matches a lead and
- * carries no block reason reaches `createDraft()`. Because `createDraft()` is the
- * composer's own service, a repeated import updates the existing slot-0 draft
- * rather than piling up copies — which is what makes a retry of this exact
- * request a no-op rather than a duplicate send.
+ * same identity rules the composer uses, and only a row that carries no block
+ * reason reaches `createDraft()`. Because `createDraft()` is the composer's own
+ * service — it creates the lead when there is none, and upserts the draft on
+ * `(lead_id, recipient_normalized, sequence_number)` — a repeated import updates
+ * the existing slot-0 draft rather than piling up copies, which is what makes a
+ * retry of this exact request a no-op rather than a duplicate send.
  */
 export async function importBulkEmails(rows: BulkDraftRequest[]): Promise<BulkImportActionResult> {
   await requireAuthenticatedUser();
@@ -208,26 +211,20 @@ export async function importBulkEmails(rows: BulkDraftRequest[]): Promise<BulkIm
       continue;
     }
 
-    if (!check.check.lead) {
-      results.push({
-        index: row.index,
-        recipient: row.recipient,
-        outcome: "skipped",
-        messageId: null,
-        leadId: null,
-        error: "No lead matches this address, and bulk import does not create one.",
-      });
-      continue;
-    }
+    // No lead yet? Not a problem. `createDraft()` creates the one it needs from
+    // the recipient address alone, so an address Pepa has never seen gets the
+    // same slot-0 draft as a known one. There is no company name to pass, and
+    // none is guessed — see the module note.
+    const lead = check.check.lead;
 
     const saved = await createDraft({
       recipientEmail: row.recipient,
       subject: (row.subject ?? "").slice(0, MAX_SUBJECT_LENGTH),
       body: (row.body ?? "").slice(0, MAX_BODY_LENGTH),
-      // The lead's own company name, which the operator set. Never derived from
-      // the email domain — see the module note.
-      companyName: check.check.lead.company_name,
-      contactName: check.check.lead.contact_name,
+      // The lead's own company and contact name, which the operator set. `null`
+      // for a new lead rather than something derived from the domain.
+      companyName: lead?.company_name ?? null,
+      contactName: lead?.contact_name ?? null,
     });
 
     if (!saved.ok || !saved.data) {
@@ -236,7 +233,7 @@ export async function importBulkEmails(rows: BulkDraftRequest[]): Promise<BulkIm
         recipient: row.recipient,
         outcome: "failed",
         messageId: null,
-        leadId: check.check.lead.id,
+        leadId: lead?.id ?? null,
         error: saved.error ?? "Draft could not be saved.",
       });
       continue;

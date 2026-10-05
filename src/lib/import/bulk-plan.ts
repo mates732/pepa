@@ -31,10 +31,14 @@ import type { DuplicateCheckResult, HistoricalContact, OutreachBlockReason } fro
 
 /** What the preview shows in the Status column. */
 export type BulkEmailStatus =
-  /** Matched to a lead and clear of history — importable. */
+  /**
+   * Clear of history, so importable.
+   *
+   * Whether a lead already exists is NOT part of this: `createDraft()` creates
+   * the minimal lead a draft needs, so a recipient Pepa has never seen is as
+   * importable as one it has.
+   */
   | "ready"
-  /** No lead exists for this address. Shown, but no lead is invented. */
-  | "no_lead_match"
   /** Legacy or Pep outreach on record — no new cold outreach may start. */
   | "already_contacted"
   /** The same recipient appears twice in this paste. */
@@ -82,7 +86,6 @@ export interface BulkEmailSummary {
   /** Emails the paste produced, excluding anything over the ceiling. */
   total: number;
   ready: number;
-  noLeadMatch: number;
   alreadyContacted: number;
   duplicates: number;
   needsReview: number;
@@ -146,10 +149,14 @@ function historicalReason(contact: HistoricalContact): string {
  * A row the parser could not read, or that repeats a recipient WITHIN the paste,
  * is reported as such regardless of what the database says — that is the
  * operator's typo to fix, and telling them "already contacted" about a row they
- * mistyped would hide the real problem. Below that, a refusal outranks a missing
- * lead: an address the legacy account pitched is contacted whether or not Pepa
- * holds a lead for it, and a lead must never turn a blocked address into a
- * ready draft.
+ * mistyped would hide the real problem.
+ *
+ * Below that the ONLY refusal is history. An address the legacy account pitched
+ * is contacted whether or not Pepa holds a lead for it, and history must win
+ * either way. Everything else is `ready`: a recipient with no lead is not a
+ * problem to report, because `createDraft()` creates the lead it needs. The
+ * preview's job is to tell the operator what may not be sent, and "Pepa has not
+ * heard of this company yet" is not that.
  */
 function decideStatus(
   candidate: BulkEmailCandidate,
@@ -187,15 +194,6 @@ function decideStatus(
     return {
       status: "already_contacted",
       reason: `Cannot start a new outreach: ${result.blockReason}.`,
-    };
-  }
-  if (!result.lead) {
-    // NOT an error. The operator still sees the parsed email and decides; this
-    // feature never invents a lead, and a company name is never guessed from a
-    // domain.
-    return {
-      status: "no_lead_match",
-      reason: "No lead for this address. Pepa will not create one — add it from the composer if you want to keep it.",
     };
   }
   return { status: "ready", reason: null };
@@ -242,13 +240,12 @@ export function planBulkEmails(
   const summary: BulkEmailSummary = {
     total: rows.length,
     ready: count("ready"),
-    noLeadMatch: count("no_lead_match"),
     alreadyContacted: count("already_contacted"),
     duplicates: count("duplicate"),
     needsReview: count("needs_review"),
     failed: count("failed"),
-    // Only a matched, unblocked lead produces a draft. `no_lead_match` needs the
-    // operator's decision first, and every other status is a refusal or a typo.
+    // Everything that is not a refusal, a typo or an unreadable row. A missing
+    // lead is not among them — `createDraft()` resolves the lead itself.
     importable: count("ready"),
     truncated: options.truncated ?? 0,
   };
