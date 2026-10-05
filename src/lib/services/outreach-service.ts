@@ -133,7 +133,7 @@ export type RecordSentResult =
   /** It was already recorded as sent. Nothing was written, nothing rescheduled. */
   | { outcome: "already_sent"; message: OutreachMessage; gate: GateEvaluation | null }
   /** The quality gate refused. Nothing was written. */
-  | { outcome: "blocked"; gate: GateEvaluation; error: string }
+  | { outcome: "blocked"; gate: GateEvaluation; error: string; blockReason: string | null }
   /** Warnings are present and the operator has not confirmed them yet. */
   | { outcome: "needs_confirmation"; gate: GateEvaluation; error: string };
 
@@ -180,6 +180,11 @@ export async function recordOutreachSent(input: {
   // from Postgres and re-checked at the moment of the write, so a dashboard
   // loaded ten minutes ago — or a hand-crafted request that skips the UI
   // entirely — cannot talk the server into recording a blocked draft as sent.
+  //
+  // The gate consults `outreach_messages` AND `historical_outreach`, so this is
+  // also the single point where imported legacy history stops a cold outreach.
+  // Nothing above this function decides that; `requireAuthenticatedUser()`
+  // proves who is asking, not whether the recipient may be contacted.
   const evaluated = await evaluateStoredMessageQualityGate(input.messageId, input.leadId);
   const gate = evaluated?.gate ?? null;
 
@@ -198,7 +203,15 @@ export async function recordOutreachSent(input: {
     return {
       ok: true,
       error: null,
-      data: { outcome: "blocked", gate, error: describeBlocked(gate) },
+      data: {
+        outcome: "blocked",
+        gate,
+        error: describeBlocked(gate),
+        // Surfaced rather than left inside the gate: a caller that has to
+        // distinguish "already contacted" from every other refusal must not have
+        // to re-parse prose to do it.
+        blockReason: gate.blockReason ?? null,
+      },
     };
   }
 

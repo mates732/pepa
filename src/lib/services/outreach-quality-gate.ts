@@ -8,9 +8,10 @@ import {
   type QualityGateResult,
 } from "@/lib/outreach/quality-gate";
 import { normalizeEmail } from "@/lib/email";
+import { findHistoricalContact } from "@/lib/services/historical-outreach-service";
 import { findLeadByEmail } from "@/lib/services/lead-service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
-import type { OutreachMessage } from "@/lib/types";
+import type { OutreachMessage, HistoricalContact } from "@/lib/types";
 
 /**
  * Server-side half of the outreach quality gate.
@@ -22,10 +23,11 @@ import type { OutreachMessage } from "@/lib/types";
  *     may be recorded as sent comes through here, so a stale dashboard, a
  *     crafted request or a replayed action cannot skip a check. Nothing the
  *     client sends is treated as a verdict.
- *   * **Bounded queries.** The lead and its history are fetched with two
- *     constant queries regardless of how much history exists. Similarity is then
- *     computed in memory. There is deliberately no query-per-previous-message
- *     and no N+1: this runs on every draft check and every send.
+ *   * **Bounded queries.** The lead, its history and the imported legacy history
+ *     are fetched with a constant number of queries regardless of how much
+ *     history exists. Similarity is then computed in memory. There is
+ *     deliberately no query-per-previous-message and no N+1: this runs on every
+ *     draft check and every send.
  */
 
 const MESSAGE_COLUMNS =
@@ -39,6 +41,16 @@ export interface GateEvaluation extends QualityGateResult {
   blocked: boolean;
   /** True when there is at least one warning the operator should confirm. */
   hasWarnings: boolean;
+  /**
+   * The machine reason behind a refusal, e.g. `ALREADY_CONTACTED`.
+   *
+   * Null unless a blocking check carried a code. Carried on the evaluation
+   * rather than re-derived by the caller so the UI and the send path report the
+   * same reason for the same verdict.
+   */
+  blockReason: string | null;
+  /** Imported legacy history behind the verdict, for the informational UI. */
+  historicalContact: HistoricalContact | null;
 }
 
 /** A draft as typed by the operator. Used for the live, pre-save check. */
@@ -50,6 +62,11 @@ export interface DraftGateInput {
   messageId?: string | null;
   /** Skip history when the lead is already known and unchanged. */
   leadId?: string | null;
+  /**
+   * Position in the lead's sequence. Unknown means "treat as cold outreach", so
+   * an advisory check can never be more permissive than the send path.
+   */
+  sequenceNumber?: number | null;
 }
 
 /** Map stored messages into the shape the pure gate compares. */
@@ -76,27 +93,50 @@ async function loadContext(input: {
   recipient: string;
   messageId: string | null;
   leadId?: string | null;
+  sequenceNumber?: number | null;
   now?: Date;
 }): Promise<{ context: GateContext; leadId: string | null }> {
   const now = input.now ?? new Date();
   const supabase = getSupabaseAdmin();
 
+  const gateInput = {
+    recipient: input.recipient,
+    subject: "",
+    body: "",
+    messageId: input.messageId,
+    sequenceNumber: input.sequenceNumber ?? null,
+  };
+
   let leadId = input.leadId ?? null;
   let lastContactedAt: string | null = null;
+  let historicalContact: HistoricalContact | null = null;
 
   const leadResult = await findLeadByEmail(input.recipient);
+  if (leadResult.ok && leadResult.data) {
+    historicalContact = leadResult.data.historicalContact;
+  }
   if (leadResult.ok && leadResult.data?.lead) {
     leadId = leadResult.data.lead.id;
     lastContactedAt = leadResult.data.lastContactedAt;
+  }
+
+  // The lead lookup already resolved the imported legacy history for a valid
+  // address, and reusing its answer keeps this to one history query per
+  // evaluation. An address the lookup refused (malformed) never reaches the send
+  // path anyway, but asking directly rather than assuming "no history" keeps the
+  // guard fail-closed: an unreadable answer can never read as an empty one.
+  if (!leadResult.ok) {
+    historicalContact = await findHistoricalContact(input.recipient);
   }
 
   if (!leadId) {
     return {
       leadId: null,
       context: {
-        input: { recipient: input.recipient, subject: "", body: "", messageId: input.messageId },
+        input: gateInput,
         history: [],
         lastContactedAt: null,
+        historicalContact,
         now,
       },
     };
@@ -114,9 +154,10 @@ async function loadContext(input: {
   return {
     leadId,
     context: {
-      input: { recipient: input.recipient, subject: "", body: "", messageId: input.messageId },
+      input: gateInput,
       history: messages ? toHistory(messages as unknown as Array<Record<string, unknown>>) : [],
       lastContactedAt,
+      historicalContact,
       now,
     },
   };
@@ -126,13 +167,17 @@ function finish(
   result: QualityGateResult,
   leadId: string | null,
   normalizedRecipient: string | null,
+  historicalContact: HistoricalContact | null,
 ): GateEvaluation {
+  const blocking = result.checks.find((check) => check.status === "block" && check.code);
   return {
     ...result,
     leadId,
     normalizedRecipient,
     blocked: result.status === "blocked",
     hasWarnings: result.status === "warning",
+    blockReason: blocking?.code ?? null,
+    historicalContact,
   };
 }
 
@@ -152,6 +197,7 @@ export async function evaluateDraftQualityGate(
     recipient: input.recipient,
     messageId: input.messageId ?? null,
     leadId: input.leadId ?? null,
+    sequenceNumber: input.sequenceNumber ?? null,
   });
 
   const result = evaluateQualityGate({
@@ -164,7 +210,7 @@ export async function evaluateDraftQualityGate(
     },
   });
 
-  return finish(result, leadId, normalizedRecipient || null);
+  return finish(result, leadId, normalizedRecipient || null, context.historicalContact ?? null);
 }
 
 /**
@@ -211,6 +257,10 @@ export async function evaluateStoredMessageQualityGate(
     recipient,
     messageId,
     leadId,
+    // Read back from Postgres, never from the caller: whether this is a cold
+    // outreach or a follow-up decides whether the permanent historical refusal
+    // applies, so it must not be something a request can choose.
+    sequenceNumber: Number(row.sequence_number ?? 0),
   });
 
   const result = evaluateQualityGate({
@@ -221,12 +271,13 @@ export async function evaluateStoredMessageQualityGate(
       body: (row.body ?? "") as string,
       // Excluded from its own history, so re-sending is not self-compared.
       messageId,
+      sequenceNumber: Number(row.sequence_number ?? 0),
     },
   });
 
   return {
     message: row as unknown as OutreachMessage,
-    gate: finish(result, resolvedLeadId, normalizeEmail(recipient) || null),
+    gate: finish(result, resolvedLeadId, normalizeEmail(recipient) || null, context.historicalContact ?? null),
   };
 }
 

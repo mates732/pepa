@@ -24,6 +24,8 @@
  * The database-facing half lives in `src/lib/services/outreach-quality-gate.ts`.
  */
 
+import { ALREADY_CONTACTED, ALREADY_CONTACTED_DOMAIN, type HistoricalContact } from "@/lib/types";
+
 /* -------------------------------------------------------------------------- */
 /* results                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -43,6 +45,12 @@ export interface QualityCheck {
   /** Stable machine name; the UI maps this to a label. */
   name: string;
   status: CheckStatus;
+  /**
+   * Stable machine reason, present only where an operator or another system has
+   * to act on the verdict rather than merely read it. `ALREADY_CONTACTED` is
+   * the one the send path is expected to branch on.
+   */
+  code?: string;
   /** Human-readable explanation. Never contains a secret. */
   reason: string;
   /**
@@ -88,6 +96,15 @@ export interface GateInput {
   body: string;
   /** Set when re-checking the same draft that is already stored. */
   messageId?: string | null;
+  /**
+   * Position in the lead's outreach sequence, read back from Postgres.
+   *
+   * 0 (or unknown) means NEW COLD OUTREACH. Anything above 0 is a follow-up
+   * inside a sequence Pepa is already running, which is a different act from
+   * pitching a company for the first time — and is deliberately not subject to
+   * the permanent historical-contact refusal.
+   */
+  sequenceNumber?: number | null;
 }
 
 export interface GateContext {
@@ -102,6 +119,15 @@ export interface GateContext {
    * only a fallback.
    */
   lastContactedAt?: string | null;
+  /**
+   * Imported legacy history for this recipient, resolved by the service from
+   * `historical_outreach`. Null (or absent) means nothing is on record.
+   *
+   * `matchedOn` decides how strong the evidence is: `email` is the canonical
+   * identity, `domain` is the secondary company-level guard, and the service
+   * never produces `domain` for a shared mailbox provider.
+   */
+  historicalContact?: HistoricalContact | null;
   /**
    * Facts gathered about the prospect. PEPA stores none yet, so this is
    * normally empty — which is exactly why unbacked personalisation is reported
@@ -463,6 +489,7 @@ export type IdentityState =
   | "existing_draft"
   | "active_outreach"
   | "cooldown"
+  | "already_contacted"
   | "duplicate_draft";
 
 export interface IdentityVerdict {
@@ -473,6 +500,30 @@ export interface IdentityVerdict {
   daysSinceContact: number | null;
   /** The message the recipient is already working on, if any. */
   duplicateDraft: HistoryMessage | null;
+  /** The imported legacy history this verdict relied on, if any. */
+  historicalContact: HistoricalContact | null;
+}
+
+/**
+ * Is this a NEW COLD OUTREACH, or a follow-up inside a sequence already running?
+ *
+ * The distinction is the whole reason the historical guard is not an infinite
+ * block. `sequence_number = 0` is PEPA's definition of the first email to a
+ * lead, and a first email to an address that has already been contacted is the
+ * mistake this guard exists to prevent — no matter how long ago. A follow-up
+ * (`sequence_number > 0`) is not cold outreach: it continues a conversation
+ * PEPA itself started, so it is governed by the finite cooldown and the
+ * 4/7/10 cadence exactly as before.
+ *
+ * Unknown (`undefined`/`null`) counts as cold outreach. A draft whose position
+ * could not be read must not be treated as a follow-up, because that would turn
+ * an unanswerable question into permission.
+ */
+export function isColdOutreach(sequenceNumber: number | null | undefined): boolean {
+  if (sequenceNumber === null || sequenceNumber === undefined) return true;
+  const value = Number(sequenceNumber);
+  if (!Number.isFinite(value)) return true;
+  return value <= 0;
 }
 
 function isContacted(message: HistoryMessage): boolean {
@@ -504,7 +555,16 @@ export function resolveIdentity(context: GateContext): IdentityVerdict {
       message.sentAt && (!latest || message.sentAt > latest) ? message.sentAt : latest,
     null,
   );
-  const lastContactedAt = context.lastContactedAt ?? latestFromHistory;
+
+  // Imported legacy history is the LAST fallback, not an override: the lead's own
+  // `last_contacted_at` stays authoritative and Pep-generated history still wins,
+  // so nothing that used to be true about an existing lead changes. What it adds
+  // is the case that had no value at all — an address the old account pitched
+  // and PEPA has never seen. Its `last_contact` therefore enters the cooldown
+  // arithmetic exactly as a Pep-generated `sent_at` would.
+  const historical = context.historicalContact ?? null;
+  const lastContactedAt =
+    context.lastContactedAt ?? latestFromHistory ?? historical?.lastContactAt ?? null;
 
   let daysSinceContact: number | null = null;
   if (lastContactedAt) {
@@ -516,8 +576,18 @@ export function resolveIdentity(context: GateContext): IdentityVerdict {
 
   const contacted = contactedMessages.length > 0 || Boolean(lastContactedAt);
 
+  // The permanent refusal. Deliberately evaluated before every other state: a
+  // cold outreach to an address already on record is refused whether or not it
+  // is inside the cooldown, and whether or not the cooldown has since expired.
+  // The age of the contact is not a defence — that is precisely the leak this
+  // closes, since every imported contact older than three days would otherwise
+  // be pitchable again.
+  const alreadyContacted = historical !== null && isColdOutreach(context.input.sequenceNumber);
+
   let state: IdentityState;
-  if (prior.length === 0 && !contacted) {
+  if (alreadyContacted) {
+    state = "already_contacted";
+  } else if (prior.length === 0 && !contacted) {
     state = current ? "duplicate_draft" : "new_lead";
   } else if (current && !contacted) {
     // An existing lead with only drafts: editing it is legitimate work.
@@ -536,6 +606,7 @@ export function resolveIdentity(context: GateContext): IdentityVerdict {
     lastContactedAt,
     daysSinceContact,
     duplicateDraft: current,
+    historicalContact: historical,
   };
 }
 
@@ -545,6 +616,20 @@ export function resolveIdentity(context: GateContext): IdentityVerdict {
 
 function formatDays(days: number): string {
   return days <= 0 ? "today" : `${days} day${days === 1 ? "" : "s"} ago`;
+}
+
+/**
+ * `YYYY-MM-DD`, or a wording that admits the date is unknown.
+ *
+ * Dates are stored as UTC instants, so this is a truncation rather than a
+ * conversion: no reader-local timezone is involved, and two operators in two
+ * zones read the same day.
+ */
+function isoDate(value: string | null | undefined): string {
+  if (!value) return "an earlier date";
+  const parsed = Date.parse(value);
+  if (Number.isNaN(parsed)) return "an earlier date";
+  return new Date(parsed).toISOString().slice(0, 10);
 }
 
 /** Percentage with no false precision: one decimal at most. */
@@ -769,9 +854,55 @@ function identityCheck(identity: IdentityVerdict): QualityCheck {
         evidence,
       };
 
+    case "already_contacted":
+      return alreadyContactedCheck(identity, evidence);
+
     default:
       return { name: "identity", status: "pass", reason: "No identity conflict." };
   }
+}
+
+/**
+ * The permanent refusal, named by date so the operator can judge it.
+ *
+ * Only the date, the count and the matching identity are exposed. Historical
+ * subject lines and company names stay in the database: the operator needs to
+ * know *that* a company was already pitched and *when*, not to read the old
+ * copy back into a composer where it could be re-sent by accident.
+ */
+function alreadyContactedCheck(identity: IdentityVerdict, evidence: string[]): QualityCheck {
+  const contact = identity.historicalContact;
+  const when = isoDate(contact?.lastContactAt);
+  const count = contact?.contactCount ?? 1;
+
+  evidence.push(
+    when,
+    `${count} contact${count === 1 ? "" : "s"} on record`,
+    "imported history",
+  );
+
+  if (contact?.matchedOn === "domain") {
+    return {
+      name: "already_contacted",
+      status: "block",
+      code: ALREADY_CONTACTED_DOMAIN,
+      reason:
+        `Cannot send outreach: this company domain (${contact.normalizedDomain}) was ` +
+        `already contacted on ${when} at ${contact.normalizedEmail}. ` +
+        `A second cold pitch to the same company is a duplicate contact.`,
+      evidence,
+    };
+  }
+
+  return {
+    name: "already_contacted",
+    status: "block",
+    code: ALREADY_CONTACTED,
+    reason:
+      `Cannot send outreach: this email address was already contacted on ${when}. ` +
+      `Pepa does not start a new outreach sequence for an address that is already on record.`,
+    evidence,
+  };
 }
 
 function subjectCheck(

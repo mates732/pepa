@@ -42,7 +42,9 @@ function failure(error: string): ActionFailure {
 
 /**
  * Server-side duplicate check. The browser never queries Supabase directly,
- * so the badge always reflects what is actually stored.
+ * so the badge always reflects what is actually stored — including the imported
+ * legacy history in `historical_outreach`, which is what makes the badge
+ * meaningful for an address PEPA has never sent to itself.
  */
 export async function checkRecipient(recipient: string): Promise<CheckRecipientResult> {
   await requireAuthenticatedUser();
@@ -124,6 +126,12 @@ export type RecordOutreachSentResult =
       outcome: "blocked" | "needs_confirmation";
       requiresConfirmation: boolean;
       gate: GateEvaluation;
+      /**
+       * Machine reason behind a refusal, e.g. `ALREADY_CONTACTED`. Null unless
+       * the gate named one. The UI uses it to say why; it never uses it to
+       * decide anything, because this action is not the enforcement point.
+       */
+      blockReason?: string | null;
     }
   | ActionFailure;
 
@@ -385,6 +393,9 @@ export async function recordOutreachSent(input: {
         requiresConfirmation: data.outcome === "needs_confirmation",
         error: data.error,
         gate: data.gate,
+        // Only a refusal carries a reason; a warning waiting for confirmation
+        // has none, and reporting null there is honest rather than a guess.
+        blockReason: data.outcome === "blocked" ? data.blockReason : null,
       };
     }
 

@@ -47,3 +47,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Legacy outreach export (pepa_outreach_history_detailed.csv / .txt)
+# Real prospect addresses from the previous business account. Source of truth
+# for `npm run import:historical-outreach`, but it must never enter git history:
+# once committed it stays there. The database is the system of record.
+pepa_outreach_history_detailed.csv
+pepa_outreach_history_detailed.txt

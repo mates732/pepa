@@ -42,6 +42,7 @@ const db = {
   leads: [] as Row[],
   messages: [] as Row[],
   tokens: [] as Row[],
+  historical: [] as Row[],
 };
 
 let nextId = 1;
@@ -51,6 +52,7 @@ const TABLES = {
   leads: "leads",
   outreach_messages: "messages",
   action_tokens: "tokens",
+  historical_outreach: "historical",
 } as const;
 
 type Table = keyof typeof TABLES;
@@ -60,6 +62,7 @@ function reset() {
   db.leads = [];
   db.messages = [];
   db.tokens = [];
+  db.historical = [];
   nextId = 1;
 }
 
@@ -81,6 +84,17 @@ function withGenerated(table: Table, row: Row): Row {
   }
   if (table === "outreach_messages" && typeof row.recipient_email === "string") {
     return { ...row, recipient_normalized: normalizeEmailValue(row.recipient_email) };
+  }
+  if (table === "historical_outreach" && typeof row.email === "string") {
+    return {
+      ...row,
+      email_normalized: normalizeEmailValue(row.email),
+      domain_normalized: normalizeEmailValue(row.domain).replace(/^www\./, ""),
+      // The generated guard column. Seeded from the app rule rather than
+      // recomputed here, so a test can place a provider row explicitly.
+      is_shared_provider:
+        row.is_shared_provider ?? ["gmail.com", "seznam.cz"].includes(normalizeEmailValue(row.domain)),
+    };
   }
   return row;
 }
@@ -119,9 +133,15 @@ function readBuilder(table: Table, columns: string, head: boolean) {
 
   const matched = (): Row[] => {
     let result = rows(table).filter((row) =>
-      filters.every(({ column, value }) =>
-        Array.isArray(value) ? value.includes(row[column]) : row[column] === value,
-      ),
+      filters.every(({ column, value }) => {
+        if (Array.isArray(value)) return value.includes(row[column]);
+        // `neq` is recorded as a `!`-prefixed sentinel, mirroring the
+        // `notnull` trick already used by the other fakes in this repo.
+        if (typeof value === "string" && value.startsWith("!")) {
+          return row[column] !== value.slice(1);
+        }
+        return row[column] === value;
+      }),
     );
     if (order) {
       const direction = order.ascending ? 1 : -1;
@@ -136,6 +156,10 @@ function readBuilder(table: Table, columns: string, head: boolean) {
 
   b.eq = (column: string, value: unknown) => {
     filters.push({ column, value });
+    return b;
+  };
+  b.neq = (column: string, value: unknown) => {
+    filters.push({ column, value: `!${String(value)}` });
     return b;
   };
   b.in = (column: string, values: unknown[]) => {
@@ -342,7 +366,7 @@ function seedMessages(rows: Row[]) {
 /* -------------------------------------------------------------------------- */
 
 describe("evaluateDraftQualityGate — bounded queries", () => {
-  it("performs exactly two queries regardless of history size", async () => {
+  it("performs a constant number of queries regardless of history size", async () => {
     seedLead();
     seedMessages([msg({ status: "sent", sent_at: "2026-03-01T00:00:00.000Z" })]);
 
@@ -352,9 +376,30 @@ describe("evaluateDraftQualityGate — bounded queries", () => {
       body: "Dobrý den,\n\nrád bych vám nabídl řešení pro váš salon.\n\nS pozdravem",
     });
 
-    expect(CALLS).toHaveLength(2);
-    expect(CALLS[0]!.table).toBe("leads");
-    expect(CALLS[1]!.table).toBe("outreach_messages");
+    // Two historical queries — the exact address, then the company domain,
+    // because example.com is not a mailbox provider — plus the lead and its
+    // history. The count is fixed by the shape of the check, not by how much
+    // history exists.
+    expect(CALLS.map((call) => call.table)).toEqual([
+      "historical_outreach",
+      "historical_outreach",
+      "leads",
+      "outreach_messages",
+    ]);
+  });
+
+  it("skips the company-domain lookup for a shared mailbox provider", async () => {
+    seedLead({ email: "someone@gmail.com", email_normalized: "someone@gmail.com" });
+
+    await evaluateDraftQualityGate({
+      recipient: "someone@gmail.com",
+      subject: "Nabídka",
+      body: "Dobrý den,\n\nrád bych vám nabídl řešení pro váš salon.\n\nS pozdravem",
+    });
+
+    // A gmail.com domain identifies a person, not a company, so the secondary
+    // guard must never be issued for it.
+    expect(CALLS.filter((call) => call.table === "historical_outreach")).toHaveLength(1);
   });
 });
 
@@ -382,7 +427,7 @@ describe("no N+1", () => {
       body: "Dobrý den,\n\nrád bych vám nabídl řešení pro váš salon.\n\nS pozdravem",
     });
 
-    expect(CALLS).toHaveLength(2);
+    expect(CALLS).toHaveLength(4);
   });
 });
 

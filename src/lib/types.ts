@@ -25,6 +25,41 @@ export interface Lead {
   followup_count: number;
 }
 
+/**
+ * Machine-readable reasons the send path refuses outreach.
+ *
+ * `ALREADY_CONTACTED` is the address-level guard: this exact address is already
+ * on record. `ALREADY_CONTACTED_DOMAIN` is the secondary guard: another address
+ * at the same company domain is on record. Shared mailbox providers never
+ * produce the second one — see `src/lib/outreach/domain.ts`.
+ */
+export const ALREADY_CONTACTED = "ALREADY_CONTACTED" as const;
+export const ALREADY_CONTACTED_DOMAIN = "ALREADY_CONTACTED_DOMAIN" as const;
+
+export type OutreachBlockReason =
+  | typeof ALREADY_CONTACTED
+  | typeof ALREADY_CONTACTED_DOMAIN;
+
+/**
+ * What the imported legacy history knows about one address.
+ *
+ * `matchedOn` records WHICH identity matched, because the two guards are not
+ * equally strong: the address is PEPA's canonical identity, and the domain is a
+ * secondary protection that is suppressed for shared mailbox providers.
+ */
+export interface HistoricalContact {
+  matchedOn: "email" | "domain";
+  normalizedEmail: string;
+  normalizedDomain: string | null;
+  company: string | null;
+  /** How many legacy emails went to this address, as exported. */
+  contactCount: number;
+  firstContactAt: string | null;
+  lastContactAt: string | null;
+  /** `historical_import` today. Carried so the reason can name its origin. */
+  source: string;
+}
+
 export interface OutreachMessage {
   id: string;
   lead_id: string;
@@ -71,6 +106,24 @@ export interface DuplicateCheckResult {
   /** Only messages that actually left the outbox (status sent/follow_up/replied). */
   sentCount: number;
   lastContactedAt: string | null;
+  /**
+   * Imported legacy history for this address, or null when there is none.
+   *
+   * This is what lets the lead pipeline answer "may this address be contacted
+   * at all?" for an address that has never had a Pep-generated message, which
+   * is the common case after the historical import.
+   */
+  historicalContact: HistoricalContact | null;
+  /**
+   * May a NEW cold outreach be created for this address?
+   *
+   * False only for a permanent refusal — an address or company domain already on
+   * record. A finite cooldown is NOT expressed here: it belongs to the send
+   * transition, which is the only thing that can enforce it.
+   */
+  canContact: boolean;
+  /** Why `canContact` is false. Null when outreach is allowed. */
+  blockReason: OutreachBlockReason | null;
 }
 
 export interface OutreachHistoryRow extends Lead {

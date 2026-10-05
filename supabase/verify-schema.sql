@@ -41,7 +41,9 @@ do $$
 declare
   t text;
 begin
-  foreach t in array array['leads', 'outreach_messages', 'action_tokens', 'followup_notifications']
+  foreach t in array array[
+    'leads', 'outreach_messages', 'action_tokens', 'followup_notifications', 'historical_outreach'
+  ]
   loop
     if not exists (
       select 1 from pg_class c
@@ -93,6 +95,12 @@ begin
     'outreach_messages_sequence_number_nonnegative',
     'outreach_messages_parent_is_followup',
     'outreach_messages_parent_message_id_fkey',
+    -- historical outreach identity (migration 20260101000600)
+    'historical_outreach_email_normalized_key',
+    'historical_outreach_email_not_blank',
+    'historical_outreach_contact_count_positive',
+    'historical_outreach_window_ordered',
+    'historical_outreach_source_check',
     -- token model
     'action_tokens_token_hash_key',
     'action_tokens_purpose_check',
@@ -181,6 +189,9 @@ begin
     'outreach_messages_sequence_idx',
     'outreach_messages_parent_idx',
     'outreach_messages_provider_id_idx',
+    -- historical outreach lookups (migration 20260101000600)
+    'historical_outreach_email_normalized_key',
+    'historical_outreach_domain_idx',
     'action_tokens_token_hash_key',
     'action_tokens_expires_at_idx',
     'action_tokens_import_idx',
@@ -207,7 +218,10 @@ begin
   for p in
     select tablename, policyname from pg_policies
     where schemaname = 'public'
-      and tablename in ('leads', 'outreach_messages', 'action_tokens', 'followup_notifications')
+      and tablename in (
+        'leads', 'outreach_messages', 'action_tokens',
+        'followup_notifications', 'historical_outreach'
+      )
   loop
     raise exception
       'UNEXPECTED RLS POLICY %.% on public.% — PEPA is service-role only and needs no policies',
@@ -232,6 +246,7 @@ begin
         'outreach_messages',
         'action_tokens',
         'followup_notifications',
+        'historical_outreach',
         'outreach_overview',
         'due_followups'
       )
@@ -255,6 +270,136 @@ begin
 
   if digest_type is distinct from 'text' then
     raise exception 'action_tokens.token_hash must be unbounded text, found %', coalesce(digest_type, 'nothing');
+  end if;
+end
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 7. Historical outreach: the identity columns the guard reads are GENERATED
+-- ---------------------------------------------------------------------------
+-- If `email_normalized`, `domain_normalized` or `is_shared_provider` were
+-- ordinary columns, the application could write a spelling that the guard's own
+-- lookup would never find -- an address stored as `Info@Bistro.CZ` would stop
+-- blocking `info@bistro.cz`. Generation is what keeps the TypeScript
+-- normalization and the stored identity in agreement.
+do $$
+declare
+  col text;
+  generation text;
+begin
+  foreach col in array array['email_normalized', 'domain_normalized', 'is_shared_provider']
+  loop
+    select c.is_generated into generation
+      from pg_attribute a
+      join pg_class cls on cls.oid = a.attrelid
+      join pg_namespace n on n.oid = cls.relnamespace
+      join information_schema.columns c
+        on c.table_schema = n.nspname and c.table_name = cls.relname and c.column_name = a.attname
+     where n.nspname = 'public'
+       and cls.relname = 'historical_outreach'
+       and a.attname = col
+       and a.attnum > 0
+       and not a.attisdropped;
+
+    if generation is distinct from 'ALWAYS' then
+      raise exception
+        'historical_outreach.% must be a GENERATED ALWAYS column, found % -- apply 20260101000600_historical_outreach.sql',
+        col, coalesce(generation, 'nothing');
+    end if;
+  end loop;
+end
+$$;
+
+-- The SQL mirrors must exist, because they are what the generated columns
+-- evaluate. Naming them here turns a confusing error into a precise one.
+do $$
+declare
+  fn text;
+  arity int;
+begin
+  foreach fn in array array['normalize_domain', 'is_shared_email_provider']
+  loop
+    arity := 1;
+    if not exists (
+      select 1 from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname = fn and p.pronargs = arity
+    ) then
+      raise exception 'MISSING FUNCTION: public.%(text) -- apply 20260101000600_historical_outreach.sql', fn;
+    end if;
+  end loop;
+end
+$$;
+
+-- SQL/TypeScript parity. `normalize_domain` and
+-- `is_shared_email_provider` are mirrors of `src/lib/outreach/domain.ts`. A
+-- drift between them is invisible in every other check here: the app would
+-- decide with one function and the database would store with another, so an
+-- identity could be blocked in one layer and missed in the other. These are the
+-- exact spellings pinned by src/lib/outreach/domain.test.ts.
+do $$
+declare
+  mismatched text;
+begin
+  select string_agg(input, ', ') into mismatched
+    from unnest(array[
+      '  Manihi.cz.  ',
+      'HTTPS://WWW.Manihi.CZ/menu',
+      '//www.Manihi.cz',
+      'Manihi.cz:8443',
+      'WWW.MANIHI.CZ',
+      '<https://manihi.cz>'
+    ]) as input
+   where public.normalize_domain(input) is distinct from 'manihi.cz';
+
+  if mismatched is not null then
+    raise exception
+      'public.normalize_domain disagrees with src/lib/outreach/domain.ts for: %', mismatched;
+  end if;
+
+  -- A value that is not a hostname must normalise to nothing, or a typo would
+  -- become a phantom identity that blocks strangers.
+  if public.normalize_domain('bistro') is not null then
+    raise exception 'public.normalize_domain accepted a single-label value';
+  end if;
+  if public.normalize_domain('bistro..cz') is not null then
+    raise exception 'public.normalize_domain accepted an empty label';
+  end if;
+  if public.normalize_domain('büstro.cz') is not null then
+    raise exception 'public.normalize_domain accepted a non-ASCII label';
+  end if;
+
+  -- Mailboxes are not companies, and companies are not mailboxes.
+  if public.is_shared_email_provider('seznam.cz') is not true then
+    raise exception 'public.is_shared_email_provider does not recognise seznam.cz';
+  end if;
+  if public.is_shared_email_provider('seznamfirmy.cz') is not false then
+    raise exception 'public.is_shared_email_provider wrongly treats seznamfirmy.cz as a provider';
+  end if;
+end
+$$;
+
+-- Every imported row must be labelled, and every provider domain must be
+-- flagged. A row with another source would mean the column had started
+-- meaning something the importer does not control; an unflagged gmail.com row
+-- would mean the SQL mirror and src/lib/outreach/domain.ts had drifted apart,
+-- which is exactly the drift that would let one business block another.
+do $$
+begin
+  if exists (
+    select 1 from public.historical_outreach where source <> 'historical_import'
+  ) then
+    raise exception
+      'historical_outreach contains a row whose source is not ''historical_import''';
+  end if;
+
+  if exists (
+    select 1 from public.historical_outreach
+    where domain_normalized in ('gmail.com', 'seznam.cz', 'outlook.com')
+      and is_shared_provider is not true
+  ) then
+    raise exception
+      'public.is_shared_email_provider does not match src/lib/outreach/domain.ts -- shared providers are not flagged';
   end if;
 end
 $$;

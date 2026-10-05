@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "import:historical-outreach": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/import-historical-outreach.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",
