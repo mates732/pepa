@@ -25,6 +25,7 @@ import { OutreachHistory } from "@/components/outreach-history";
 import { OutreachStats } from "@/components/outreach-stats";
 import { OutreachStreaks } from "@/components/outreach-streaks";
 import { PasteImport } from "@/components/paste-import";
+import { BulkImport } from "@/components/bulk-import";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { composerValuesFromSavedMessage } from "@/lib/outreach/composer-values";
 import {
@@ -888,6 +889,25 @@ export function Dashboard({
         }}
         focusSignal={focusSignal}
         disabled={false}
+      />
+
+      {/*
+        Paste Emails sits directly under the single-lead paste bar because it is
+        the same job for many messages at once. It creates DRAFTS only, with the
+        operator's text unchanged — composing in Gmail and recording the send stay
+        the explicit per-draft actions in the composer, where the quality gate and
+        the historical hard stop enforce themselves.
+      */}
+      <BulkImport
+        onImported={({ created, existing, skipped }) => {
+          setNotice({
+            kind: "info",
+            text:
+              `${created} draft${created === 1 ? "" : "s"} saved` +
+              `${existing > 0 ? `, ${existing} already existed` : ""}` +
+              `${skipped > 0 ? `, ${skipped} skipped` : ""}. Open each one to send it yourself — nothing was sent.`,
+          });
+        }}
       />
 
       {hasContent ? (
