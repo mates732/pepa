@@ -6,6 +6,7 @@ import {
   nextFollowUpDueAt,
   toUtcIso,
 } from "@/lib/followup/cadence";
+import { getFollowUpCadence } from "@/lib/followup/cadence-config";
 import { buildDeepLink } from "@/lib/config/base-url";
 import { getNotificationChannel } from "@/lib/providers/notifications";
 import type { ActionNotification, DueFollowUp, FollowUpService } from "@/lib/providers/types";
@@ -443,12 +444,16 @@ export async function processDueFollowUps(options: ProcessOptions = {}): Promise
   // registration module — which is exactly what a bare cron route does.
   const channel = options.notifier ?? getNotificationChannel();
   const send = channel?.sendActionNotification?.bind(channel);
+  // Resolved once per run: the cadence is operator configuration, not
+  // per-lead state, so every entry in the batch is judged identically.
+  const cadence = getFollowUpCadence();
 
   const due = await listDueFollowUps(options.limit ?? DEFAULT_BATCH_LIMIT);
 
   for (const entry of due) {
-    // Past follow-up #3 PEPA stops chasing, even if next_followup_at is still set.
-    if (!isWithinCadence(entry.attempt)) {
+    // Past the last configured follow-up PEPA stops chasing, even if
+    // next_followup_at is still set.
+    if (!isWithinCadence(entry.attempt, cadence)) {
       outcome.skippedMaxCadence += 1;
       await clearFollowUpSchedule(entry.lead.id).catch(() => undefined);
       continue;
@@ -578,7 +583,8 @@ export async function markFollowUpSent(input: {
   const sentAt = input.sentAt ?? new Date();
   const attempt = (await currentFollowUpCount(input.leadId)) + 1;
 
-  const due = nextFollowUpDueAt(sentAt, attempt);
+  // Business days after the actual send, in the configured cadence.
+  const due = nextFollowUpDueAt(sentAt, attempt, getFollowUpCadence());
   const { error } = await supabase
     .from("leads")
     .update({
