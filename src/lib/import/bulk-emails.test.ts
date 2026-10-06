@@ -62,6 +62,27 @@ rád bych vám ukázal web.
 
 S pozdravem`;
 
+/** Format D — a machine-generated batch of `--- LEAD NN ---` blocks. */
+const FORMAT_D = `--- LEAD 01 ---
+To: a@test.cz
+Subject: A
+Body:
+Body A
+
+Follow-up Subject: Follow A
+Follow-up Body:
+Follow body A
+
+--- LEAD 02 ---
+To: b@test.cz
+Subject: B
+Body:
+Body B
+
+Follow-up Subject: Follow B
+Follow-up Body:
+Follow body B`;
+
 function twentyEmails(): string {
   return Array.from(
     { length: 20 },
@@ -346,5 +367,211 @@ describe("parseBulkEmails — TEST 9: one malformed block loses nothing else", (
     const { candidates, truncated } = parseBulkEmails(many);
     expect(candidates).toHaveLength(MAX_BULK_EMAILS);
     expect(truncated).toBe(5);
+  });
+});
+
+describe("parseBulkEmails — format D: LEAD blocks with follow-ups", () => {
+  it("splits on the LEAD markers and keeps every body clean", () => {
+    const { candidates, splitBy } = parseBulkEmails(FORMAT_D);
+
+    expect(splitBy).toBe("recipient_header");
+    // Two leads — one card each, the follow-up carried on the card.
+    expect(candidates).toHaveLength(2);
+    expect(candidates.map((c) => c.recipient)).toEqual(["a@test.cz", "b@test.cz"]);
+    // No marker and no follow-up text leaks into a first outreach.
+    expect(candidates.every((c) => !String(c.body).includes("LEAD"))).toBe(true);
+    expect(candidates.every((c) => !String(c.body).includes("Follow"))).toBe(true);
+    // The follow-up is parsed as part of the SAME lead.
+    expect(candidates[0]!.followUp).toEqual({
+      subject: "Follow A",
+      body: "Follow body A",
+    });
+    expect(candidates[1]!.followUp).toEqual({
+      subject: "Follow B",
+      body: "Follow body B",
+    });
+  });
+
+  it("reads the first outreach of each block as the importable row", () => {
+    const { candidates } = parseBulkEmails(FORMAT_D);
+
+    expect(candidates[0]!.index).toBe(1);
+    expect(candidates[0]!.status).toBe("parsed");
+    expect(candidates[0]!.subject).toBe("A");
+    expect(candidates[0]!.body).toBe("Body A");
+    // The operator is told where the follow-up went.
+    expect(candidates[0]!.warnings.join(" ")).toContain("follow-up");
+  });
+
+  it("carries the follow-up on the same candidate, not on a card of its own", () => {
+    const { candidates } = parseBulkEmails(FORMAT_D);
+
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0]!.index).toBe(1);
+    expect(candidates[0]!.followUp).toEqual({
+      subject: "Follow A",
+      body: "Follow body A",
+    });
+    expect(candidates[0]!.duplicateOf).toBeNull();
+  });
+
+  it("keeps a block without a follow-up to a single row", () => {
+    const { candidates } = parseBulkEmails(
+      "--- LEAD 01 ---\nTo: a@test.cz\nSubject: A\nBody:\nBody A",
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.status).toBe("parsed");
+    expect(candidates[0]!.body).toBe("Body A");
+    expect(candidates[0]!.followUp).toBeNull();
+    expect(candidates[0]!.warnings).toEqual([]);
+  });
+
+  it("drops text typed before the first marker", () => {
+    const { candidates } = parseBulkEmails(
+      "Here are the leads:\n\n--- LEAD 01 ---\nTo: a@test.cz\nSubject: A\nBody:\nBody A",
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.body).toBe("Body A");
+  });
+
+  it("strips a rule the operator typed between blocks", () => {
+    const { candidates } = parseBulkEmails(
+      "--- LEAD 01 ---\nTo: a@test.cz\nSubject: A\nBody:\nBody A\n\n---\n\n--- LEAD 02 ---\nTo: b@test.cz\nSubject: B\nBody:\nBody B",
+    );
+
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0]!.body).toBe("Body A");
+    expect(candidates[1]!.body).toBe("Body B");
+  });
+
+  it("reads a follow-up that has a body but no subject", () => {
+    const { candidates } = parseBulkEmails(
+      "--- LEAD 01 ---\nTo: a@test.cz\nSubject: A\nBody:\nBody A\n\nFollow-up Body:\nFollow body A",
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.followUp).toEqual({ subject: null, body: "Follow body A" });
+  });
+
+  it("reads other decoration around a marker the same way", () => {
+    const { candidates } = parseBulkEmails(
+      "*** LEAD 01 ***\nTo: a@test.cz\nSubject: A\nBody:\nBody A",
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.body).toBe("Body A");
+  });
+
+  it("accepts single-digit lead numbers", () => {
+    const { candidates } = parseBulkEmails(
+      "--- LEAD 1 ---\nTo: a@test.cz\nSubject: A\nBody:\nBody A\n\n--- LEAD 2 ---\nTo: b@test.cz\nSubject: B\nBody:\nBody B",
+    );
+
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0]!.body).toBe("Body A");
+    expect(candidates[1]!.body).toBe("Body B");
+  });
+});
+
+/**
+ * The exact batch from the bug report: a pasted run of `--- LEAD NN ---
+ * ` blocks, each with a first outreach and a follow-up. Ten blocks
+ * must come out as ten cards — the whole failure was one card.
+ */
+function tenLeadBatch(): string {
+  return Array.from(
+    { length: 10 },
+    (_, i) =>
+      `--- LEAD ${String(i + 1).padStart(2, "0")} ---\nTo: lead${i + 1}@example.com\nSubject: Subject ${i + 1}\nBody:\nBody ${i + 1}\n\nFollow-up Subject: Follow-up ${i + 1}\nFollow-up Body:\nFollow-up body ${i + 1}`,
+  ).join("\n\n");
+}
+
+describe("parseBulkEmails — regression: pasted LEAD batch", () => {
+  const THREE_LEADS = `--- LEAD 01 ---
+To: first@example.com
+Subject: Subject 1
+Body:
+Body 1
+
+Follow-up Subject: Follow-up 1
+Follow-up Body:
+Follow-up body 1
+
+--- LEAD 02 ---
+To: second@example.com
+Subject: Subject 2
+Body:
+Body 2
+
+Follow-up Subject: Follow-up 2
+Follow-up Body:
+Follow-up body 2
+
+--- LEAD 03 ---
+To: third@example.com
+Subject: Subject 3
+Body:
+Body 3
+
+Follow-up Subject: Follow-up 3
+Follow-up Body:
+Follow-up body 3`;
+
+  it("splits the batch into one card per lead", () => {
+    const result = parseBulkEmails(THREE_LEADS).candidates;
+
+    expect(result).toHaveLength(3);
+    expect(result[0]!.recipient).toBe("first@example.com");
+    expect(result[1]!.recipient).toBe("second@example.com");
+    expect(result[2]!.recipient).toBe("third@example.com");
+  });
+
+  it("keeps every marker out of every body", () => {
+    const result = parseBulkEmails(THREE_LEADS).candidates;
+
+    expect(result[0]!.body).not.toContain("--- LEAD 02 ---");
+    expect(result[1]!.body).not.toContain("--- LEAD 03 ---");
+    expect(result.every((c) => !String(c.body).includes("--- LEAD"))).toBe(
+      true,
+    );
+  });
+
+  it("reads each lead's own fields, and its follow-up with it", () => {
+    const result = parseBulkEmails(THREE_LEADS).candidates;
+
+    expect(result[0]!.subject).toBe("Subject 1");
+    expect(result[0]!.body).toBe("Body 1");
+    expect(result[0]!.followUp).toEqual({
+      subject: "Follow-up 1",
+      body: "Follow-up body 1",
+    });
+    expect(result[1]!.subject).toBe("Subject 2");
+    expect(result[1]!.body).toBe("Body 2");
+    expect(result[1]!.followUp).toEqual({
+      subject: "Follow-up 2",
+      body: "Follow-up body 2",
+    });
+    expect(result[2]!.subject).toBe("Subject 3");
+    expect(result[2]!.body).toBe("Body 3");
+    expect(result[2]!.followUp).toEqual({
+      subject: "Follow-up 3",
+      body: "Follow-up body 3",
+    });
+  });
+
+  it("returns exactly ten candidates for the ten-lead batch", () => {
+    const result = parseBulkEmails(tenLeadBatch());
+
+    // The debugging assertion: the pasted batch is ten cards, not one.
+    expect(result.candidates).toHaveLength(10);
+    expect(result.candidates.map((c) => c.recipient)).toEqual(
+      Array.from({ length: 10 }, (_, i) => `lead${i + 1}@example.com`),
+    );
+    expect(
+      result.candidates.every((c) => !String(c.body).includes("--- LEAD")),
+    ).toBe(true);
+    expect(result.candidates.every((c) => c.followUp !== null)).toBe(true);
   });
 });

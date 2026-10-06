@@ -19,7 +19,7 @@
  * horizontal rule carries no address, so it is only ever treated as a boundary
  * when there are no headers to go on.
  *
- * Three shapes are recognised, and the shapes are detected rather than declared
+ * Four shapes are recognised, and the shapes are detected rather than declared
  * so the operator never has to pick:
  *
  *   A   To: info@firma.cz
@@ -33,6 +33,9 @@
  *
  *   C   Copied mail-client blocks, which may carry `From:`/`Date:` chatter before
  *       the `To:` line, or quote previous replies with `>`.
+ *   D   `--- LEAD NN ---` blocks — machine-generated batches (ChatGPT's
+ *       structured output). Each block is one finished email plus an optional
+ *       follow-up under `Follow-up Subject:` / `Follow-up Body:` labels.
  *
  * ## Identity
  *
@@ -80,6 +83,14 @@ export interface BulkEmailCandidate {
   duplicateOf: number | null;
   /** Non-fatal notes from the field parser, e.g. an absent `Body:` label. */
   warnings: string[];
+  /**
+   * The block's follow-up, when it carries one — parsed as part of the
+   * SAME lead. One lead is one card: the follow-up is never a second
+   * candidate and never part of the primary body. A bulk paste imports
+   * only the first outreach; the follow-up is reported so the operator
+   * can draft it from the lead's detail page.
+   */
+  followUp: { subject: string | null; body: string | null } | null;
 }
 
 export interface BulkEmailParseResult {
@@ -116,6 +127,21 @@ function isRule(line: string): boolean {
   return RULE_LINE.test(line);
 }
 
+/**
+ * A `--- LEAD 01 ---` marker — the explicit block delimiter of a machine-
+ * generated batch.
+ *
+ * A bare rule is only a boundary when something that looks like an email
+ * follows it; a marker says "a new lead starts here" in so many words, so it
+ * is always a boundary. The decoration is drawn from the same set as
+ * `RULE_LINE`'s, so `*** LEAD 01 ***` reads the same as `--- LEAD 01 ---`.
+ */
+const LEAD_MARKER = /^\s*[-*_=~#]{2,}\s*LEAD\s+\d+\s*[-*_=~#]{2,}\s*$/i;
+
+function isLeadMarker(line: string): boolean {
+  return LEAD_MARKER.test(line);
+}
+
 /* -------------------------------------------------------------------------- */
 /* block detection                                                             */
 /* -------------------------------------------------------------------------- */
@@ -125,11 +151,12 @@ function isRule(line: string): boolean {
  *
  * Two passes, and the order is the whole design:
  *
- *  1. **Recipient headers.** Any line whose label is a recipient word and whose
- *     value is a valid address. This is the only rule that can be trusted on its
- *     own, because it is the only one that says something about who the email is
- *     for. Two or more of them means the paste is unambiguous, so `---` inside a
- *     body is never consulted as a boundary.
+ *  1. **Recipient headers and `--- LEAD NN ---` markers.** Any line whose
+ *     label is a recipient word and whose value is a valid address, plus the
+ *     explicit LEAD delimiter. These are the only lines that can be trusted on
+ *     their own, because they are the only ones that say something about who
+ *     the email is for. Two or more of them means the paste is unambiguous, so
+ *     `---` inside a body is never consulted as a boundary.
  *  2. **Rules, then blank gaps.** Only when the block carries no usable headers
  *     to go on. Shape B has no addresses to find, and splitting on structure is
  *     the only signal left.
@@ -154,6 +181,7 @@ function isRule(line: string): boolean {
  */
 function looksLikeEmailOpening(line: string): boolean {
   if (recipientFromHeaderLine(line)) return true;
+  if (isLeadMarker(line)) return true;
   const label = labelOf(line);
   if (label && NOISE_LABELS.has(label.name)) return false;
   if (label && (SUBJECT_LABELS.has(label.name) || BODY_LABELS.has(label.name) || RECIPIENT_LABELS.has(label.name))) {
@@ -165,9 +193,11 @@ function looksLikeEmailOpening(line: string): boolean {
 
 function findBoundaries(lines: string[]): { starts: number[]; splitBy: BulkEmailParseResult["splitBy"] } {
   const headers: number[] = [];
+  const markers: number[] = [];
   const rules: number[] = [];
   for (let i = 0; i < lines.length; i += 1) {
     if (recipientFromHeaderLine(lines[i]!)) headers.push(i);
+    else if (isLeadMarker(lines[i]!)) markers.push(i);
     else if (isRule(lines[i]!)) rules.push(i);
   }
 
@@ -180,14 +210,25 @@ function findBoundaries(lines: string[]): { starts: number[]; splitBy: BulkEmail
     return next < lines.length && looksLikeEmailOpening(lines[next]!);
   });
 
-  if (headers.length >= 1) {
-    const starts = new Set<number>([...headers, ...separatingRules]);
+  // Shape A/C (recipient headers present) or shape D (LEAD markers
+  // present). Headers are trusted absolutely, and a LEAD marker is an
+  // explicit delimiter that opens a block on its own word — unlike a bare
+  // rule, it needs nothing to follow it. Rules join only when an email
+  // opening (a header or a marker) follows them; every other rule and
+  // blank line stays body content.
+  if (headers.length >= 1 || markers.length >= 1) {
+    const starts = new Set<number>([...headers, ...markers, ...separatingRules]);
     // Material typed before the first header belongs to no email — "here are
     // the twenty emails:" and the like. Keeping it out of every block is what
     // stops it from being prepended to somebody's message body.
     return {
       starts: [...starts].sort((a, b) => a - b),
-      splitBy: starts.size > 1 ? "recipient_header" : "single",
+      splitBy:
+        starts.size > 1
+          ? headers.length >= 1
+            ? "recipient_header"
+            : "separator"
+          : "single",
     };
   }
 
@@ -207,11 +248,12 @@ function findBoundaries(lines: string[]): { starts: number[]; splitBy: BulkEmail
 /**
  * Cut the lines into blocks at the boundaries.
  *
- * Rule lines are STRIPPED from both ends of every block. A rule the operator
- * typed as a separator belongs to neither email, and leaving it on the end of the
- * previous body would put `---` at the foot of a real message. A rule in the
- * MIDDLE of a block is body text and is left exactly where it is — that is the
- * case where a `---` genuinely separates paragraphs in a letter.
+ * Rule lines and LEAD markers are STRIPPED from the start of every block, and
+ * trailing rules from its end. A rule or marker the paste used as a separator
+ * belongs to neither email, and leaving it on the end of the previous body would
+ * put `---` at the foot of a real message. A rule in the MIDDLE of a block is
+ * body text and is left exactly where it is — that is the case where a `---`
+ * genuinely separates paragraphs in a letter.
  */
 function toBlocks(
   lines: string[],
@@ -238,7 +280,9 @@ function toBlocks(
     const to = i + 1 < starts.length ? starts[i + 1]! : lines.length;
     const slice = lines.slice(from, to);
 
-    while (slice.length > 0 && isRule(slice[0]!)) slice.shift();
+    // The boundary itself is the first line of the block; strip the
+    // delimiter (a separator rule or a LEAD marker counted as a boundary).
+    while (slice.length > 0 && (isRule(slice[0]!) || isLeadMarker(slice[0]!))) slice.shift();
     blocks.push(trimTrailingRuleChatter(slice));
   }
 
@@ -322,6 +366,17 @@ const BODY_LABELS = new Set([
  */
 const NOISE_LABELS = new Set(["from", "od", "date", "datum", "sent", "cc", "bcc", "reply-to"]);
 
+/**
+ * The follow-up half of a `--- LEAD NN ---` block.
+ *
+ * A batch export writes each lead's follow-up under its own labels, after the
+ * first email's body. Recognising them as labels — instead of letting them
+ * read as body text — is what keeps the follow-up out of the first email's
+ * draft, where it would be sent to the wrong person at the wrong time.
+ */
+const FOLLOWUP_SUBJECT_LABELS = new Set(["follow-up subject", "followup subject"]);
+const FOLLOWUP_BODY_LABELS = new Set(["follow-up body", "followup body"]);
+
 interface Extracted {
   recipient: string | null;
   recipientRaw: string | null;
@@ -330,6 +385,8 @@ interface Extracted {
   warnings: string[];
   /** The address on a bare `Name <addr>` line, used when there is no label. */
   bareAddress: string | null;
+  /** The block's follow-up section, when it carries one. */
+  followUp: { subject: string | null; body: string } | null;
 }
 
 function labelOf(line: string): { name: string; value: string } | null {
@@ -365,6 +422,9 @@ function extract(block: string[]): Extracted {
   let subject: string | null = null;
   let bareAddress: string | null = null;
   let current: "recipient" | "subject" | "body" | null = null;
+  let inFollowUp = false;
+  let followUpSubject: string | null = null;
+  const followUpBody: string[] = [];
 
   for (const line of block) {
     const label = labelOf(line);
@@ -388,6 +448,26 @@ function extract(block: string[]): Extracted {
     if (label && BODY_LABELS.has(label.name)) {
       current = "body";
       if (label.value.trim()) bodyLines.push(label.value);
+      continue;
+    }
+
+    if (label && FOLLOWUP_SUBJECT_LABELS.has(label.name)) {
+      inFollowUp = true;
+      if (label.value.trim()) followUpSubject = label.value.trim();
+      continue;
+    }
+
+    if (label && FOLLOWUP_BODY_LABELS.has(label.name)) {
+      inFollowUp = true;
+      if (label.value.trim()) followUpBody.push(label.value);
+      continue;
+    }
+
+    // Once the follow-up section opens, the rest of the block is the
+    // follow-up's own text — including any further unrecognised labels.
+    if (inFollowUp) {
+      if (label && NOISE_LABELS.has(label.name)) continue;
+      followUpBody.push(line);
       continue;
     }
 
@@ -445,7 +525,15 @@ function extract(block: string[]): Extracted {
     warnings.push(`Could not read an email address from "${recipientRaw}".`);
   }
 
-  return { recipient, recipientRaw, subject, body, warnings, bareAddress };
+  return {
+    recipient,
+    recipientRaw,
+    subject,
+    body,
+    warnings,
+    bareAddress,
+    followUp: inFollowUp ? { subject: followUpSubject, body: followUpBody.join("\n") } : null,
+  };
 }
 
 /**
@@ -484,7 +572,10 @@ function unquote(value: string): string {
  *
  * Rows repeating a recipient are folded with `duplicate` rather than dropped, so
  * the preview can show the operator exactly what happened to their input instead
- * of quietly returning fewer emails than they pasted.
+ * of quietly returning fewer emails than they pasted. A `--- LEAD NN ---` block
+ * that carries a follow-up yields ONE candidate: the first outreach — the one a
+ * bulk import creates — with the follow-up carried on it as a field, because one
+ * lead is one card and the follow-up is not part of the first email's text.
  */
 export function parseBulkEmails(text: string): BulkEmailParseResult {
   const lines = toLines(text);
@@ -526,6 +617,8 @@ export function parseBulkEmails(text: string): BulkEmailParseResult {
       warnings.push("No body text found in this block.");
     }
 
+    const index = i + 1;
+
     if (recipient && status === "parsed") {
       const first = seen.get(recipient);
       if (first !== undefined) {
@@ -533,13 +626,28 @@ export function parseBulkEmails(text: string): BulkEmailParseResult {
         duplicateOf = first;
         reason = `Same recipient as email ${first} — imported once.`;
       } else {
-        seen.set(recipient, i + 1);
+        seen.set(recipient, index);
       }
+    }
+
+    // The follow-up belongs to this lead, not to a card of its own. Tidied
+    // like any other field, and empty when the block carries no follow-up.
+    const followUp =
+      found.followUp && (found.followUp.subject !== null || found.followUp.body.trim() !== "")
+        ? {
+            subject: found.followUp.subject ? tidy(found.followUp.subject) : null,
+            body: found.followUp.body.trim() === "" ? null : unquote(tidy(found.followUp.body)),
+          }
+        : null;
+    if (followUp) {
+      warnings.push(
+        "A follow-up was also found in this block — it is carried on this card as the follow-up field, and it is not part of this draft.",
+      );
     }
 
     if (candidates.length < MAX_BULK_EMAILS) {
       candidates.push({
-        index: i + 1,
+        index,
         recipient,
         subject,
         body: body === "" ? null : body,
@@ -547,6 +655,7 @@ export function parseBulkEmails(text: string): BulkEmailParseResult {
         reason,
         duplicateOf,
         warnings,
+        followUp,
       });
     } else {
       truncated += 1;
