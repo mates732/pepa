@@ -10,11 +10,11 @@ import {
   loadFollowUpDetail,
   loadInitialOutreachDetail,
   loadFollowUpWorkspace,
+  loadHistoryRows,
   openOutreachInGmail,
   recordOutreachSent,
   saveDraft,
 } from "@/app/actions";
-import { listOutreachHistory } from "@/lib/services/outreach-service";
 import { EmailComposer, type ComposerValues } from "@/components/email-composer";
 import { FollowUpDetail } from "@/components/follow-up-detail";
 import { FollowUpWorkspace } from "@/components/follow-up-workspace";
@@ -674,13 +674,14 @@ export function Dashboard({
       // stale unsent / subject / body after a successful save. The initial render
       // was produced once by the server; edits happen client-side and write back
       // to the database, so the in-memory rows can drift from what the database
-      // now says about this lead.
-      const refreshed = await listOutreachHistory();
+      // now says about this lead. The read itself runs as a server action — a
+      // client component may not import the Postgres service directly.
+      const refreshed = await loadHistoryRows();
       if (refreshed.ok) {
         setRows((current) =>
           current.map((row) => {
             if (row.id !== result.lead.id) return row;
-            const match = refreshed.data?.find((r) => r.id === row.id);
+            const match = refreshed.rows.find((r) => r.id === row.id);
             return match ?? row;
           }),
         );

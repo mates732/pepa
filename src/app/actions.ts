@@ -10,7 +10,11 @@ import {
   deleteLead as deleteLeadService,
   deleteUnsentLead as deleteUnsentLeadService,
 } from "@/lib/services/lead-service";
-import { createDraft, recordOutreachSent as recordOutreachSentService } from "@/lib/services/outreach-service";
+import {
+  createDraft,
+  listOutreachHistory,
+  recordOutreachSent as recordOutreachSentService,
+} from "@/lib/services/outreach-service";
 import { evaluateDraftQualityGate, type GateEvaluation } from "@/lib/services/outreach-quality-gate";
 import {
   getFollowUpDetail,
@@ -19,7 +23,12 @@ import {
   type FollowUpListItem,
 } from "@/lib/services/follow-up-sequence-service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
-import type { DuplicateCheckResult, Lead, OutreachMessage } from "@/lib/types";
+import type {
+  DuplicateCheckResult,
+  Lead,
+  OutreachHistoryRow,
+  OutreachMessage,
+} from "@/lib/types";
 
 /**
  * IMPORTANT: both actions below are unauthenticated HTTP entry points. Each one
@@ -451,6 +460,38 @@ export async function deleteUnsentLead(input: {
   } catch (error) {
     return failure(
       error instanceof Error ? error.message : "The lead could not be deleted.",
+    );
+  }
+}
+
+export type HistoryRowsResult =
+  | { ok: true; rows: OutreachHistoryRow[] }
+  | ActionFailure;
+
+/**
+ * Re-read the outreach history rows, server-side.
+ *
+ * The dashboard is a client component and must NOT import the service that
+ * reads Postgres: that module carries `server-only` and would pull it into the
+ * browser bundle (exactly what a production build refuses). This action is the
+ * only way the client can refresh the table — after a draft is saved, the
+ * edited lead's row is re-read so the table cannot keep showing what the page
+ * rendered minutes ago.
+ */
+export async function loadHistoryRows(): Promise<HistoryRowsResult> {
+  await requireAuthenticatedUser();
+
+  try {
+    const result = await listOutreachHistory();
+    if (!result.ok) {
+      return failure(result.error ?? "Could not read the outreach history.");
+    }
+    return { ok: true, rows: result.data ?? [] };
+  } catch (error) {
+    return failure(
+      error instanceof Error
+        ? error.message
+        : "Could not read the outreach history.",
     );
   }
 }
