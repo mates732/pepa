@@ -575,3 +575,99 @@ Follow-up body 3`;
     expect(result.candidates.every((c) => c.followUp !== null)).toBe(true);
   });
 });
+
+describe("parseBulkEmails — regression: follow-up labels are hard field boundaries", () => {
+  /** The exact example from the bug report. */
+  const BUG_REPORT_EXAMPLE = `--- LEAD 01 ---
+To: test@example.com
+Subject: Test subject
+Body:
+Hello,
+
+this is the primary email.
+
+Hezký den,
+Matyáš
+recepce.tech
+
+Follow-up Subject: Navazuji na nabídku
+Follow-up Body:
+Dobrý den,
+
+jen navazuji na svůj předchozí e-mail.
+
+Hezký den,
+Matyáš
+recepce.tech`;
+
+  it("stops the primary body at Follow-up Subject: and reads both halves", () => {
+    const { candidates } = parseBulkEmails(BUG_REPORT_EXAMPLE);
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.recipient).toBe("test@example.com");
+    expect(candidates[0]!.subject).toBe("Test subject");
+    expect(candidates[0]!.body).toBe(
+      "Hello,\n\nthis is the primary email.\n\nHezký den,\nMatyáš\nrecepce.tech",
+    );
+    expect(candidates[0]!.followUp).toEqual({
+      subject: "Navazuji na nabídku",
+      body: "Dobrý den,\n\njen navazuji na svůj předchozí e-mail.\n\nHezký den,\nMatyáš\nrecepce.tech",
+    });
+    // The labels are boundaries — never content of the primary body.
+    expect(candidates[0]!.body).not.toContain("Follow-up Subject:");
+    expect(candidates[0]!.body).not.toContain("Follow-up Body:");
+    // Nor does the follow-up subject swallow the follow-up body label.
+    expect(candidates[0]!.followUp!.subject).not.toContain(
+      "Follow-up Body:",
+    );
+  });
+
+  it("recognises the follow-up labels however they are spelled", () => {
+    const spellings: Array<[string, string]> = [
+      ["Follow-up Subject:", "Follow-up Body:"],
+      ["Follow Up Subject:", "Follow Up Body:"],
+      ["Followup Subject:", "Followup Body:"],
+      ["Follow-up-subject:", "Follow-up-body:"],
+      ["FOLLOW UP SUBJECT:", "FOLLOW UP BODY:"],
+    ];
+
+    for (const [subjectLabel, bodyLabel] of spellings) {
+      const { candidates } = parseBulkEmails(
+        `--- LEAD 01 ---\nTo: a@test.cz\nSubject: A\nBody:\nBody A\n\n${subjectLabel} Follow A\n${bodyLabel}\nFollow body A`,
+      );
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]!.body).toBe("Body A");
+      expect(candidates[0]!.followUp).toEqual({
+        subject: "Follow A",
+        body: "Follow body A",
+      });
+    }
+  });
+
+  it("reads the full ten-lead batch: ten cards, clean bodies, own follow-ups", () => {
+    const result = parseBulkEmails(tenLeadBatch());
+
+    expect(result.candidates).toHaveLength(10);
+    for (let i = 0; i < 10; i += 1) {
+      const card = result.candidates[i]!;
+      expect(card.recipient).toBe(`lead${i + 1}@example.com`);
+      expect(card.subject).toBe(`Subject ${i + 1}`);
+      // The primary body is exactly the first outreach — the
+      // follow-up labels never appear in it.
+      expect(card.body).toBe(`Body ${i + 1}`);
+      expect(card.body).not.toContain("Follow-up Subject");
+      expect(card.body).not.toContain("Follow-up Body");
+      // The follow-up is this lead's own, not another lead's.
+      expect(card.followUp).toEqual({
+        subject: `Follow-up ${i + 1}`,
+        body: `Follow-up body ${i + 1}`,
+      });
+      expect(card.status).toBe("parsed");
+    }
+    // No data leaks between leads: ten distinct recipients.
+    expect(new Set(result.candidates.map((c) => c.recipient))).toHaveLength(
+      10,
+    );
+  });
+});

@@ -373,9 +373,16 @@ const NOISE_LABELS = new Set(["from", "od", "date", "datum", "sent", "cc", "bcc"
  * first email's body. Recognising them as labels — instead of letting them
  * read as body text — is what keeps the follow-up out of the first email's
  * draft, where it would be sent to the wrong person at the wrong time.
+ *
+ * The names are matched with hyphens, spaces and underscores folded away, so
+ * `Follow-up Subject:`, `Follow Up Subject:`, `Followup Subject:` and
+ * `FOLLOW-UP SUBJECT:` are all the same label. A machine batch is re-flowed
+ * by whatever generated or re-typed it, and where the follow-up starts must
+ * not depend on which dash the writer used: the label is a hard field
+ * boundary and must never be read as part of the primary body.
  */
-const FOLLOWUP_SUBJECT_LABELS = new Set(["follow-up subject", "followup subject"]);
-const FOLLOWUP_BODY_LABELS = new Set(["follow-up body", "followup body"]);
+const FOLLOWUP_SUBJECT_LABELS = new Set(["followupsubject"]);
+const FOLLOWUP_BODY_LABELS = new Set(["followupbody"]);
 
 interface Extracted {
   recipient: string | null;
@@ -429,6 +436,9 @@ function extract(block: string[]): Extracted {
   for (const line of block) {
     const label = labelOf(line);
     const inlineEmail = label ? normalizeEmail(label.value) : "";
+    // The follow-up labels are matched with word separators folded
+    // away — see FOLLOWUP_SUBJECT_LABELS above.
+    const squished = label ? label.name.replace(/[-\s_]/g, "") : "";
 
     if (label && RECIPIENT_LABELS.has(label.name)) {
       current = "recipient";
@@ -451,13 +461,13 @@ function extract(block: string[]): Extracted {
       continue;
     }
 
-    if (label && FOLLOWUP_SUBJECT_LABELS.has(label.name)) {
+    if (label && FOLLOWUP_SUBJECT_LABELS.has(squished)) {
       inFollowUp = true;
       if (label.value.trim()) followUpSubject = label.value.trim();
       continue;
     }
 
-    if (label && FOLLOWUP_BODY_LABELS.has(label.name)) {
+    if (label && FOLLOWUP_BODY_LABELS.has(squished)) {
       inFollowUp = true;
       if (label.value.trim()) followUpBody.push(label.value);
       continue;
