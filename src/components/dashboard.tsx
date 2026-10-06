@@ -6,7 +6,7 @@ import { loadOutreachActivity, loadOutreachActivityDetail } from "@/app/activity
 import {
   checkQualityGate,
   checkRecipient,
-  deleteUnsentLead,
+  deleteLeadFromHistory,
   loadFollowUpDetail,
   loadInitialOutreachDetail,
   loadFollowUpWorkspace,
@@ -14,6 +14,7 @@ import {
   recordOutreachSent,
   saveDraft,
 } from "@/app/actions";
+import { listOutreachHistory } from "@/lib/services/outreach-service";
 import { EmailComposer, type ComposerValues } from "@/components/email-composer";
 import { FollowUpDetail } from "@/components/follow-up-detail";
 import { FollowUpWorkspace } from "@/components/follow-up-workspace";
@@ -668,6 +669,22 @@ export function Dashboard({
       setNotice({ kind: "info", text: `Draft saved for ${result.lead.email}.` });
       void runDuplicateCheck(result.lead.email);
       setFocusSignal((n) => n + 1);
+
+      // Refresh the history table row for this lead so the client never keeps a
+      // stale unsent / subject / body after a successful save. The initial render
+      // was produced once by the server; edits happen client-side and write back
+      // to the database, so the in-memory rows can drift from what the database
+      // now says about this lead.
+      const refreshed = await listOutreachHistory();
+      if (refreshed.ok) {
+        setRows((current) =>
+          current.map((row) => {
+            if (row.id !== result.lead.id) return row;
+            const match = refreshed.data?.find((r) => r.id === row.id);
+            return match ?? row;
+          }),
+        );
+      }
     } finally {
       setSaving(false);
     }
@@ -816,11 +833,17 @@ export function Dashboard({
    * and the follow-up workspace is refreshed so a removed
    * follow-up cannot linger in it.
    */
+  /**
+   * "Smazat z historie" — remove the lead from history and the database,
+   * sent or unsent. The row leaves this table the moment the server
+   * confirms: the in-memory rows are filtered immediately, so the UI
+   * refreshes without a round trip through the server page.
+   */
   async function handleDeleteLead(row: OutreachHistoryRow) {
     setDeletingRowId(row.id);
     setNotice(null);
     try {
-      const result = await deleteUnsentLead({ leadId: row.id });
+      const result = await deleteLeadFromHistory({ leadId: row.id });
       if (!result.ok) {
         setNotice({ kind: "error", text: result.error });
         return;
@@ -828,7 +851,7 @@ export function Dashboard({
       setRows((current) => current.filter((lead) => lead.id !== row.id));
       setNotice({
         kind: "info",
-        text: `Deleted unsent lead ${row.email}.`,
+        text: `Deleted ${row.email} from history and the database.`,
       });
       void loadWorkspace();
     } finally {

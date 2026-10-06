@@ -214,6 +214,35 @@ export async function setLeadStatus(
 }
 
 /**
+ * The single-id cascade delete, shared by every deletion path.
+ *
+ * `leads` is the parent of every related row — `outreach_messages`,
+ * `followup_notifications` and `action_tokens` all cascade — so one
+ * DELETE naming a single id removes the lead together with its
+ * messages (drafts and sent) and its pending follow-ups, and nothing
+ * else: the WHERE clause names one id, so no other lead is touched.
+ *
+ * Carrying no status condition at all is deliberate: whether a lead
+ * MAY be deleted is decided by the caller — `deleteUnsentLead`
+ * refuses sent leads, `deleteLead` does not — but the blast radius
+ * is identical in both cases.
+ */
+async function deleteLeadRow(
+  leadId: string,
+): Promise<ServiceResult<{ deleted: boolean }>> {
+  const supabase = getSupabaseAdmin();
+  const { error: deleteError, count } = await supabase
+    .from("leads")
+    .delete({ count: "exact" })
+    .eq("id", leadId);
+
+  if (deleteError) return fail(deleteError.message);
+  if (!count) return fail("That lead does not exist.");
+
+  return { ok: true, error: null, data: { deleted: true } };
+}
+
+/**
  * Delete a lead that has never been sent to.
  *
  * Only a lead whose primary outreach — the sequence-0 message — is
@@ -222,11 +251,9 @@ export async function setLeadStatus(
  * history: its outreach history, send time, follow-up cadence and
  * follow-up history have to survive, so deletion is refused instead.
  *
- * `leads` is the parent of every related row — `outreach_messages`,
- * `followup_notifications` and `action_tokens` all cascade — so this
- * one delete removes the lead, its primary draft and every pending
- * follow-up in its sequence, and nothing else: the WHERE clause names
- * a single id, so no other lead is touched.
+ * The actual removal is the shared `deleteLeadRow` cascade — see its
+ * doc comment for why one delete removes the lead, its primary draft
+ * and every pending follow-up, and nothing else.
  */
 export async function deleteUnsentLead(
   leadId: string,
@@ -260,13 +287,24 @@ export async function deleteUnsentLead(
     );
   }
 
-  const { error: deleteError, count } = await supabase
-    .from("leads")
-    .delete({ count: "exact" })
-    .eq("id", leadId);
+  return deleteLeadRow(leadId);
+}
 
-  if (deleteError) return fail(deleteError.message);
-  if (!count) return fail("That lead does not exist.");
-
-  return { ok: true, error: null, data: { deleted: true } };
+/**
+ * Delete a lead from history and the database — sent or unsent.
+ *
+ * The server half of the history table's "Smazat z historie" control,
+ * which is shown on every row. Unlike `deleteUnsentLead` this path
+ * deliberately has NO sent guard: the operator has confirmed a dialog
+ * that says the removal is permanent, and the specification for this
+ * action explicitly includes sent leads.
+ *
+ * Everything else is the same shared cascade `deleteUnsentLead` uses
+ * after its guard, so both paths have one delete and one blast radius.
+ */
+export async function deleteLead(
+  leadId: string,
+): Promise<ServiceResult<{ deleted: boolean }>> {
+  if (!leadId) return fail("A lead is required.");
+  return deleteLeadRow(leadId);
 }

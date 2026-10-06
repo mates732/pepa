@@ -7,6 +7,7 @@ import { isValidEmail, normalizeEmail } from "@/lib/email";
 import { buildGmailComposeUrl } from "@/lib/outreach/gmail-compose";
 import {
   findLeadByEmail,
+  deleteLead as deleteLeadService,
   deleteUnsentLead as deleteUnsentLeadService,
 } from "@/lib/services/lead-service";
 import { createDraft, recordOutreachSent as recordOutreachSentService } from "@/lib/services/outreach-service";
@@ -441,6 +442,43 @@ export async function deleteUnsentLead(input: {
 
   try {
     const result = await deleteUnsentLeadService(leadId);
+    if (!result.ok || !result.data) {
+      return failure(result.error ?? "The lead could not be deleted.");
+    }
+
+    revalidatePath("/");
+    return { ok: true, deleted: true };
+  } catch (error) {
+    return failure(
+      error instanceof Error ? error.message : "The lead could not be deleted.",
+    );
+  }
+}
+
+/**
+ * Remove a lead from history and the database — sent or unsent.
+ *
+ * Server half of the history table's "Smazat z historie" control, which every
+ * row shows. Unlike `deleteUnsentLead` this action carries no sent guard: the
+ * operator has confirmed a dialog stating the removal is permanent, and the
+ * specification for this action explicitly includes sent leads.
+ *
+ * The cascade stays the database's — one single-id delete (shared with
+ * `deleteUnsentLead`) pulls the lead, its outreach messages (drafts and sent)
+ * and its pending follow-ups, and touches no other lead.
+ */
+export async function deleteLeadFromHistory(input: {
+  leadId: string;
+}): Promise<DeleteLeadResult> {
+  await requireAuthenticatedUser();
+
+  const leadId = String(input?.leadId ?? "");
+  if (!UUID_PATTERN.test(leadId)) {
+    return failure("That lead could not be identified.");
+  }
+
+  try {
+    const result = await deleteLeadService(leadId);
     if (!result.ok || !result.data) {
       return failure(result.error ?? "The lead could not be deleted.");
     }

@@ -23,6 +23,11 @@ import { createSessionToken, SESSION_COOKIE } from "@/lib/auth/token";
  *   listOutreachHistory / loadFollowUpWorkspace → the real dashboard reads
  *
  * Nothing here sends an email, and there is no code path that could.
+ *
+ * The "Smazat z historie" regressions at the bottom cover the unguarded
+ * `deleteLeadFromHistory` action: unsent, sent and isolation cases. The
+ * guarded `deleteUnsentLead` action keeps its own tests above (2–6),
+ * untouched — the UI's delete button now goes through the unguarded path.
  */
 
 /* -------------------------------------------------------------------------- */
@@ -781,5 +786,266 @@ describe("Draft and lead management — end to end", () => {
     if (unstRow) expect(unstRow.unsent).toBe(true);
     if (sentRow) expect(sentRow.unsent).toBe(false);
     void unsent;
+  });
+
+  it(
+    "keeps a draft as unsent even when the lead has pending follow-ups",
+    async () => {
+      await authenticate();
+      const { lead, draft } = seedUnsentLead("info@bistrot.cz", "Bistro U Lva");
+      const firstFollowUp = seedMessage(lead, {
+        sequenceNumber: 1,
+        parentMessageId: draft.id,
+        status: "ready",
+        subject: "První follow-up",
+        body: "Čekající follow-up.",
+      });
+      const secondFollowUp = seedMessage(lead, {
+        sequenceNumber: 2,
+        parentMessageId: draft.id,
+        status: "draft",
+        subject: "Druhý follow-up",
+        body: "Další čekající follow-up.",
+      });
+      const { listOutreachHistory } = await import(
+        "@/lib/services/outreach-service",
+      );
+
+      // The view’s “latest message” is newest-by-created_at, NOT sequence-0, so
+      // the view would otherwise report the follow-up’s status on this row.
+      const history = await listOutreachHistory();
+      expect(history.ok).toBe(true);
+      if (!history.ok) return;
+
+      // The view has now materialized the follow-ups, so the row’s view columns
+      // reflect the newest message, not the primary.
+      const row = history.data?.find((r) => r.id === lead.id) as unknown as {
+        unsent: boolean;
+        latestMessageStatus: string | null;
+        messageCount: number;
+      } | null;
+      expect(row).not.toBeNull();
+      if (!row) return;
+      // Two follow-ups in addition to the primary.
+      expect(row.messageCount).toBe(3);
+      // The newest message by created_at is the sequence-2 follow-up, so the
+      // view’s latest_message_status is that follow-up’s status — NOT the
+      // primary’s.
+      expect(row.latestMessageStatus).toBe("draft");
+      // Yet the lead is still deletable, because its sequence-0 primary is still
+      // an unsent draft. The delete controls depend on THIS, not on the view’s
+      // latest message.
+      expect(row.unsent).toBe(true);
+
+      // Editing the primary and re-saving keeps it an unsent draft — the re-save
+      // rewrites status + subject + body but never touches sent_at.
+      const { saveDraft } = await import("@/app/actions");
+      const edited = await saveDraft({
+        recipientEmail: "rezervace@bistrot.cz",
+        subject: "Upravený primární předmět",
+        body: "Upravený primární text.",
+        messageId: draft.id,
+      });
+      expect(edited.ok).toBe(true);
+      if (!edited.ok) return;
+      expect(edited.created).toBe(false);
+      expect(edited.message.id).toBe(draft.id);
+
+      const historyAfter = await listOutreachHistory();
+      expect(historyAfter.ok).toBe(true);
+      if (!historyAfter.ok) return;
+      const after = historyAfter.data?.find(
+        (r) => r.id === lead.id,
+      ) as unknown as { unsent: boolean; latestSubject: string | null } | null;
+      expect(after).not.toBeNull();
+      if (!after) return;
+      // The primary is still an unsent draft even after a re-save with follow-ups
+      // sitting at sequence 1 and 2.
+      expect(after.unsent).toBe(true);
+      // The view's `latestSubject` keeps following its own rule — the NEWEST
+      // message by created_at, i.e. the seq-2 follow-up — while `unsent`
+      // follows the sequence-0 primary. The two are decoupled by design, and
+      // that decoupling is exactly what this test exists to pin.
+      expect(after.latestSubject).toBe("Druhý follow-up");
+      // The re-save itself did land — on the primary row.
+      const primary = db.messages.find(
+        (m) => m.id === draft.id,
+      ) as unknown as MessageRow;
+      expect(primary.subject).toBe("Upravený primární předmět");
+      expect(primary.status).toBe("draft");
+      expect(primary.sent_at).toBeNull();
+      void firstFollowUp;
+      void secondFollowUp;
+    },
+  );
+
+  it(
+    "keeps a sent lead as not unsent even after it is re-saved back to draft",
+    async () => {
+      await authenticate();
+      const { lead, draft } = seedUnsentLead("info@vinoteka.cz", "Vinotéka Na Půl");
+      // Record the send: status becomes sent and sent_at is stamped.
+      Object.assign(draft, {
+        status: "sent",
+        sent_at: "2026-10-04T09:00:00.000Z",
+      });
+
+      // A lead that was sent, then edited again in the composer. The edit path
+      // only writes subject/body/status — it does not reset sent_at, so the lead
+      // keeps its send record. It LOOKS like a draft again, but it is not
+      // deletable, and the history table must reflect that.
+      const { saveDraft } = await import("@/app/actions");
+      const { listOutreachHistory } = await import(
+        "@/lib/services/outreach-service",
+      );
+
+      // Re-save the message as a draft in place.
+      const reSaved = await saveDraft({
+        recipientEmail: "info@vinoteka.cz",
+        subject: "Předmět po úpravě",
+        body: "Text po úpravě.",
+        messageId: draft.id,
+      });
+      expect(reSaved.ok).toBe(true);
+      if (!reSaved.ok) return;
+      // Re-save rewrites the row in place — no second message was created.
+      expect(reSaved.created).toBe(false);
+      expect(reSaved.message.id).toBe(draft.id);
+      // Status came back to draft, but the send stamp is untouched.
+      expect(reSaved.message.status).toBe("draft");
+      expect(reSaved.message.sent_at).toBe("2026-10-04T09:00:00.000Z");
+
+      const history = await listOutreachHistory();
+      expect(history.ok).toBe(true);
+      if (!history.ok) return;
+      const row = history.data?.find(
+        (r) => r.id === lead.id,
+      ) as unknown as {
+        unsent: boolean;
+        status: string;
+        latestSubject: string | null;
+        latestMessageStatus: string | null;
+      } | null;
+      expect(row).not.toBeNull();
+      if (!row) return;
+      // The lead’s own status on the overview row is now “draft” again — which is
+      // exactly why the unsent flag cannot come from the lead status alone.
+      expect(row.status).toBe("draft");
+      expect(row.latestMessageStatus).toBe("draft");
+      expect(row.latestSubject).toBe("Předmět po úpravě");
+      // Despite looking like a fresh draft in every visible column, the lead is
+      // not deletable: its sequence-0 primary still carries the send stamp.
+      expect(row.unsent).toBe(false);
+      void reSaved;
+    },
+  );
+
+  it("Smazat z historie: removes an unsent lead with its draft and pending follow-ups", async () => {
+    await authenticate();
+    const { lead, draft } = seedUnsentLead("info@bistrot.cz", "Bistro U Lva");
+    const pendingFollowUp = seedMessage(lead, {
+      sequenceNumber: 1,
+      parentMessageId: draft.id,
+      subject: "Čekající follow-up",
+      body: "Nikdy neodeslaný follow-up.",
+    });
+    const { deleteLeadFromHistory } = await import("@/app/actions");
+
+    const result = await deleteLeadFromHistory({ leadId: lead.id });
+
+    expect(result).toEqual({ ok: true, deleted: true });
+    // Lead, primary draft and the pending follow-up are all gone.
+    expect(db.leads.some((l) => l.id === lead.id)).toBe(false);
+    expect(db.messages.filter((m) => m.lead_id === lead.id)).toHaveLength(0);
+    expect(db.messages.some((m) => m.id === draft.id)).toBe(false);
+    expect(db.messages.some((m) => m.id === pendingFollowUp.id)).toBe(false);
+    // The overview row goes with the lead — the view reads `leads`.
+    expect(db.overview.some((o) => o.id === lead.id)).toBe(false);
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/");
+  });
+
+  it("Smazat z historie: removes a SENT lead with its messages and follow-ups", async () => {
+    await authenticate();
+    const { lead, draft } = seedUnsentLead("info@vinoteka.cz", "Vinotéka Na Půl");
+    Object.assign(draft, {
+      status: "sent",
+      sent_at: "2026-10-04T09:00:00.000Z",
+    });
+    const sentFollowUp = seedMessage(lead, {
+      sequenceNumber: 1,
+      parentMessageId: draft.id,
+      status: "sent",
+      sentAt: "2026-10-05T09:00:00.000Z",
+      subject: "Odeslaný follow-up",
+      body: "Follow-up, který už odešel.",
+    });
+    const pendingFollowUp = seedMessage(lead, {
+      sequenceNumber: 2,
+      parentMessageId: draft.id,
+      status: "draft",
+      subject: "Nevyslaný follow-up",
+      body: "Ještě neodeslaný follow-up.",
+    });
+    const { deleteLeadFromHistory, deleteUnsentLead } = await import(
+      "@/app/actions"
+    );
+
+    // The old guarded action still refuses this exact lead — the guard itself
+    // was not loosened; the new action is a separate path.
+    const guarded = await deleteUnsentLead({ leadId: lead.id });
+    expect(guarded.ok).toBe(false);
+    if (!guarded.ok) {
+      expect(guarded.error).toContain("already been sent");
+    }
+    expect(db.leads.some((l) => l.id === lead.id)).toBe(true);
+
+    // The new unguarded path deletes it, with everything attached.
+    const result = await deleteLeadFromHistory({ leadId: lead.id });
+
+    expect(result).toEqual({ ok: true, deleted: true });
+    expect(db.leads.some((l) => l.id === lead.id)).toBe(false);
+    expect(db.messages.filter((m) => m.lead_id === lead.id)).toHaveLength(0);
+    expect(db.messages.some((m) => m.id === draft.id)).toBe(false);
+    expect(db.messages.some((m) => m.id === sentFollowUp.id)).toBe(false);
+    expect(db.messages.some((m) => m.id === pendingFollowUp.id)).toBe(false);
+    expect(db.overview.some((o) => o.id === lead.id)).toBe(false);
+  });
+
+  it("Smazat z historie: deleting one lead leaves the other lead untouched", async () => {
+    await authenticate();
+    const a = seedUnsentLead("info@bistrot.cz", "Bistro U Lva");
+    const b = seedUnsentLead("info@vinoteka.cz", "Vinotéka Na Půl");
+    // The other lead is a sent one, so the isolation holds across the
+    // sent/unsent boundary too.
+    Object.assign(b.draft, {
+      status: "sent",
+      sent_at: "2026-10-04T09:00:00.000Z",
+    });
+    const bFollowUp = seedMessage(b.lead, {
+      sequenceNumber: 1,
+      parentMessageId: b.draft.id,
+      status: "draft",
+      subject: "Vinotéka follow-up",
+      body: "Follow-up pro vinotéku.",
+    });
+    const { deleteLeadFromHistory } = await import("@/app/actions");
+
+    const result = await deleteLeadFromHistory({ leadId: a.lead.id });
+
+    expect(result).toEqual({ ok: true, deleted: true });
+    // The deleted lead is gone, with its draft.
+    expect(db.leads.some((l) => l.id === a.lead.id)).toBe(false);
+    expect(db.messages.filter((m) => m.lead_id === a.lead.id)).toHaveLength(0);
+    // The sent lead, its primary and its follow-up are byte-identical.
+    expect(db.leads.some((l) => l.id === b.lead.id)).toBe(true);
+    const bMessages = db.messages.filter((m) => m.lead_id === b.lead.id);
+    expect(bMessages).toHaveLength(2);
+    const bDraft = bMessages.find(
+      (m) => (m as unknown as MessageRow).id === b.draft.id,
+    ) as unknown as MessageRow;
+    expect(bDraft.status).toBe("sent");
+    expect(bDraft.sent_at).toBe("2026-10-04T09:00:00.000Z");
+    expect(db.messages.some((m) => m.id === bFollowUp.id)).toBe(true);
+    expect(db.overview.some((o) => o.id === b.lead.id)).toBe(true);
   });
 });

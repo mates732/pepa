@@ -30,10 +30,14 @@ interface OutreachHistoryProps {
    */
   openingComposerRowId?: string | null;
   /**
-   * Delete an unsent lead. Where this is supplied, every row whose
-   * primary outreach is still an unsent draft gains explicit
-   * Upravit/Smazat controls. Sent leads never receive them: their
-   * history is kept and deletion is refused server-side anyway.
+   * Delete a lead from history and the database ("Smazat z historie").
+   *
+   * Where this is supplied, EVERY row gains the Smazat control — sent
+   * leads included; the confirmation states the removal is permanent.
+   * Upravit stays gated on `row.unsent`: only a draft may be edited,
+   * but any lead may be removed. Deletion is refused server-side only
+   * for the separate guarded action; this callback goes through the
+   * unguarded `deleteLeadFromHistory` path.
    */
   onDelete?: (row: OutreachHistoryRow) => void;
   /** Row whose deletion is in flight. */
@@ -140,31 +144,31 @@ export function OutreachHistory({
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-2">
                       {row.unsent && onDelete ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => onLoadIntoComposer(row)}
-                            disabled={
-                              openingComposerRowId === row.id ||
-                              deletingRowId === row.id
-                            }
-                            className="btn btn-sm"
-                            title="Edit this unsent lead's recipient, subject and message. Nothing is sent."
-                          >
-                            {openingComposerRowId === row.id
-                              ? "Opening…"
-                              : "Upravit"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setConfirmDeleteRow(row)}
-                            disabled={deletingRowId === row.id}
-                            className="btn btn-sm"
-                            title="Delete this unsent lead, its primary draft and its pending follow-ups."
-                          >
-                            {deletingRowId === row.id ? "Deleting…" : "Smazat"}
-                          </button>
-                        </>
+                        <button
+                          type="button"
+                          onClick={() => onLoadIntoComposer(row)}
+                          disabled={
+                            openingComposerRowId === row.id ||
+                            deletingRowId === row.id
+                          }
+                          className="btn btn-sm"
+                          title="Edit this unsent lead's recipient, subject and message. Nothing is sent."
+                        >
+                          {openingComposerRowId === row.id
+                            ? "Opening…"
+                            : "Upravit"}
+                        </button>
+                      ) : null}
+                      {onDelete ? (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeleteRow(row)}
+                          disabled={deletingRowId === row.id}
+                          className="btn btn-sm"
+                          title="Delete this lead from history and the database, together with its drafts and pending follow-ups. This cannot be undone."
+                        >
+                          {deletingRowId === row.id ? "Deleting…" : "Smazat"}
+                        </button>
                       ) : null}
                       <button
                         type="button"
@@ -221,11 +225,8 @@ export function OutreachHistory({
             {confirmDeleteRow.email}
           </p>
           <p id="delete-lead-body" className="mt-3 text-sm text-midnight">
-            Tento lead ještě nebyl odeslán. Opravdu ho chcete odstranit?
-          </p>
-          <p className="mt-3 text-xs text-midnight-soft">
-            Smaže se i jeho primární koncept a čekající follow-upy. Lead, který
-            už byl odeslán, nelze smazat — jeho historie zůstává.
+            Lead bude odstraněn z historie i databáze včetně jeho draftů a
+            pending follow-upů. Tuto akci nelze vrátit.
           </p>
           <div className="mt-5 flex justify-end gap-2">
             <button

@@ -213,8 +213,9 @@ describe("OutreachHistory — draft-lead management (Upravit/Smazat)", () => {
     expect(markup).toContain("Smazat");
   });
 
-  it("hides the draft controls on a lead that has been sent", () => {
-    // A sent lead is history: no ordinary delete, so no delete button.
+  it("keeps Upravit hidden on a sent lead but still offers Smazat", () => {
+    // "Smazat z historie" is on EVERY row — sent history included — but
+    // Upravit stays unsent-only: only a draft may be edited.
     const markup = render(
       <OutreachHistory
         rows={[row({ unsent: false })]}
@@ -226,7 +227,7 @@ describe("OutreachHistory — draft-lead management (Upravit/Smazat)", () => {
     );
 
     expect(markup).not.toContain("Upravit");
-    expect(markup).not.toContain("Smazat");
+    expect(markup).toContain("Smazat");
     // The ordinary controls survive.
     expect(markup).toContain("Open");
     expect(markup).toContain("Sequence");
@@ -273,14 +274,19 @@ describe("OutreachHistory — draft-lead management (Upravit/Smazat)", () => {
       fileURLToPath(new URL("./outreach-history.tsx", import.meta.url)),
       "utf8",
     );
+    const flattened = source.replace(/\s+/g, " ");
 
     // The dialog is opened by the Smazat button, not rendered inline.
     expect(source).toContain("setConfirmDeleteRow(row)");
-    // Exact strings, verbatim.
+    // Exact strings, verbatim (whitespace-normalised: the text wraps in JSX).
     expect(source).toContain("Smazat tento lead?");
-    expect(source).toContain(
-      "Tento lead ještě nebyl odeslán. Opravdu ho chcete odstranit?",
+    // The dialog covers sent leads too, so the old unsent-only wording
+    // ("Tento lead ještě nebyl odeslán…") would misdescribe this deletion
+    // and must be gone.
+    expect(flattened).toContain(
+      "Lead bude odstraněn z historie i databáze včetně jeho draftů a pending follow-upů. Tuto akci nelze vrátit.",
     );
+    expect(source).not.toContain("Tento lead ještě nebyl odeslán");
     // The dialog's two actions, each the whole text of its button
     // (whitespace-tolerant: the labels are the only content).
     expect(source).toMatch(/>\s*Zrušit\s*</);
@@ -288,5 +294,34 @@ describe("OutreachHistory — draft-lead management (Upravit/Smazat)", () => {
     // The confirm button calls the delete handler with the row that
     // was confirmed, and dismissing does not.
     expect(source).toContain("onDelete(target)");
+  });
+
+  it("cancelling the confirmation calls no delete handler at all", () => {
+    // The dialog cannot be clicked in static markup, so the cancel path is
+    // pinned on the source: the Zrušit button's own tag must close the dialog
+    // and nothing else, while `onDelete(target)` exists exactly once — inside
+    // the confirm button. If cancellation ever reached the handler, the e2e
+    // cascade tests would be deleting leads from a dismissed dialog.
+    const source = readFileSync(
+      fileURLToPath(new URL("./outreach-history.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    // The LAST occurrence: the first one lives in a comment near the top
+    // ("Escape dismisses the confirmation, exactly like Zrušit"), which sits
+    // before any button in the file.
+    const labelIndex = source.lastIndexOf("Zrušit");
+    expect(labelIndex).toBeGreaterThan(-1);
+    const cancelStart = source.lastIndexOf("<button", labelIndex);
+    const cancelEnd = source.indexOf("</button>", labelIndex);
+    expect(cancelStart).toBeGreaterThan(-1);
+    expect(cancelEnd).toBeGreaterThan(cancelStart);
+
+    const cancelButton = source.slice(cancelStart, cancelEnd);
+    expect(cancelButton).toContain("setConfirmDeleteRow(null)");
+    expect(cancelButton).not.toContain("onDelete");
+
+    // The destructive call exists exactly once in the whole component.
+    expect(source.match(/onDelete\(/g) ?? []).toHaveLength(1);
   });
 });
