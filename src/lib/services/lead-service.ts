@@ -212,3 +212,61 @@ export async function setLeadStatus(
   if (error) return fail(error.message);
   return getLead(leadId);
 }
+
+/**
+ * Delete a lead that has never been sent to.
+ *
+ * Only a lead whose primary outreach — the sequence-0 message — is
+ * still an unsent draft may be deleted. Once the primary carries a
+ * `sent_at` stamp or has moved past the draft statuses, the lead is
+ * history: its outreach history, send time, follow-up cadence and
+ * follow-up history have to survive, so deletion is refused instead.
+ *
+ * `leads` is the parent of every related row — `outreach_messages`,
+ * `followup_notifications` and `action_tokens` all cascade — so this
+ * one delete removes the lead, its primary draft and every pending
+ * follow-up in its sequence, and nothing else: the WHERE clause names
+ * a single id, so no other lead is touched.
+ */
+export async function deleteUnsentLead(
+  leadId: string,
+): Promise<ServiceResult<{ deleted: boolean }>> {
+  if (!leadId) return fail("A lead is required.");
+
+  const supabase = getSupabaseAdmin();
+
+  // Read the sequence head, if one exists. A lead with no outreach at
+  // all has never been sent to and is deletable.
+  const { data: primary, error: readError } = await supabase
+    .from("outreach_messages")
+    .select("status, sent_at")
+    .eq("lead_id", leadId)
+    .eq("sequence_number", 0)
+    .maybeSingle();
+
+  if (readError) return fail(readError.message);
+
+  const hasBeenSent =
+    primary !== null &&
+    (primary.sent_at !== null ||
+      (primary.status !== "draft" && primary.status !== "ready"));
+
+  // `primary` is narrowed above; the message row, when present, always carries
+  // both columns because the query selected them.
+
+  if (hasBeenSent) {
+    return fail(
+      "This lead has already been sent outreach. Its history is kept and it cannot be deleted.",
+    );
+  }
+
+  const { error: deleteError, count } = await supabase
+    .from("leads")
+    .delete({ count: "exact" })
+    .eq("id", leadId);
+
+  if (deleteError) return fail(deleteError.message);
+  if (!count) return fail("That lead does not exist.");
+
+  return { ok: true, error: null, data: { deleted: true } };
+}

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
@@ -35,6 +37,9 @@ function row(overrides: Partial<OutreachHistoryRow> = {}): OutreachHistoryRow {
     messageCount: 1,
     lastFollowupNotifiedNumber: null,
     lastFollowupNotifiedAt: null,
+    // These tests pin the composer/sequence controls, which every
+    // row keeps; the unsent-only edit/delete controls are covered below.
+    unsent: false,
     ...overrides,
   };
 }
@@ -185,5 +190,103 @@ describe("OutreachHistory — loading a row into the composer", () => {
     expect(markup.match(/>Sequence</g)).toHaveLength(1);
     expect(markup.match(/>Open</g)).toHaveLength(1);
     expect(markup.match(/disabled=""/g)).toHaveLength(2);
+  });
+});
+
+describe("OutreachHistory — draft-lead management (Upravit/Smazat)", () => {
+  const deleteHandler = vi.fn();
+
+  it("offers explicit Upravit and Smazat controls on an unsent lead", () => {
+    // The operator must be able to edit or delete an unsent lead
+    // straight from the history table, without opening Gmail.
+    const markup = render(
+      <OutreachHistory
+        rows={[row({ unsent: true })]}
+        onLoadIntoComposer={noop}
+        onOpenDetail={noop}
+        openingDetailId={null}
+        onDelete={deleteHandler}
+      />,
+    );
+
+    expect(markup).toContain("Upravit");
+    expect(markup).toContain("Smazat");
+  });
+
+  it("hides the draft controls on a lead that has been sent", () => {
+    // A sent lead is history: no ordinary delete, so no delete button.
+    const markup = render(
+      <OutreachHistory
+        rows={[row({ unsent: false })]}
+        onLoadIntoComposer={noop}
+        onOpenDetail={noop}
+        openingDetailId={null}
+        onDelete={deleteHandler}
+      />,
+    );
+
+    expect(markup).not.toContain("Upravit");
+    expect(markup).not.toContain("Smazat");
+    // The ordinary controls survive.
+    expect(markup).toContain("Open");
+    expect(markup).toContain("Sequence");
+  });
+
+  it("offers no draft controls when deletion is not wired up", () => {
+    // Optional prop: callers that do not delete must not render
+    // a button that goes nowhere.
+    const markup = render(
+      <OutreachHistory
+        rows={[row({ unsent: true })]}
+        onLoadIntoComposer={noop}
+        onOpenDetail={noop}
+        openingDetailId={null}
+      />,
+    );
+
+    expect(markup).not.toContain("Upravit");
+    expect(markup).not.toContain("Smazat");
+  });
+
+  it("disables both draft controls while the deletion is in flight", () => {
+    const markup = render(
+      <OutreachHistory
+        rows={[row({ id: "aaaaaaaa-1111-4111-8111-111111111111", unsent: true })]}
+        onLoadIntoComposer={noop}
+        onOpenDetail={noop}
+        openingDetailId={null}
+        onDelete={deleteHandler}
+        deletingRowId="aaaaaaaa-1111-4111-8111-111111111111"
+      />,
+    );
+
+    expect(markup).toContain("Deleting…");
+    // The row's every control is disabled, and nothing else is.
+    expect(markup.match(/disabled=""/g)).toHaveLength(4);
+  });
+
+  it("asks in Czech, and only in the dialog, before deleting", () => {
+    // The confirmation dialog cannot be clicked in static markup, so
+    // its exact wording is pinned on the source, the same way
+    // dashboard.history-open.test.ts pins a handler's wording.
+    const source = readFileSync(
+      fileURLToPath(new URL("./outreach-history.tsx", import.meta.url)),
+      "utf8",
+    );
+
+    // The dialog is opened by the Smazat button, not rendered inline.
+    expect(source).toContain("setConfirmDeleteRow(row)");
+    // Exact strings, verbatim.
+    expect(source).toContain("Smazat tento lead?");
+    expect(source).toContain(
+      "Tento lead ještě nebyl odeslán. Opravdu ho chcete odstranit?",
+    );
+    // The dialog's two actions, each the whole text of its button
+    // (whitespace-tolerant: the labels are the only content).
+    expect(source).toMatch(/>\s*Zrušit\s*</);
+    expect(source).toMatch(/>\s*Smazat\s*</);
+    // The confirm button calls the delete handler with the row that
+    // was confirmed, and dismissing does not.
+    expect(source).toContain("onDelete(target)");
   });
 });

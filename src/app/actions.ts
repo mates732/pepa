@@ -5,7 +5,10 @@ import { revalidatePath } from "next/cache";
 import { requireAuthenticatedUser } from "@/lib/auth/dal";
 import { isValidEmail, normalizeEmail } from "@/lib/email";
 import { buildGmailComposeUrl } from "@/lib/outreach/gmail-compose";
-import { findLeadByEmail } from "@/lib/services/lead-service";
+import {
+  findLeadByEmail,
+  deleteUnsentLead as deleteUnsentLeadService,
+} from "@/lib/services/lead-service";
 import { createDraft, recordOutreachSent as recordOutreachSentService } from "@/lib/services/outreach-service";
 import { evaluateDraftQualityGate, type GateEvaluation } from "@/lib/services/outreach-quality-gate";
 import {
@@ -411,6 +414,42 @@ export async function recordOutreachSent(input: {
   } catch (error) {
     return failure(
       error instanceof Error ? error.message : "Could not record the send.",
+    );
+  }
+}
+
+export type DeleteLeadResult = { ok: true; deleted: true } | ActionFailure;
+
+/**
+ * Remove a lead that has never been sent to.
+ *
+ * The service layer refuses any lead whose primary outreach has
+ * left the outbox, so a sent lead's history — outreach history,
+ * send time, follow-up cadence and follow-up history — is kept.
+ * Deleting an unsent lead cascades to its primary draft and every
+ * pending follow-up in its sequence, and touches nothing else.
+ */
+export async function deleteUnsentLead(input: {
+  leadId: string;
+}): Promise<DeleteLeadResult> {
+  await requireAuthenticatedUser();
+
+  const leadId = String(input?.leadId ?? "");
+  if (!UUID_PATTERN.test(leadId)) {
+    return failure("That lead could not be identified.");
+  }
+
+  try {
+    const result = await deleteUnsentLeadService(leadId);
+    if (!result.ok || !result.data) {
+      return failure(result.error ?? "The lead could not be deleted.");
+    }
+
+    revalidatePath("/");
+    return { ok: true, deleted: true };
+  } catch (error) {
+    return failure(
+      error instanceof Error ? error.message : "The lead could not be deleted.",
     );
   }
 }

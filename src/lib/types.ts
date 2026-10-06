@@ -134,6 +134,13 @@ export interface OutreachHistoryRow extends Lead {
   /** Highest follow-up number already notified through a channel, if any. */
   lastFollowupNotifiedNumber: number | null;
   lastFollowupNotifiedAt: string | null;
+  /**
+   * True while the lead's primary outreach (sequence 0) is still an
+   * unsent draft — the only state in which the lead may be deleted.
+   * A lead whose primary went out keeps its history and cannot be
+   * deleted, even when a newer follow-up row is still a draft.
+   */
+  unsent: boolean;
 }
 
 export interface ServiceResult<T> {

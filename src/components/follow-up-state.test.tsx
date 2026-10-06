@@ -36,6 +36,7 @@ function row(overrides: Partial<OutreachHistoryRow> = {}): OutreachHistoryRow {
     messageCount: 1,
     lastFollowupNotifiedNumber: null,
     lastFollowupNotifiedAt: null,
+    unsent: false,
     ...overrides,
   };
 }

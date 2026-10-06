@@ -6,6 +6,7 @@ import { loadOutreachActivity, loadOutreachActivityDetail } from "@/app/activity
 import {
   checkQualityGate,
   checkRecipient,
+  deleteUnsentLead,
   loadFollowUpDetail,
   loadInitialOutreachDetail,
   loadFollowUpWorkspace,
@@ -111,6 +112,10 @@ export function Dashboard({
   const [creatingFollowUp, setCreatingFollowUp] = useState(false);
   const [openingDetailId, setOpeningDetailId] = useState<string | null>(null);
   const [openingComposerRowId, setOpeningComposerRowId] = useState<string | null>(null);
+  // The history table is live: deleting an unsent lead removes it
+  // from this list without a round trip through the server page.
+  const [rows, setRows] = useState<OutreachHistoryRow[]>(initialRows);
+  const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
 
   // Activity workspace. Read-only: opening it records nothing, and it exposes no
   // mutation controls, so there is nothing here that can write.
@@ -801,6 +806,36 @@ export function Dashboard({
    * This is a read. It writes nothing, sends nothing and marks nothing, and the
    * fallback below is the only case where no stored message exists at all.
    */
+  /**
+   * Delete an unsent lead.
+   *
+   * The server refuses any lead whose primary outreach has
+   * actually left the outbox, so a sent lead's history is never
+   * at risk here. On success the lead — its primary draft and
+   * every pending follow-up with it — disappears from the table,
+   * and the follow-up workspace is refreshed so a removed
+   * follow-up cannot linger in it.
+   */
+  async function handleDeleteLead(row: OutreachHistoryRow) {
+    setDeletingRowId(row.id);
+    setNotice(null);
+    try {
+      const result = await deleteUnsentLead({ leadId: row.id });
+      if (!result.ok) {
+        setNotice({ kind: "error", text: result.error });
+        return;
+      }
+      setRows((current) => current.filter((lead) => lead.id !== row.id));
+      setNotice({
+        kind: "info",
+        text: `Deleted unsent lead ${row.email}.`,
+      });
+      void loadWorkspace();
+    } finally {
+      setDeletingRowId(null);
+    }
+  }
+
   async function handleOpenFromHistory(row: OutreachHistoryRow) {
     setOpeningComposerRowId(row.id);
     setNotice(null);
@@ -937,11 +972,13 @@ export function Dashboard({
       ) : null}
 
       <OutreachHistory
-        rows={initialRows}
+        rows={rows}
         onLoadIntoComposer={(row) => void handleOpenFromHistory(row)}
         openingComposerRowId={openingComposerRowId}
         onOpenDetail={(row) => void handleOpenHistoryDetail(row)}
         openingDetailId={openingDetailId}
+        onDelete={(row) => void handleDeleteLead(row)}
+        deletingRowId={deletingRowId}
       />
 
       <FollowUpWorkspace

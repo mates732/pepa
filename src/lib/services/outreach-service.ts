@@ -370,5 +370,44 @@ export async function listOutreachHistory(
     lastFollowupNotifiedAt: (row.last_followup_notified_at ?? null) as string | null,
   }));
 
-  return { ok: true, error: null, data: rows };
+  // A lead is an unsent draft only while its sequence head — the
+  // sequence-0 outreach — is still unsent. The view exposes only the
+  // NEWEST message per lead, so a lead whose primary went out and whose
+  // follow-up is still a draft would otherwise look deletable here. The
+  // heads are read separately and joined in.
+  const leadIds = rows.map((row) => row.id);
+  const { data: primaryMessages } =
+    leadIds.length === 0
+      ? { data: [] }
+      : await supabase
+          .from("outreach_messages")
+          .select("lead_id, status, sent_at")
+          .eq("sequence_number", 0)
+          .in("lead_id", leadIds);
+
+  const unsentByLead = new Map<string, boolean>(
+    leadIds.map((leadId) => [leadId, true]),
+  );
+  for (const message of (primaryMessages ?? []) as Array<
+    | { lead_id: string; status: string; sent_at: string | null }
+    | undefined
+  >) {
+    // The real query never returns a partial row for a selected column, but TS
+    // cannot see through the supabase client once the outer generic is dropped.
+    if (message == null) continue;
+    unsentByLead.set(
+      message.lead_id,
+      message.sent_at === null &&
+        (message.status === "draft" || message.status === "ready"),
+    );
+  }
+
+  return {
+    ok: true,
+    error: null,
+    data: rows.map((row) => ({
+      ...row,
+      unsent: unsentByLead.get(row.id) ?? true,
+    })),
+  };
 }
