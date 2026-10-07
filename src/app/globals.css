@@ -17,6 +17,8 @@
   --color-midnight-faint: #e4e8f2;
   --color-midnight-line: #c3cbe2;
 
+  --color-alarm: #b91c1c;
+
   --radius-blob: 1.75rem;
 
   --font-sans: var(--font-geist-sans), ui-rounded, "SF Pro Rounded",
@@ -136,6 +138,16 @@ kbd {
 
 .btn-primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--color-midnight) 88%, #ffffff);
+}
+
+.btn-alarm {
+  background: var(--color-alarm);
+  color: var(--color-cream);
+  border-color: var(--color-alarm);
+}
+
+.btn-alarm:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--color-alarm) 88%, #ffffff);
 }
 
 .btn-sm {
