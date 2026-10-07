@@ -164,7 +164,7 @@ export function OutreachHistory({
                           type="button"
                           onClick={() => setConfirmDeleteRow(row)}
                           disabled={deletingRowId === row.id}
-                          className="btn btn-sm"
+                          className="btn btn-sm btn-alarm"
                           title="Delete this lead from history and the database, together with its drafts and pending follow-ups. This cannot be undone."
                         >
                           {deletingRowId === row.id ? "Deleting…" : "Smazat"}
