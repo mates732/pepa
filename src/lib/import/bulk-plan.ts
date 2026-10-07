@@ -80,6 +80,8 @@ export interface BulkEmailRow {
   contactCount: number | null;
   /** For `duplicate`: the paste position of the email this one repeats. */
   duplicateOf: number | null;
+  /** Follow-ups parsed from the same block, carried for the import. */
+  followUps?: Array<{ subject: string | null; body: string | null }>;
 }
 
 export interface BulkEmailSummary {
@@ -122,6 +124,7 @@ export interface BulkDraftRequest {
   recipient: string;
   subject: string | null;
   body: string | null;
+  followUps?: Array<{ subject: string | null; body: string | null }>;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -232,6 +235,7 @@ export function planBulkEmails(
       lastContactedAt: result?.lastContactedAt ?? null,
       contactCount: result?.historicalContact?.contactCount ?? null,
       duplicateOf: candidate.duplicateOf,
+      followUps: candidate.followUps,
     } satisfies BulkEmailRow;
   });
 
@@ -272,6 +276,7 @@ export function importableRequests(plan: BulkEmailPlan): BulkDraftRequest[] {
       recipient: row.recipient!,
       subject: row.subject,
       body: row.body,
+      followUps: row.followUps,
     }));
 }
 

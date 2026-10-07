@@ -109,7 +109,8 @@ export function buildComposeUrls(input: GmailComposeInput): {
  * equal "what PEPA stored". Kept here rather than in a test so the two can never
  * drift apart.
  */
-export function readComposeParam(url: string, key: string): string | null {
+export function readComposeParam(url: string | undefined | null, key: string): string | null {
+  if (!url) return null;
   const query = url.slice(url.indexOf("?") + 1);
   return new URLSearchParams(query).get(key);
 }

@@ -375,21 +375,19 @@ describe("parseBulkEmails — format D: LEAD blocks with follow-ups", () => {
     const { candidates, splitBy } = parseBulkEmails(FORMAT_D);
 
     expect(splitBy).toBe("recipient_header");
-    // Two leads — one card each, the follow-up carried on the card.
+    // Two leads — one card each, the follow-ups carried on the card.
     expect(candidates).toHaveLength(2);
     expect(candidates.map((c) => c.recipient)).toEqual(["a@test.cz", "b@test.cz"]);
     // No marker and no follow-up text leaks into a first outreach.
     expect(candidates.every((c) => !String(c.body).includes("LEAD"))).toBe(true);
     expect(candidates.every((c) => !String(c.body).includes("Follow"))).toBe(true);
-    // The follow-up is parsed as part of the SAME lead.
-    expect(candidates[0]!.followUp).toEqual({
-      subject: "Follow A",
-      body: "Follow body A",
-    });
-    expect(candidates[1]!.followUp).toEqual({
-      subject: "Follow B",
-      body: "Follow body B",
-    });
+    // The follow-ups are parsed as part of the SAME lead.
+    expect(candidates[0]!.followUps).toEqual([
+      { subject: "Follow A", body: "Follow body A" },
+    ]);
+    expect(candidates[1]!.followUps).toEqual([
+      { subject: "Follow B", body: "Follow body B" },
+    ]);
   });
 
   it("reads the first outreach of each block as the importable row", () => {
@@ -403,15 +401,14 @@ describe("parseBulkEmails — format D: LEAD blocks with follow-ups", () => {
     expect(candidates[0]!.warnings.join(" ")).toContain("follow-up");
   });
 
-  it("carries the follow-up on the same candidate, not on a card of its own", () => {
+  it("carries the follow-ups on the same candidate, not on a card of their own", () => {
     const { candidates } = parseBulkEmails(FORMAT_D);
 
     expect(candidates).toHaveLength(2);
     expect(candidates[0]!.index).toBe(1);
-    expect(candidates[0]!.followUp).toEqual({
-      subject: "Follow A",
-      body: "Follow body A",
-    });
+    expect(candidates[0]!.followUps).toEqual([
+      { subject: "Follow A", body: "Follow body A" },
+    ]);
     expect(candidates[0]!.duplicateOf).toBeNull();
   });
 
@@ -423,7 +420,7 @@ describe("parseBulkEmails — format D: LEAD blocks with follow-ups", () => {
     expect(candidates).toHaveLength(1);
     expect(candidates[0]!.status).toBe("parsed");
     expect(candidates[0]!.body).toBe("Body A");
-    expect(candidates[0]!.followUp).toBeNull();
+    expect(candidates[0]!.followUps).toEqual([]);
     expect(candidates[0]!.warnings).toEqual([]);
   });
 
@@ -452,7 +449,7 @@ describe("parseBulkEmails — format D: LEAD blocks with follow-ups", () => {
     );
 
     expect(candidates).toHaveLength(1);
-    expect(candidates[0]!.followUp).toEqual({ subject: null, body: "Follow body A" });
+    expect(candidates[0]!.followUps).toEqual([{ subject: null, body: "Follow body A" }]);
   });
 
   it("reads other decoration around a marker the same way", () => {
@@ -543,22 +540,19 @@ Follow-up body 3`;
 
     expect(result[0]!.subject).toBe("Subject 1");
     expect(result[0]!.body).toBe("Body 1");
-    expect(result[0]!.followUp).toEqual({
-      subject: "Follow-up 1",
-      body: "Follow-up body 1",
-    });
+    expect(result[0]!.followUps).toEqual([
+      { subject: "Follow-up 1", body: "Follow-up body 1" },
+    ]);
     expect(result[1]!.subject).toBe("Subject 2");
     expect(result[1]!.body).toBe("Body 2");
-    expect(result[1]!.followUp).toEqual({
-      subject: "Follow-up 2",
-      body: "Follow-up body 2",
-    });
+    expect(result[1]!.followUps).toEqual([
+      { subject: "Follow-up 2", body: "Follow-up body 2" },
+    ]);
     expect(result[2]!.subject).toBe("Subject 3");
     expect(result[2]!.body).toBe("Body 3");
-    expect(result[2]!.followUp).toEqual({
-      subject: "Follow-up 3",
-      body: "Follow-up body 3",
-    });
+    expect(result[2]!.followUps).toEqual([
+      { subject: "Follow-up 3", body: "Follow-up body 3" },
+    ]);
   });
 
   it("returns exactly ten candidates for the ten-lead batch", () => {
@@ -572,7 +566,7 @@ Follow-up body 3`;
     expect(
       result.candidates.every((c) => !String(c.body).includes("--- LEAD")),
     ).toBe(true);
-    expect(result.candidates.every((c) => c.followUp !== null)).toBe(true);
+    expect(result.candidates.every((c) => c.followUps && c.followUps.length > 0)).toBe(true);
   });
 });
 
@@ -609,15 +603,17 @@ recepce.tech`;
     expect(candidates[0]!.body).toBe(
       "Hello,\n\nthis is the primary email.\n\nHezký den,\nMatyáš\nrecepce.tech",
     );
-    expect(candidates[0]!.followUp).toEqual({
-      subject: "Navazuji na nabídku",
-      body: "Dobrý den,\n\njen navazuji na svůj předchozí e-mail.\n\nHezký den,\nMatyáš\nrecepce.tech",
-    });
+    expect(candidates[0]!.followUps).toEqual([
+      {
+        subject: "Navazuji na nabídku",
+        body: "Dobrý den,\n\njen navazuji na svůj předchozí e-mail.\n\nHezký den,\nMatyáš\nrecepce.tech",
+      },
+    ]);
     // The labels are boundaries — never content of the primary body.
     expect(candidates[0]!.body).not.toContain("Follow-up Subject:");
     expect(candidates[0]!.body).not.toContain("Follow-up Body:");
     // Nor does the follow-up subject swallow the follow-up body label.
-    expect(candidates[0]!.followUp!.subject).not.toContain(
+    expect(candidates[0]!.followUps?.[0]!.subject).not.toContain(
       "Follow-up Body:",
     );
   });
@@ -638,10 +634,9 @@ recepce.tech`;
 
       expect(candidates).toHaveLength(1);
       expect(candidates[0]!.body).toBe("Body A");
-      expect(candidates[0]!.followUp).toEqual({
-        subject: "Follow A",
-        body: "Follow body A",
-      });
+      expect(candidates[0]!.followUps).toEqual([
+        { subject: "Follow A", body: "Follow body A" },
+      ]);
     }
   });
 
@@ -659,10 +654,9 @@ recepce.tech`;
       expect(card.body).not.toContain("Follow-up Subject");
       expect(card.body).not.toContain("Follow-up Body");
       // The follow-up is this lead's own, not another lead's.
-      expect(card.followUp).toEqual({
-        subject: `Follow-up ${i + 1}`,
-        body: `Follow-up body ${i + 1}`,
-      });
+      expect(card.followUps).toEqual([
+        { subject: `Follow-up ${i + 1}`, body: `Follow-up body ${i + 1}` },
+      ]);
       expect(card.status).toBe("parsed");
     }
     // No data leaks between leads: ten distinct recipients.

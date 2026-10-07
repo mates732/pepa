@@ -221,10 +221,10 @@ export async function importBulkEmails(rows: BulkDraftRequest[]): Promise<BulkIm
       recipientEmail: row.recipient,
       mainSubject: (row.subject ?? "").slice(0, MAX_SUBJECT_LENGTH),
       mainBody: (row.body ?? "").slice(0, MAX_BODY_LENGTH),
-      // Follow-up starts as a copy of the main email; the operator can
-      // rewrite it independently in the composer before sending.
-      followUpSubject: (row.subject ?? "").slice(0, MAX_SUBJECT_LENGTH),
-      followUpBody: (row.body ?? "").slice(0, MAX_BODY_LENGTH),
+      followUps: row.followUps?.map((fu) => ({
+        subject: (fu.subject ?? "").slice(0, MAX_SUBJECT_LENGTH),
+        body: (fu.body ?? "").slice(0, MAX_BODY_LENGTH),
+      })) ?? [],
       // The lead's own company and contact name, which the operator set. `null`
       // for a new lead rather than something derived from the domain.
       companyName: lead?.company_name ?? null,

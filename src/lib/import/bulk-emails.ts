@@ -84,13 +84,13 @@ export interface BulkEmailCandidate {
   /** Non-fatal notes from the field parser, e.g. an absent `Body:` label. */
   warnings: string[];
   /**
-   * The block's follow-up, when it carries one — parsed as part of the
-   * SAME lead. One lead is one card: the follow-up is never a second
-   * candidate and never part of the primary body. A bulk paste imports
-   * only the first outreach; the follow-up is reported so the operator
-   * can draft it from the lead's detail page.
+   * The block's follow-ups, when it carries them — parsed as part of the
+   * SAME lead. One lead is one card: the follow-ups are never separate
+   * candidates and never part of the primary body. A bulk paste imports
+   * only the first outreach; the follow-ups are reported so the operator
+   * can draft them from the lead's detail page.
    */
-  followUp: { subject: string | null; body: string | null } | null;
+  followUps: Array<{ subject: string | null; body: string | null }>;
 }
 
 export interface BulkEmailParseResult {
@@ -381,8 +381,29 @@ const NOISE_LABELS = new Set(["from", "od", "date", "datum", "sent", "cc", "bcc"
  * not depend on which dash the writer used: the label is a hard field
  * boundary and must never be read as part of the primary body.
  */
-const FOLLOWUP_SUBJECT_LABELS = new Set(["followupsubject"]);
-const FOLLOWUP_BODY_LABELS = new Set(["followupbody"]);
+const FOLLOWUP_SUBJECT_LABELS = new Set([
+  "followupsubject",
+  "followup2subject",
+  "followup3subject",
+  "followup4subject",
+  "followup5subject",
+  "followup6subject",
+  "followup6subject",
+  "followup7subject",
+  "followup8subject",
+  "followup9subject",
+]);
+const FOLLOWUP_BODY_LABELS = new Set([
+  "followupbody",
+  "followup2body",
+  "followup3body",
+  "followup4body",
+  "followup5body",
+  "followup6body",
+  "followup7body",
+  "followup8body",
+  "followup9body",
+]);
 
 interface Extracted {
   recipient: string | null;
@@ -392,8 +413,8 @@ interface Extracted {
   warnings: string[];
   /** The address on a bare `Name <addr>` line, used when there is no label. */
   bareAddress: string | null;
-  /** The block's follow-up section, when it carries one. */
-  followUp: { subject: string | null; body: string } | null;
+  /** The block's follow-up sections, when they carry any. */
+  followUps: Array<{ subject: string | null; body: string }>;
 }
 
 function labelOf(line: string): { name: string; value: string } | null {
@@ -429,9 +450,8 @@ function extract(block: string[]): Extracted {
   let subject: string | null = null;
   let bareAddress: string | null = null;
   let current: "recipient" | "subject" | "body" | null = null;
-  let inFollowUp = false;
-  let followUpSubject: string | null = null;
-  const followUpBody: string[] = [];
+  const followUps: Array<{ subject: string | null; body: string[] }> = [];
+  let currentFollowUpIndex = -1;
 
   for (const line of block) {
     const label = labelOf(line);
@@ -461,23 +481,30 @@ function extract(block: string[]): Extracted {
       continue;
     }
 
+    // Check for follow-up subject labels (including numbered variants)
     if (label && FOLLOWUP_SUBJECT_LABELS.has(squished)) {
-      inFollowUp = true;
-      if (label.value.trim()) followUpSubject = label.value.trim();
+      // Start a new follow-up
+      followUps.push({ subject: label.value.trim() || null, body: [] });
+      currentFollowUpIndex = followUps.length - 1;
       continue;
     }
 
+    // Check for follow-up body labels (including numbered variants)
     if (label && FOLLOWUP_BODY_LABELS.has(squished)) {
-      inFollowUp = true;
-      if (label.value.trim()) followUpBody.push(label.value);
+      // If no follow-up started yet, create one
+      if (currentFollowUpIndex === -1) {
+        followUps.push({ subject: null, body: [] });
+        currentFollowUpIndex = 0;
+      }
+      if (label.value.trim()) followUps[currentFollowUpIndex]!.body.push(label.value);
       continue;
     }
 
-    // Once the follow-up section opens, the rest of the block is the
+    // Once a follow-up section opens, the rest of the block is the
     // follow-up's own text — including any further unrecognised labels.
-    if (inFollowUp) {
+    if (currentFollowUpIndex >= 0) {
       if (label && NOISE_LABELS.has(label.name)) continue;
-      followUpBody.push(line);
+      followUps[currentFollowUpIndex]!.body.push(line);
       continue;
     }
 
@@ -542,7 +569,10 @@ function extract(block: string[]): Extracted {
     body,
     warnings,
     bareAddress,
-    followUp: inFollowUp ? { subject: followUpSubject, body: followUpBody.join("\n") } : null,
+    followUps: followUps.map((fu) => ({
+      subject: fu.subject,
+      body: fu.body.join("\n"),
+    })),
   };
 }
 
@@ -640,18 +670,18 @@ export function parseBulkEmails(text: string): BulkEmailParseResult {
       }
     }
 
-    // The follow-up belongs to this lead, not to a card of its own. Tidied
-    // like any other field, and empty when the block carries no follow-up.
-    const followUp =
-      found.followUp && (found.followUp.subject !== null || found.followUp.body.trim() !== "")
-        ? {
-            subject: found.followUp.subject ? tidy(found.followUp.subject) : null,
-            body: found.followUp.body.trim() === "" ? null : unquote(tidy(found.followUp.body)),
-          }
-        : null;
-    if (followUp) {
+    // The follow-ups belong to this lead, not to a card of their own. Tidied
+    // like any other field, and empty when the block carries no follow-ups.
+    const followUps = found.followUps
+      .map((fu) => {
+        const subject = fu.subject ? tidy(fu.subject) : null;
+        const body = fu.body.trim() === "" ? null : unquote(tidy(fu.body));
+        return { subject, body };
+      })
+      .filter((fu) => fu.subject !== null || fu.body !== null);
+    if (followUps.length > 0) {
       warnings.push(
-        "A follow-up was also found in this block — it is carried on this card as the follow-up field, and it is not part of this draft.",
+        `${followUps.length} follow-up${followUps.length > 1 ? "s" : ""} found in this block — carried on this card as the follow-ups field, and not part of this draft.`,
       );
     }
 
@@ -665,7 +695,7 @@ export function parseBulkEmails(text: string): BulkEmailParseResult {
         reason,
         duplicateOf,
         warnings,
-        followUp,
+        followUps,
       });
     } else {
       truncated += 1;

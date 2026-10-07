@@ -72,43 +72,15 @@ export function OutreachHistory({
   // Select all checkbox ref for indeterminate state
   const selectAllRef = useRef<HTMLInputElement>(null);
 
-  // Selection state
-  const [selection, setSelection] = useState<Set<string>>(new Set(selectedIds));
-
-  // Sync selection with controlled prop
-  useEffect(() => {
-    setSelection(new Set(selectedIds));
-  }, [selectedIds]);
-
-  const handleSelectRow = (leadId: string, checked: boolean) => {
-    const newSelection = new Set(selection);
-    if (checked) newSelection.add(leadId);
-    else newSelection.delete(leadId);
-    setSelection(newSelection);
-    onSelectionChange?.(Array.from(newSelection));
-  };
-
-  const handleSelectAll = (checked: boolean) => {
-    if (checked) {
-      const allIds = new Set(rows.map((r) => r.id));
-      setSelection(allIds);
-      onSelectionChange?.(Array.from(allIds));
-    } else {
-      setSelection(new Set());
-      onSelectionChange?.([]);
-    }
-    // Update indeterminate state via ref
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = false;
-    }
-  };
+  // Selection is fully controlled via props - no internal state needed
+  const selection = new Set(selectedIds);
 
   // Sync indeterminate state when selection changes
   useEffect(() => {
     if (selectAllRef.current) {
       selectAllRef.current.indeterminate = selection.size > 0 && selection.size < rows.length;
     }
-  }, [selection, rows.length]);
+  }, [selection.size, rows.length]);
 
   // Escape dismisses the confirmation, exactly like Zrušit.
   useEffect(() => {
@@ -131,6 +103,26 @@ export function OutreachHistory({
     document.addEventListener("click", onClick);
     return () => document.removeEventListener("click", onClick);
   }, []);
+
+  const handleSelectRow = (leadId: string, checked: boolean) => {
+    const newSelection = new Set(selection);
+    if (checked) newSelection.add(leadId);
+    else newSelection.delete(leadId);
+    onSelectionChange?.(Array.from(newSelection));
+  };
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      const allIds = new Set(rows.map((r) => r.id));
+      onSelectionChange?.(Array.from(allIds));
+    } else {
+      onSelectionChange?.([]);
+    }
+    // Update indeterminate state via ref
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = false;
+    }
+  };
 
   const toggleMenu = (rowId: string) => {
     setOpenMenuRowId((prev) => (prev === rowId ? null : rowId));

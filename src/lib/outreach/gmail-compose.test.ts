@@ -201,3 +201,21 @@ describe("buildGmailComposeUrl — safety properties", () => {
     expect(readComposeParam(url, "su")).toBe("hello&bcc=victim@example.com");
   });
 });
+
+describe("readComposeParam — edge cases", () => {
+  it("returns null for undefined URL", () => {
+    expect(readComposeParam(undefined as unknown, "to")).toBeNull();
+  });
+
+  it("returns null for null URL", () => {
+    expect(readComposeParam(null as unknown, "to")).toBeNull();
+  });
+
+  it("returns null for empty string URL", () => {
+    expect(readComposeParam("", "to")).toBeNull();
+  });
+
+  it("returns null for URL without query string", () => {
+    expect(readComposeParam("https://mail.google.com/mail/", "to")).toBeNull();
+  });
+});

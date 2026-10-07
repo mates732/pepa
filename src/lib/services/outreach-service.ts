@@ -38,8 +38,11 @@ export interface DraftInput {
   /** Main outreach (sequence 0) */
   mainSubject: string;
   mainBody: string;
-  /** Follow-up (sequence 1) - optional, defaults to empty draft */
+  /** Follow-ups (sequence 1, 2, 3...) - optional, defaults to empty array */
+  followUps?: Array<{ subject: string | null; body: string | null }>;
+  /** @deprecated Use followUps instead. Single follow-up (sequence 1) for backward compatibility. */
   followUpSubject?: string | null;
+  /** @deprecated Use followUps instead. Single follow-up (sequence 1) for backward compatibility. */
   followUpBody?: string | null;
   companyName?: string | null;
   contactName?: string | null;
@@ -54,9 +57,9 @@ export interface DraftInput {
  * draft rather than piling up duplicates — also enforced by a unique index on
  * (lead_id, normalized recipient_email).
  *
- * PEPA's outreach page always writes a PAIR of drafts together: a MAIN
- * (sequence 0) and a FOLLOW-UP (sequence 1). Writing them as one unit means a
- * lead never ends up with an initial email and no follow-up, and the two can
+ * PEPA's outreach page always writes a MAIN (sequence 0) and one or more
+ * FOLLOW-UPs (sequence 1, 2, 3...). Writing them as one unit means a
+ * lead never ends up with an initial email and no follow-up, and each can
  * later be worked on, sent and scheduled independently.
  */
 export async function createDraft(
@@ -64,7 +67,8 @@ export async function createDraft(
 ): Promise<ServiceResult<{
   lead: Lead;
   main: OutreachMessage;
-  followUp: OutreachMessage | null;
+  followUp: OutreachMessage | null; // First follow-up (sequence 1) for backward compatibility
+  followUps: OutreachMessage[];     // All follow-ups (sequence 1, 2, 3...)
   created: boolean;
 }>> {
   const recipientEmail = normalizeEmail(input.recipientEmail);
@@ -98,34 +102,12 @@ export async function createDraft(
     parent_message_id: null,
   };
 
-  // Follow-up payload uses independently provided subject/body (or empty defaults)
-  const followUpSubject = input.followUpSubject?.trim() || null;
-  const followUpBody = input.followUpBody?.trim() || null;
-
-  const followUpPayload: {
-    lead_id: string;
-    recipient_email: string;
-    subject: string | null;
-    body: string | null;
-    status: "draft";
-    sequence_number: 1;
-    parent_message_id: string | null;
-  } = {
-    lead_id: lead.id,
-    recipient_email: recipientEmail,
-    subject: followUpSubject,
-    body: followUpBody,
-    status: "draft" as const,
-    sequence_number: 1,
-    parent_message_id: null, // Will be set after main is created
-  };
-
   let mainMessage: OutreachMessage;
-  let followUpMessage: OutreachMessage | null = null;
+  const followUpMessages: OutreachMessage[] = [];
 
   if (input.messageId && input.messageId.startsWith("main_")) {
     // Only persist the main draft this session asked for. Everything else
-    // (including the paired follow-up) is left alone unless it was written
+    // (including the paired follow-ups) is left alone unless it was written
     // below.
     const { data: updated, error: updateError } = await supabase
       .from("outreach_messages")
@@ -143,7 +125,8 @@ export async function createDraft(
       data: {
         lead,
         main: mainMessage,
-        followUp: followUpMessage,
+        followUp: followUpMessages[0] ?? null,
+        followUps: followUpMessages,
         created: false,
       },
     };
@@ -170,37 +153,76 @@ export async function createDraft(
   }
   mainMessage = mainResult.data as OutreachMessage;
 
-  // ---- FOLLOW-UP DRAFT ------------------------------------------------
-  // Set parent_message_id to link follow-up to main
-  followUpPayload.parent_message_id = mainMessage.id;
+  // ---- FOLLOW-UP DRAFTS -----------------------------------------------
+  // Build the list of follow-ups from both old and new APIs
+  const followUpsInput: Array<{ subject: string | null; body: string | null }> = [];
 
-  const followUpInsert = supabase
-    .from("outreach_messages")
-    .upsert(followUpPayload, {
-      onConflict: "lead_id,recipient_normalized,sequence_number",
-      ignoreDuplicates: false,
-    })
-    .select(MESSAGE_COLUMNS)
-    .maybeSingle();
+  // New API: followUps array
+  if (input.followUps && input.followUps.length > 0) {
+    followUpsInput.push(...input.followUps);
+  }
+  // Old API: followUpSubject/followUpBody (for backward compatibility)
+  // Only use if they have actual content (not null/undefined/empty)
+  else if (
+    (input.followUpSubject !== undefined && input.followUpSubject !== null && input.followUpSubject.trim() !== "") ||
+    (input.followUpBody !== undefined && input.followUpBody !== null && input.followUpBody.trim() !== "")
+  ) {
+    followUpsInput.push({
+      subject: input.followUpSubject ?? null,
+      body: input.followUpBody ?? null,
+    });
+  }
 
-  const followUpResult = await followUpInsert;
-  if (!followUpResult.data) {
-    if (followUpResult.error && followUpResult.error.code === "23505") {
+  for (let i = 0; i < followUpsInput.length; i += 1) {
+    const fu = followUpsInput[i]!;
+    const sequenceNumber = i + 1;
+    const followUpSubject = fu.subject?.trim() || null;
+    const followUpBody = fu.body?.trim() || null;
+
+    const followUpPayload = {
+      lead_id: lead.id,
+      recipient_email: recipientEmail,
+      subject: followUpSubject,
+      body: followUpBody,
+      status: "draft" as const,
+      sequence_number: sequenceNumber,
+      parent_message_id: mainMessage.id,
+    };
+
+    const followUpInsert = supabase
+      .from("outreach_messages")
+      .upsert(followUpPayload, {
+        onConflict: "lead_id,recipient_normalized,sequence_number",
+        ignoreDuplicates: false,
+      })
+      .select(MESSAGE_COLUMNS)
+      .maybeSingle();
+
+    const followUpResult = await followUpInsert;
+    if (!followUpResult.data) {
+      if (followUpResult.error && followUpResult.error.code === "23505") {
+        return fail(
+          `A follow-up draft (sequence ${sequenceNumber}) for this recipient already exists. Open it from the history table instead.`,
+        );
+      }
+      // If follow-up creation fails, we should clean up the main draft and any previously created follow-ups to maintain consistency
+      await supabase
+        .from("outreach_messages")
+        .delete()
+        .eq("id", mainMessage.id);
+      for (const createdFu of followUpMessages) {
+        await supabase
+          .from("outreach_messages")
+          .delete()
+          .eq("id", createdFu.id);
+      }
       return fail(
-        "A follow-up draft for this recipient already exists. Open it from the history table instead.",
+        followUpResult.error?.message ??
+          `The follow-up draft (sequence ${sequenceNumber}) could not be saved.`,
       );
     }
-    // If follow-up creation fails, we should clean up the main draft to maintain consistency
-    await supabase
-      .from("outreach_messages")
-      .delete()
-      .eq("id", mainMessage.id);
-    return fail(
-      followUpResult.error?.message ??
-        "The follow-up draft could not be saved.",
-    );
+    followUpMessages.push(followUpResult.data as OutreachMessage);
   }
-  followUpMessage = followUpResult.data as OutreachMessage;
 
   return {
     ok: true,
@@ -208,7 +230,8 @@ export async function createDraft(
     data: {
       lead,
       main: mainMessage,
-      followUp: followUpMessage,
+      followUp: followUpMessages[0] ?? null,
+      followUps: followUpMessages,
       created: true,
     },
   };

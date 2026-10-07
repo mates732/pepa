@@ -47,7 +47,14 @@ export type CheckRecipientResult =
   | ActionFailure;
 
 export type SaveDraftResult =
-  | { ok: true; lead: Lead; message: OutreachMessage; followUp: OutreachMessage | null; created: boolean }
+  | {
+      ok: true;
+      lead: Lead;
+      message: OutreachMessage;
+      followUp: OutreachMessage | null;
+      followUps: OutreachMessage[];
+      created: boolean;
+    }
   | ActionFailure;
 
 function failure(error: string): ActionFailure {
@@ -79,8 +86,11 @@ export async function checkRecipient(recipient: string): Promise<CheckRecipientR
 /** Persist the composer contents as a draft and refresh the history table. */
 export async function saveDraft(input: {
   recipientEmail: string;
-  mainSubject: string;
-  mainBody: string;
+  mainSubject?: string;
+  mainBody?: string;
+  subject?: string;
+  body?: string;
+  followUps?: Array<{ subject: string | null; body: string | null }>;
   followUpSubject?: string | null;
   followUpBody?: string | null;
   companyName?: string | null;
@@ -95,21 +105,28 @@ export async function saveDraft(input: {
     return failure(`"${recipientEmail}" is not a valid email address.`);
   }
 
-  const mainSubject = (input.mainSubject ?? "").slice(0, 998);
-  const mainBody = (input.mainBody ?? "").slice(0, 200_000);
+  // Support both new API (mainSubject/mainBody) and old API (subject/body)
+  const mainSubject = (input.mainSubject ?? input.subject ?? "").slice(0, 998);
+  const mainBody = (input.mainBody ?? input.body ?? "").slice(0, 200_000);
   if (!mainSubject.trim()) return failure("A main subject is required to save a draft.");
   if (!mainBody.trim()) return failure("A main body is required to save a draft.");
 
-  const followUpSubject = (input.followUpSubject ?? "").slice(0, 998);
-  const followUpBody = (input.followUpBody ?? "").slice(0, 200_000);
+  // Support both new API (followUps array) and old API (followUpSubject/followUpBody)
+  const followUps = input.followUps?.map((fu) => ({
+    subject: (fu.subject ?? "").slice(0, 998),
+    body: (fu.body ?? "").slice(0, 200_000),
+  })) ?? (input.followUpSubject !== undefined || input.followUpBody !== undefined
+    ? [{ subject: (input.followUpSubject ?? "").slice(0, 998), body: (input.followUpBody ?? "").slice(0, 200_000) }]
+    : undefined);
 
   try {
     const result = await createDraft({
       recipientEmail,
       mainSubject,
       mainBody,
-      followUpSubject: followUpSubject || null,
-      followUpBody: followUpBody || null,
+      followUps,
+      followUpSubject: input.followUpSubject ?? null,
+      followUpBody: input.followUpBody ?? null,
       companyName: input.companyName?.slice(0, 200) ?? null,
       contactName: input.contactName?.slice(0, 200) ?? null,
       messageId: input.messageId ?? null,
@@ -124,6 +141,7 @@ export async function saveDraft(input: {
       message: result.data.main,
       created: result.data.created,
       followUp: result.data.followUp,
+      followUps: result.data.followUps,
     };
   } catch (error) {
     return failure(error instanceof Error ? error.message : "Could not save the draft.");

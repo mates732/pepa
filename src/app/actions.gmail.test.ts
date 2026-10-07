@@ -144,7 +144,7 @@ describe("openOutreachInGmail — authentication", () => {
 });
 
 describe("openOutreachInGmail — server-authoritative content", () => {
-  it("builds the URL from stored values", async () => {
+  it("builds the mailto: and web URLs from stored values", async () => {
     seedStore({
       message: {
         id: MESSAGE_ID,
@@ -162,9 +162,15 @@ describe("openOutreachInGmail — server-authoritative content", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(readComposeParam(result.url, "to")).toBe("info@thearchive.cz");
-    expect(readComposeParam(result.url, "su")).toBe("Nabídka pro The Archive");
-    expect(readComposeParam(result.url, "body")).toBe("Dobrý den,\n\ntext.\n\nS pozdravem");
+    // Test both mailto: and web URLs
+    // mailto: uses "subject", web uses "su" for subject parameter
+    // mailto: uses CRLF for body per RFC 6068, web uses LF
+    expect(readComposeParam(result.mailtoUrl, "to")).toBe("info@thearchive.cz");
+    expect(readComposeParam(result.mailtoUrl, "subject")).toBe("Nabídka pro The Archive");
+    expect(readComposeParam(result.mailtoUrl, "body")).toBe("Dobrý den,\r\n\r\ntext.\r\n\r\nS pozdravem");
+    expect(readComposeParam(result.webUrl, "to")).toBe("info@thearchive.cz");
+    expect(readComposeParam(result.webUrl, "su")).toBe("Nabídka pro The Archive");
+    expect(readComposeParam(result.webUrl, "body")).toBe("Dobrý den,\n\ntext.\n\nS pozdravem");
   });
 
   it("takes only a message id — a client cannot supply recipient, subject or body", async () => {
@@ -187,11 +193,11 @@ describe("openOutreachInGmail — server-authoritative content", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(readComposeParam(result.url, "to")).toBe("real@thearchive.cz");
-    expect(readComposeParam(result.url, "su")).toBe("Real subject");
-    expect(readComposeParam(result.url, "body")).toBe("Real body");
-    expect(result.url).not.toContain("attacker");
-    expect(result.url).not.toContain("evil");
+    expect(readComposeParam(result.mailtoUrl, "to")).toBe("real@thearchive.cz");
+    expect(readComposeParam(result.mailtoUrl, "subject")).toBe("Real subject");
+    expect(readComposeParam(result.mailtoUrl, "body")).toBe("Real body");
+    expect(result.mailtoUrl).not.toContain("attacker");
+    expect(result.mailtoUrl).not.toContain("evil");
   });
 
   it("reports the sequence position so the UI can tell a follow-up from an initial outreach", async () => {
