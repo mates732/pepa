@@ -71,31 +71,73 @@ export function EmailComposer(props: EmailComposerProps) {
           />
         </label>
 
-        <label className="block">
-          <span className="field-label">
-            Subject
-          </span>
-          <input
-            type="text"
-            value={values.subject}
-            onChange={(event) => onChange({ subject: event.target.value })}
-            placeholder="AI recepce pro Example"
-            className="field"
-          />
-        </label>
+        {/* --- MAIN OUTREACH (sequence 0) --- */}
+        <div className="border-2 border-midnight rounded-[1.25rem] p-4 space-y-3 bg-midnight-faint/20">
+          <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-midnight">
+            <span className="chip chip-solid">Main</span>
+            Initial outreach (sequence 0)
+          </h3>
 
-        <label className="block">
-          <span className="field-label">
-            Body
-          </span>
-          <textarea
-            value={values.body}
-            onChange={(event) => onChange({ body: event.target.value })}
-            rows={14}
-            spellCheck={false}
-            className="field resize-y leading-relaxed"
-          />
-        </label>
+          <label className="block">
+            <span className="field-label">
+              Subject
+            </span>
+            <input
+              type="text"
+              value={values.mainSubject}
+              onChange={(event) => onChange({ mainSubject: event.target.value })}
+              placeholder="AI recepce pro Example"
+              className="field"
+            />
+          </label>
+
+          <label className="block">
+            <span className="field-label">
+              Body
+            </span>
+            <textarea
+              value={values.mainBody}
+              onChange={(event) => onChange({ mainBody: event.target.value })}
+              rows={10}
+              spellCheck={false}
+              className="field resize-y leading-relaxed"
+            />
+          </label>
+        </div>
+
+        {/* --- FOLLOW-UP (sequence 1) --- */}
+        <div className="border-2 border-midnight rounded-[1.25rem] p-4 space-y-3 bg-midnight-faint/20">
+          <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-midnight">
+            <span className="chip chip-solid">Follow-up</span>
+            Follow-up email (sequence 1)
+          </h3>
+
+          <label className="block">
+            <span className="field-label">
+              Subject
+            </span>
+            <input
+              type="text"
+              value={values.followUpSubject}
+              onChange={(event) => onChange({ followUpSubject: event.target.value })}
+              placeholder="Re: AI recepce pro Example"
+              className="field"
+            />
+          </label>
+
+          <label className="block">
+            <span className="field-label">
+              Body
+            </span>
+            <textarea
+              value={values.followUpBody}
+              onChange={(event) => onChange({ followUpBody: event.target.value })}
+              rows={10}
+              spellCheck={false}
+              className="field resize-y leading-relaxed"
+            />
+          </label>
+        </div>
 
         <details className="rounded-[1.25rem] border-[3px] border-dashed border-midnight-line px-4 py-3">
           <summary className="cursor-pointer text-xs font-bold uppercase tracking-widest text-midnight-soft">
@@ -150,12 +192,12 @@ export function EmailComposer(props: EmailComposerProps) {
             disabled={props.openingGmail || !values.messageId}
             title={
               values.messageId
-                ? "Opens a Gmail draft with this text. This does not send anything and does not mark it as sent."
+                ? "Opens a Gmail draft with the MAIN outreach text. This does not send anything and does not mark it as sent."
                 : "Save the draft first. Gmail is filled from the saved message, so there is nothing stored to open yet."
             }
             className="btn"
           >
-            {props.openingGmail ? "Opening…" : "Open in Gmail ↗"}
+            {props.openingGmail ? "Opening…" : "Open MAIN in Gmail ↗"}
           </button>
 
           {/* The safety rule above is deliberate: the compose text is read from
@@ -191,7 +233,7 @@ export function EmailComposer(props: EmailComposerProps) {
           </button>
 
           <p className="w-full pt-1 text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
-            Opening Gmail does not mark this as sent — only “Mark as sent” does.
+            Opening Gmail does not mark this as sent &mdash; only &ldquo;Mark as sent&rdquo; does.
           </p>
         </div>
       </div>

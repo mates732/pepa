@@ -219,8 +219,12 @@ export async function importBulkEmails(rows: BulkDraftRequest[]): Promise<BulkIm
 
     const saved = await createDraft({
       recipientEmail: row.recipient,
-      subject: (row.subject ?? "").slice(0, MAX_SUBJECT_LENGTH),
-      body: (row.body ?? "").slice(0, MAX_BODY_LENGTH),
+      mainSubject: (row.subject ?? "").slice(0, MAX_SUBJECT_LENGTH),
+      mainBody: (row.body ?? "").slice(0, MAX_BODY_LENGTH),
+      // Follow-up starts as a copy of the main email; the operator can
+      // rewrite it independently in the composer before sending.
+      followUpSubject: (row.subject ?? "").slice(0, MAX_SUBJECT_LENGTH),
+      followUpBody: (row.body ?? "").slice(0, MAX_BODY_LENGTH),
       // The lead's own company and contact name, which the operator set. `null`
       // for a new lead rather than something derived from the domain.
       companyName: lead?.company_name ?? null,
@@ -241,14 +245,14 @@ export async function importBulkEmails(rows: BulkDraftRequest[]): Promise<BulkIm
 
     results.push({
       index: row.index,
-      recipient: saved.data.message.recipient_email,
+      recipient: saved.data.main.recipient_email,
       // `createDraft()` reports `created: true` on its upsert path whatever
       // happened, because the guarantee that matters there is the one Postgres
       // makes: slot 0 is refreshed in place, never duplicated. So "was this
       // already a draft?" is answered from the lead's message count, captured by
       // the re-check immediately above — the same read the composer's badge uses.
       outcome: check.check.messageCount > 0 ? "already_present" : "created",
-      messageId: saved.data.message.id,
+      messageId: saved.data.main.id,
       leadId: saved.data.lead.id,
       error: null,
     });

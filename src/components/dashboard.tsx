@@ -7,8 +7,10 @@ import {
   checkQualityGate,
   checkRecipient,
   deleteLeadFromHistory,
+  deleteOutreachMessage,
   loadFollowUpDetail,
   loadInitialOutreachDetail,
+  loadLeadOutreachPair,
   loadFollowUpWorkspace,
   loadHistoryRows,
   openOutreachInGmail,
@@ -45,11 +47,14 @@ import type { DuplicateCheckResult, OutreachHistoryRow, ParsedOutreachInput } fr
 
 const EMPTY: ComposerValues = {
   recipient: "",
-  subject: "",
-  body: "",
+  mainSubject: "",
+  mainBody: "",
+  followUpSubject: "",
+  followUpBody: "",
   companyName: "",
   contactName: "",
   messageId: null,
+  followUpMessageId: null,
   leadId: null,
 };
 
@@ -111,6 +116,7 @@ export function Dashboard({
   const [detailNotice, setDetailNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
   const [recordingDetail, setRecordingDetail] = useState(false);
   const [creatingFollowUp, setCreatingFollowUp] = useState(false);
+  const [deletingDetail, setDeletingDetail] = useState(false);
   const [openingDetailId, setOpeningDetailId] = useState<string | null>(null);
   const [openingComposerRowId, setOpeningComposerRowId] = useState<string | null>(null);
   // The history table is live: deleting an unsent lead removes it
@@ -263,8 +269,8 @@ export function Dashboard({
     try {
       const result = await checkQualityGate({
         recipient: valuesRef.current.recipient,
-        subject: valuesRef.current.subject,
-        body: valuesRef.current.body,
+        subject: valuesRef.current.mainSubject,
+        body: valuesRef.current.mainBody,
         messageId: valuesRef.current.messageId,
         leadId: valuesRef.current.leadId,
       });
@@ -295,8 +301,8 @@ export function Dashboard({
     return () => clearTimeout(handle);
   }, [
     values.recipient,
-    values.subject,
-    values.body,
+    values.mainSubject,
+    values.mainBody,
     values.messageId,
     values.leadId,
     hasContent,
@@ -307,8 +313,8 @@ export function Dashboard({
     setValues((current) => ({
       ...current,
       recipient: parsed.recipient || current.recipient,
-      subject: parsed.subject || current.subject,
-      body: parsed.body || current.body,
+      mainSubject: parsed.subject || current.mainSubject,
+      mainBody: parsed.body || current.mainBody,
     }));
     setHasContent(true);
     setSaved(false);
@@ -332,12 +338,13 @@ export function Dashboard({
   }
 
   /**
-   * Open the stored draft in Gmail.
+   * Open the stored draft in the default mail client (mailto:) or Gmail web.
    *
    * The browser sends only a message id; the server resolves recipient, subject
-   * and body from the database and returns a compose URL. Opening it changes
-   * nothing in PEPA: no status, no `sent_at`, no counter. Recording the send stays
-   * an explicit, separate action.
+   * and body from the database and returns both a mailto: URL (for the system
+   * default mail client — Gmail app/PWA if configured as default) and a Gmail
+   * web compose URL (fallback). Opening it changes nothing in PEPA: no status,
+   * no `sent_at`, no counter. Recording the send stays an explicit, separate action.
    */
   async function handleOpenInGmail() {
     if (!values.messageId) {
@@ -346,7 +353,7 @@ export function Dashboard({
     }
 
     setOpeningGmail(true);
-    // Reserved synchronously, inside the click, so the popup blocker still
+    // Reserve a tab synchronously, inside the click, so the popup blocker still
     // accepts it. See lib/outreach/open-compose-window.ts for why.
     const tab = preopenComposeWindow();
     try {
@@ -356,16 +363,30 @@ export function Dashboard({
         setNotice({ kind: "error", text: result.error });
         return;
       }
-      if (!navigateComposeWindow(tab, result.url)) {
+
+      // Try mailto: first — this opens the system default mail client.
+      // If the user has Gmail set as default handler (in OS settings), this opens Gmail app/PWA.
+      const mailtoOpened = tab && !tab.closed && navigateComposeWindow(tab, result.mailtoUrl);
+
+      // Also open Gmail web in a new tab as a reliable fallback.
+      // This ensures the user always has a working compose window.
+      const webTab = preopenComposeWindow();
+      const webOpened = webTab && !webTab.closed && navigateComposeWindow(webTab, result.webUrl);
+
+      if (!mailtoOpened && !webOpened) {
+        // Both failed — browser blocked popups. Give the user the URLs manually.
         setNotice({
           kind: "error",
-          text: `Your browser blocked the new tab. Open this link manually: ${result.url}`,
+          text: `Your browser blocked the new tab. Open manually: ${result.webUrl}`,
         });
         return;
       }
+
       setNotice({
         kind: "info",
-        text: "Gmail opened with the saved text. Nothing was sent — use “Mark as sent” after you send it yourself.",
+        text: mailtoOpened
+          ? "Opened default mail client (Gmail if set as default). Also opened Gmail web as fallback."
+          : "Opened Gmail web compose. Set Gmail as default mail handler to use mailto: links.",
       });
     } finally {
       setOpeningGmail(false);
@@ -460,18 +481,27 @@ export function Dashboard({
         setActivityNotice({ kind: "error", text: result.error });
         return;
       }
-      if (!navigateComposeWindow(tab, result.url)) {
-        // The browser refused even the blank tab. Say so and hand over the URL
-        // rather than reporting an open Gmail that does not exist.
+
+      // Try mailto: first — opens system default mail client.
+      const mailtoOpened = tab && !tab.closed && navigateComposeWindow(tab, result.mailtoUrl);
+
+      // Also open Gmail web as fallback.
+      const webTab = preopenComposeWindow();
+      const webOpened = webTab && !webTab.closed && navigateComposeWindow(webTab, result.webUrl);
+
+      if (!mailtoOpened && !webOpened) {
         setActivityNotice({
           kind: "error",
-          text: `Your browser blocked the new tab. Open this link manually: ${result.url}`,
+          text: `Your browser blocked the new tab. Open manually: ${result.webUrl}`,
         });
         return;
       }
+
       setActivityNotice({
         kind: "info",
-        text: "Gmail opened with the stored text. Nothing in PEPA changed — this outreach is already recorded as sent.",
+        text: mailtoOpened
+          ? "Opened default mail client (Gmail if set as default). Also opened Gmail web as fallback."
+          : "Opened Gmail web compose. Set Gmail as default mail handler to use mailto: links.",
       });
     } finally {
       setOpeningGmail(false);
@@ -533,16 +563,27 @@ export function Dashboard({
         setDetailNotice({ kind: "error", text: result.error });
         return;
       }
-      if (!navigateComposeWindow(tab, result.url)) {
+
+      // Try mailto: first — opens system default mail client.
+      const mailtoOpened = tab && !tab.closed && navigateComposeWindow(tab, result.mailtoUrl);
+
+      // Also open Gmail web as fallback.
+      const webTab = preopenComposeWindow();
+      const webOpened = webTab && !webTab.closed && navigateComposeWindow(webTab, result.webUrl);
+
+      if (!mailtoOpened && !webOpened) {
         setDetailNotice({
           kind: "error",
-          text: `Your browser blocked the new tab. Open this link manually: ${result.url}`,
+          text: `Your browser blocked the new tab. Open manually: ${result.webUrl}`,
         });
         return;
       }
+
       setDetailNotice({
         kind: "info",
-        text: "Gmail opened with the saved text. Nothing was sent — use “Mark as sent” after you send it yourself.",
+        text: mailtoOpened
+          ? "Opened default mail client (Gmail if set as default). Also opened Gmail web as fallback."
+          : "Opened Gmail web compose. Set Gmail as default mail handler to use mailto: links.",
       });
     } finally {
       setOpeningGmail(false);
@@ -603,6 +644,34 @@ export function Dashboard({
   }
 
   /**
+   * Delete a single outreach message from the detail view.
+   *
+   * Called when the operator confirms deletion in the FollowUpDetail dialog.
+   * On success, the detail view is closed and the workspace is refreshed.
+   */
+  async function handleDeleteOutreachMessage(messageId: string) {
+    setDeletingDetail(true);
+    setDetailNotice(null);
+    try {
+      const result = await deleteOutreachMessage({ messageId });
+      if (!result.ok) {
+        setDetailNotice({ kind: "error", text: result.error });
+        return;
+      }
+      setDetailNotice({ kind: "info", text: "Outreach message deleted." });
+      // Close the detail view and refresh the workspace
+      setDetail(null);
+      setSelectedId(null);
+      await loadWorkspace();
+      await loadActivity();
+      await loadStats();
+      await loadStreaks();
+    } finally {
+      setDeletingDetail(false);
+    }
+  }
+
+  /**
    * Phase 8F: draft the next follow-up in a sequence from the detail view.
    *
    * The anchor is the message on screen and the server resolves everything else,
@@ -646,8 +715,10 @@ export function Dashboard({
     try {
       const result = await saveDraft({
         recipientEmail: values.recipient,
-        subject: values.subject,
-        body: values.body,
+        mainSubject: values.mainSubject,
+        mainBody: values.mainBody,
+        followUpSubject: values.followUpSubject,
+        followUpBody: values.followUpBody,
         companyName: values.companyName || null,
         contactName: values.contactName || null,
         messageId: values.messageId,
@@ -661,6 +732,7 @@ export function Dashboard({
       setValues((current) => ({
         ...current,
         messageId: result.message.id,
+        followUpMessageId: result.followUp?.id ?? null,
         leadId: result.lead.id,
         companyName: result.lead.company_name ?? current.companyName,
         contactName: result.lead.contact_name ?? current.contactName,
@@ -864,19 +936,22 @@ export function Dashboard({
     setOpeningComposerRowId(row.id);
     setNotice(null);
     try {
-      const result = await loadInitialOutreachDetail({ leadId: row.id });
+      const result = await loadLeadOutreachPair({ leadId: row.id });
 
-      if (!result.ok || !result.detail) {
+      if (!result.ok) {
         // No stored initial outreach for this lead. Fall back to what the row
         // genuinely knows, say so, and let the disabled Gmail button explain
         // itself rather than looking like a button that simply refuses.
         setValues({
           recipient: row.email,
-          subject: row.latestSubject ?? "",
-          body: "",
+          mainSubject: row.latestSubject ?? "",
+          mainBody: "",
+          followUpSubject: "",
+          followUpBody: "",
           companyName: row.company_name ?? "",
           contactName: row.contact_name ?? "",
           messageId: null,
+          followUpMessageId: null,
           leadId: row.id,
         });
         setHasContent(true);
@@ -892,7 +967,11 @@ export function Dashboard({
         return;
       }
 
-      setValues(composerValuesFromSavedMessage(result.detail));
+      setValues(composerValuesFromSavedMessage({
+        lead: result.lead,
+        mainMessage: result.main,
+        followUpMessage: result.followUp,
+      }));
       setHasContent(true);
       // The content in the composer IS the stored draft, so it is saved by
       // definition. Saying otherwise would grey out the controls that are
@@ -1032,9 +1111,11 @@ export function Dashboard({
           onCreateFollowUp={(id, subject, body) =>
             void handleCreateDetailFollowUp(id, subject, body)
           }
+          onDelete={(id) => void handleDeleteOutreachMessage(id)}
           openingGmail={openingGmail}
           recording={recordingDetail}
           creating={creatingFollowUp}
+          deleting={deletingDetail}
           notice={detailNotice}
         />
       ) : null}

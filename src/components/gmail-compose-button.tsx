@@ -36,7 +36,7 @@ export function GmailComposeButton({
   label = "Open in Gmail ↗",
   pendingLabel = "Opening…",
   /** Shown when the window opened successfully. */
-  successText = "Gmail opened with the saved text. Nothing was sent — press Send yourself in Gmail.",
+  successText = "Opened default mail client (Gmail if set as default). Also opened Gmail web as fallback.",
 }: {
   open: () => Promise<OpenInGmailResult>;
   label?: string;
@@ -63,12 +63,19 @@ export function GmailComposeButton({
         return;
       }
 
-      if (!navigateComposeWindow(tab, result.url)) {
+      // Try mailto: first — opens system default mail client.
+      const mailtoOpened = tab && !tab.closed && navigateComposeWindow(tab, result.mailtoUrl);
+
+      // Also open Gmail web as fallback.
+      const webTab = preopenComposeWindow();
+      const webOpened = webTab && !webTab.closed && navigateComposeWindow(webTab, result.webUrl);
+
+      if (!mailtoOpened && !webOpened) {
         // The browser refused even the blank tab. Say so and hand over the URL
         // rather than reporting an open Gmail that does not exist.
         setNotice({
           kind: "error",
-          text: `Your browser blocked the new tab. Open this link manually: ${result.url}`,
+          text: `Your browser blocked the new tab. Open this link manually: ${result.webUrl}`,
         });
         return;
       }

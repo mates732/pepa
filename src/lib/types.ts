@@ -97,6 +97,16 @@ export interface ParsedOutreachInput {
  */
 export type DuplicateState = "new" | "existing" | "contacted";
 
+export type OutreachKind = "main" | "follow-up";
+
+/** One outreach email stored for a lead, together with where it sits in the
+ * lead's outreach sequence. */
+export interface LeadOutreachEmail {
+  message: OutreachMessage;
+  /** "main" = sequence 0, "follow-up" = sequence 1. */
+  kind: OutreachKind;
+}
+
 export interface DuplicateCheckResult {
   state: DuplicateState;
   normalizedEmail: string;
@@ -141,6 +151,10 @@ export interface OutreachHistoryRow extends Lead {
    * deleted, even when a newer follow-up row is still a draft.
    */
   unsent: boolean;
+  /** The main outreach email (sequence 0) or null when none is stored yet. */
+  mainEmail?: LeadOutreachEmail | null;
+  /** The follow-up email (sequence 1) or null when none is stored yet. */
+  followUpEmail?: LeadOutreachEmail | null;
 }
 
 export interface ServiceResult<T> {

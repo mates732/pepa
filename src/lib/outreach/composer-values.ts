@@ -39,11 +39,18 @@ import type { Lead, OutreachMessage } from "@/lib/types";
  */
 export interface ComposerValues {
   recipient: string;
-  subject: string;
-  body: string;
+  /** Main outreach (sequence 0) */
+  mainSubject: string;
+  mainBody: string;
+  /** Follow-up (sequence 1) */
+  followUpSubject: string;
+  followUpBody: string;
   companyName: string;
   contactName: string;
+  /** ID of the main outreach message (sequence 0) */
   messageId: string | null;
+  /** ID of the follow-up message (sequence 1) */
+  followUpMessageId: string | null;
   /** Set once the draft is saved, so a send can be recorded against its lead. */
   leadId: string | null;
 }
@@ -63,15 +70,19 @@ export interface ComposerValues {
  */
 export function composerValuesFromSavedMessage(detail: {
   lead: Lead;
-  message: OutreachMessage;
+  mainMessage: OutreachMessage;
+  followUpMessage: OutreachMessage | null;
 }): ComposerValues {
   return {
-    recipient: detail.message.recipient_email,
-    subject: detail.message.subject ?? "",
-    body: detail.message.body ?? "",
+    recipient: detail.mainMessage.recipient_email,
+    mainSubject: detail.mainMessage.subject ?? "",
+    mainBody: detail.mainMessage.body ?? "",
+    followUpSubject: detail.followUpMessage?.subject ?? "",
+    followUpBody: detail.followUpMessage?.body ?? "",
     companyName: detail.lead.company_name ?? "",
     contactName: detail.lead.contact_name ?? "",
-    messageId: detail.message.id,
+    messageId: detail.mainMessage.id,
+    followUpMessageId: detail.followUpMessage?.id ?? null,
     leadId: detail.lead.id,
   };
 }

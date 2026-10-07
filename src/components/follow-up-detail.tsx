@@ -30,9 +30,11 @@ interface FollowUpDetailProps {
   onOpenInGmail: (messageId: string) => void;
   onMarkSent: (messageId: string, leadId: string) => void;
   onCreateFollowUp: (parentMessageId: string, subject: string, body: string) => void;
+  onDelete: (messageId: string) => void;
   openingGmail: boolean;
   recording: boolean;
   creating: boolean;
+  deleting: boolean;
   notice: { kind: "info" | "error"; text: string } | null;
 }
 
@@ -113,9 +115,11 @@ export function FollowUpDetail({
   onOpenInGmail,
   onMarkSent,
   onCreateFollowUp,
+  onDelete,
   openingGmail,
   recording,
   creating,
+  deleting,
   notice,
 }: FollowUpDetailProps) {
   const { lead, message } = detail;
@@ -125,6 +129,9 @@ export function FollowUpDetail({
   // Phase 8F — the next follow-up in this sequence, drafted in place.
   const [followUpSubject, setFollowUpSubject] = useState("");
   const [followUpBody, setFollowUpBody] = useState("");
+
+  // Delete confirmation state
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   return (
     <section className="sticker">
@@ -230,7 +237,7 @@ export function FollowUpDetail({
           <button
             type="button"
             onClick={() => onOpenInGmail(message.id)}
-            disabled={openingGmail}
+            disabled={openingGmail || deleting}
             className="btn"
             title="Opens a Gmail draft with this text. This does not send anything and does not mark it as sent."
           >
@@ -240,12 +247,49 @@ export function FollowUpDetail({
           <button
             type="button"
             onClick={() => onMarkSent(message.id, lead.id)}
-            disabled={recording || sent}
+            disabled={recording || sent || deleting}
             className="btn btn-primary"
             title="Record this follow-up as sent. Runs the quality gate first."
           >
             {sent ? "Already sent" : recording ? "Recording…" : "Mark as sent"}
           </button>
+
+          {!confirmDelete ? (
+            <button
+              type="button"
+              onClick={() => setConfirmDelete(true)}
+              disabled={deleting}
+              className="btn btn-ghost"
+              title="Delete this outreach message permanently. This cannot be undone."
+            >
+              {deleting ? "Deleting…" : "Smazat"}
+            </button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-midnight-soft">
+                Opravdu smazat? Tato akce je nevratná.
+              </span>
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+                disabled={deleting}
+                className="btn btn-sm"
+              >
+                Zrušit
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmDelete(false);
+                  onDelete(message.id);
+                }}
+                disabled={deleting}
+                className="btn btn-sm btn-alarm"
+              >
+                {deleting ? "Deleting…" : "Smazat"}
+              </button>
+            </div>
+          )}
 
           <p className="w-full pt-1 text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
             Opening Gmail does not mark this as sent.

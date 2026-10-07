@@ -8,10 +8,26 @@ import {
   type GateEvaluation,
 } from "@/lib/services/outreach-quality-gate";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
-import type { Lead, OutreachHistoryRow, OutreachMessage, ServiceResult } from "@/lib/types";
+import type {
+  Lead,
+  OutreachMessage,
+  OutreachHistoryRow,
+  LeadOutreachEmail,
+  OutreachKind,
+  ServiceResult,
+} from "@/lib/types";
 
 const MESSAGE_COLUMNS =
   "id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at, sequence_number, parent_message_id";
+
+/**
+ * Filters for {@link listOutreachHistory}.
+ */
+interface OutreachHistoryFilters {
+  status?: string | null;
+  search?: string | null;
+  limit?: number;
+}
 
 function fail(error: string): ServiceResult<never> {
   return { ok: false, data: null, error };
@@ -19,86 +35,183 @@ function fail(error: string): ServiceResult<never> {
 
 export interface DraftInput {
   recipientEmail: string;
-  subject: string;
-  body: string;
+  /** Main outreach (sequence 0) */
+  mainSubject: string;
+  mainBody: string;
+  /** Follow-up (sequence 1) - optional, defaults to empty draft */
+  followUpSubject?: string | null;
+  followUpBody?: string | null;
   companyName?: string | null;
   contactName?: string | null;
   /** Set when re-saving an existing draft instead of creating a new one. */
   messageId?: string | null;
 }
 
-/**
- * Save the composer's contents as a draft.
+/** Save the composer's contents as a draft.
  *
  * The lead is created on demand (dedupe is guaranteed by the unique index on
  * `leads.email_normalized`), and re-saving the same recipient updates the open
  * draft rather than piling up duplicates — also enforced by a unique index on
  * (lead_id, normalized recipient_email).
+ *
+ * PEPA's outreach page always writes a PAIR of drafts together: a MAIN
+ * (sequence 0) and a FOLLOW-UP (sequence 1). Writing them as one unit means a
+ * lead never ends up with an initial email and no follow-up, and the two can
+ * later be worked on, sent and scheduled independently.
  */
 export async function createDraft(
   input: DraftInput,
-): Promise<ServiceResult<{ lead: Lead; message: OutreachMessage; created: boolean }>> {
+): Promise<ServiceResult<{
+  lead: Lead;
+  main: OutreachMessage;
+  followUp: OutreachMessage | null;
+  created: boolean;
+}>> {
   const recipientEmail = normalizeEmail(input.recipientEmail);
   if (!recipientEmail) return fail("A recipient email is required.");
 
-  const leadResult = input.messageId
-    ? await getLead(await leadIdForMessage(input.messageId))
-    : await createLead({
-        email: recipientEmail,
-        companyName: input.companyName,
-        contactName: input.contactName,
-      });
+  const supabase = getSupabaseAdmin();
+
+  const leadPromise =
+    input.messageId && input.messageId.startsWith("main_")
+      ? getLead(await leadIdForMessage(input.messageId))
+      : createLead({
+          email: recipientEmail,
+          companyName: input.companyName,
+          contactName: input.contactName,
+        });
+
+  const leadResult = await leadPromise;
 
   if (!leadResult.ok || !leadResult.data) {
     return fail(leadResult.error ?? "Could not resolve the lead for this draft.");
   }
   const lead = leadResult.data;
 
-  const supabase = getSupabaseAdmin();
-  const payload = {
+  const mainPayload = {
     lead_id: lead.id,
     recipient_email: recipientEmail,
-    subject: input.subject.trim() || null,
-    body: input.body.trim() || null,
+    subject: input.mainSubject.trim() || null,
+    body: input.mainBody.trim() || null,
     status: "draft" as const,
-    // The composer creates the initial outreach, which is always slot 0.
-    // Follow-ups get their own rows via `saveFollowUpDraft()`.
     sequence_number: 0,
     parent_message_id: null,
   };
 
-  if (input.messageId) {
-    const { data, error } = await supabase
+  // Follow-up payload uses independently provided subject/body (or empty defaults)
+  const followUpSubject = input.followUpSubject?.trim() || null;
+  const followUpBody = input.followUpBody?.trim() || null;
+
+  const followUpPayload: {
+    lead_id: string;
+    recipient_email: string;
+    subject: string | null;
+    body: string | null;
+    status: "draft";
+    sequence_number: 1;
+    parent_message_id: string | null;
+  } = {
+    lead_id: lead.id,
+    recipient_email: recipientEmail,
+    subject: followUpSubject,
+    body: followUpBody,
+    status: "draft" as const,
+    sequence_number: 1,
+    parent_message_id: null, // Will be set after main is created
+  };
+
+  let mainMessage: OutreachMessage;
+  let followUpMessage: OutreachMessage | null = null;
+
+  if (input.messageId && input.messageId.startsWith("main_")) {
+    // Only persist the main draft this session asked for. Everything else
+    // (including the paired follow-up) is left alone unless it was written
+    // below.
+    const { data: updated, error: updateError } = await supabase
       .from("outreach_messages")
-      .update(payload)
-      .eq("id", input.messageId)
+      .update(mainPayload)
+      .eq("id", input.messageId.slice("main_".length))
       .select(MESSAGE_COLUMNS)
       .maybeSingle();
-    if (error) return fail(error.message);
-    if (!data) return fail("Draft not found.");
-    return { ok: true, error: null, data: { lead, message: data as OutreachMessage, created: false } };
+
+    if (updateError) return fail(updateError.message);
+    if (!updated) return fail("Draft not found.");
+    mainMessage = updated as OutreachMessage;
+    return {
+      ok: true,
+      error: null,
+      data: {
+        lead,
+        main: mainMessage,
+        followUp: followUpMessage,
+        created: false,
+      },
+    };
   }
 
-  const { data, error } = await supabase
+  // ---- MAIN DRAFT -----------------------------------------------------
+  const mainInsert = supabase
     .from("outreach_messages")
-    .upsert(payload, {
-      // Keyed on the sequence slot, so re-saving an initial draft refreshes it
-      // while a follow-up at slot 1+ is left untouched.
+    .upsert(mainPayload, {
       onConflict: "lead_id,recipient_normalized,sequence_number",
       ignoreDuplicates: false,
     })
     .select(MESSAGE_COLUMNS)
     .maybeSingle();
 
-  if (error) {
-    if (error.code === "23505") {
-      return fail("An outreach message for this recipient already exists. Open it from the history table instead.");
+  const mainResult = await mainInsert;
+  if (!mainResult.data) {
+    if (mainResult.error && mainResult.error.code === "23505") {
+      return fail(
+        "A draft for this recipient already exists. Open it from the history table instead.",
+      );
     }
-    return fail(error.message);
+    return fail(mainResult.error?.message ?? "The main draft could not be saved.");
   }
-  if (!data) return fail("Draft could not be saved.");
+  mainMessage = mainResult.data as OutreachMessage;
 
-  return { ok: true, error: null, data: { lead, message: data as OutreachMessage, created: true } };
+  // ---- FOLLOW-UP DRAFT ------------------------------------------------
+  // Set parent_message_id to link follow-up to main
+  followUpPayload.parent_message_id = mainMessage.id;
+
+  const followUpInsert = supabase
+    .from("outreach_messages")
+    .upsert(followUpPayload, {
+      onConflict: "lead_id,recipient_normalized,sequence_number",
+      ignoreDuplicates: false,
+    })
+    .select(MESSAGE_COLUMNS)
+    .maybeSingle();
+
+  const followUpResult = await followUpInsert;
+  if (!followUpResult.data) {
+    if (followUpResult.error && followUpResult.error.code === "23505") {
+      return fail(
+        "A follow-up draft for this recipient already exists. Open it from the history table instead.",
+      );
+    }
+    // If follow-up creation fails, we should clean up the main draft to maintain consistency
+    await supabase
+      .from("outreach_messages")
+      .delete()
+      .eq("id", mainMessage.id);
+    return fail(
+      followUpResult.error?.message ??
+        "The follow-up draft could not be saved.",
+    );
+  }
+  followUpMessage = followUpResult.data as OutreachMessage;
+
+  return {
+    ok: true,
+    error: null,
+    data: {
+      lead,
+      main: mainMessage,
+      followUp: followUpMessage,
+      created: true,
+    },
+  };
 }
 
 async function leadIdForMessage(messageId: string): Promise<string> {
@@ -123,19 +236,30 @@ async function leadIdForMessage(messageId: string): Promise<string> {
 const SENDABLE_STATUSES = ["draft", "ready"] as const;
 
 export type RecordSentResult =
-  /** The transition happened on this call, and a follow-up was scheduled. */
   | {
       outcome: "recorded";
-      message: OutreachMessage;
+      main: OutreachMessage;
+      followUp: OutreachMessage | null;
       nextFollowUpAt: string | null;
       gate: GateEvaluation | null;
     }
-  /** It was already recorded as sent. Nothing was written, nothing rescheduled. */
-  | { outcome: "already_sent"; message: OutreachMessage; gate: GateEvaluation | null }
-  /** The quality gate refused. Nothing was written. */
-  | { outcome: "blocked"; gate: GateEvaluation; error: string; blockReason: string | null }
-  /** Warnings are present and the operator has not confirmed them yet. */
-  | { outcome: "needs_confirmation"; gate: GateEvaluation; error: string };
+  | {
+      outcome: "already_sent";
+      main: OutreachMessage;
+      followUp: OutreachMessage | null;
+      gate: GateEvaluation | null;
+    }
+  | {
+      outcome: "blocked";
+      gate: GateEvaluation;
+      error: string;
+      blockReason: string | null;
+    }
+  | {
+      outcome: "needs_confirmation";
+      gate: GateEvaluation;
+      error: string;
+    };
 
 /**
  * Record that the operator sent a draft from their own mail client.
@@ -162,8 +286,7 @@ export async function recordOutreachSent(input: {
   messageId: string;
   leadId: string;
   sentAt?: Date;
-  /**
-   * Set by the caller once the operator has explicitly acknowledged the gate's
+  /** Set by the caller once the operator has explicitly acknowledged the gate's
    * warnings. Warnings are never waived implicitly: the first call reports them
    * and the second one, with this flag, proceeds.
    */
@@ -195,7 +318,7 @@ export async function recordOutreachSent(input: {
     return {
       ok: true,
       error: null,
-      data: { outcome: "already_sent", message: evaluated.message, gate },
+      data: { outcome: "already_sent", main: evaluated.message, followUp: null, gate },
     };
   }
 
@@ -251,7 +374,7 @@ export async function recordOutreachSent(input: {
     return {
       ok: true,
       error: null,
-      data: { outcome: "already_sent", message: existing, gate: gate ?? null },
+      data: { outcome: "already_sent", main: existing, followUp: null, gate: gate ?? null },
     };
   }
 
@@ -272,7 +395,8 @@ export async function recordOutreachSent(input: {
     error: null,
     data: {
       outcome: "recorded",
-      message: data as OutreachMessage,
+      main: data as OutreachMessage,
+      followUp: null,
       nextFollowUpAt,
       gate: gate ?? null,
     },
@@ -302,7 +426,10 @@ async function findRecordedSend(
   return (data as OutreachMessage | null) ?? null;
 }
 
-/** Every message ever attached to a lead, newest first. Feeds reply/follow-up history (V2). */
+/**
+ * Every message ever attached to a lead, newest first.
+ * Feeds reply/follow-up history (V2).
+ */
 export async function getLeadOutreachHistory(
   leadId: string,
 ): Promise<ServiceResult<OutreachMessage[]>> {
@@ -317,18 +444,68 @@ export async function getLeadOutreachHistory(
   return { ok: true, error: null, data: (data ?? []) as OutreachMessage[] };
 }
 
-export interface OutreachHistoryFilters {
-  status?: string | null;
-  search?: string | null;
-  limit?: number;
+/**
+ * Load each lead's two outreach emails (main at sequence 0 and follow-up at
+ * sequence 1, if stored). One query joins the messages, so a lead with two
+ * drafts costs one round trip whether it owns one or both.
+ *
+ * Throws on a database error. The caller is responsible for handling it.
+ */
+async function leadOutreachEmails(
+  leadIds: string[],
+): Promise<Map<string, LeadOutreachEmail[]>> {
+  if (leadIds.length === 0) return new Map();
+
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("outreach_messages")
+    .select(MESSAGE_COLUMNS)
+    .eq("lead_id", { in: leadIds })
+    .order("lead_id", { ascending: true })
+    .order("sequence_number", { ascending: true });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const byLead = new Map<string, LeadOutreachEmail[]>();
+
+  for (const row of (data ?? [])) {
+    const leadId = String(row.lead_id);
+    const message = {
+      id: row.id,
+      lead_id: leadId,
+      recipient_email: row.recipient_email,
+      subject: row.subject,
+      body: row.body,
+      status: row.status,
+      provider: row.provider,
+      provider_message_id: row.provider_message_id,
+      sent_at: row.sent_at,
+      created_at: row.created_at,
+      sequence_number: Number(row.sequence_number ?? 0),
+      parent_message_id: row.parent_message_id ?? null,
+    } as OutreachMessage;
+
+    const kind: OutreachKind =
+      Number(message.sequence_number) === 0 ? "main" : "follow-up";
+
+    const rowsForLead = byLead.get(leadId) ?? [];
+    rowsForLead.push({ message, kind });
+    byLead.set(leadId, rowsForLead);
+  }
+
+  return byLead;
 }
 
-/** Rows for the dashboard table, joined with each lead's latest message. */
+/**
+ * Rows for the dashboard table, joined with each lead's two outreach emails.
+ */
 export async function listOutreachHistory(
   filters: OutreachHistoryFilters = {},
 ): Promise<ServiceResult<OutreachHistoryRow[]>> {
   const supabase = getSupabaseAdmin();
-  let query = supabase
+  const leadQuery = supabase
     .from("outreach_overview")
     .select(
       "id, email, company_name, contact_name, status, created_at, updated_at, last_contacted_at, next_followup_at, followup_count, latest_subject, latest_message_status, latest_message_at, message_count, last_followup_notified_number, last_followup_notified_at",
@@ -336,16 +513,28 @@ export async function listOutreachHistory(
     .order("updated_at", { ascending: false })
     .limit(filters.limit ?? 200);
 
-  if (filters.status) query = query.eq("status", filters.status);
+  if (filters.status) leadQuery.eq("status", filters.status);
   if (filters.search) {
     const safe = filters.search.replace(/[%,()]/g, "");
-    query = query.or(
+    leadQuery.or(
       `email.ilike.%${safe}%,company_name.ilike.%${safe}%,contact_name.ilike.%${safe}%,latest_subject.ilike.%${safe}%`,
     );
   }
 
-  const { data, error } = await query;
+  const { data, error } = await leadQuery;
   if (error) return fail(error.message);
+
+  const leadIds = (data ?? []).map((row) => row.id);
+
+  // A lead that already has an initial email in the database is the one that
+  // the operator will press "send" on, so the pair is read from the database
+  // not assumed from the latest_subject.
+  let emailsByLead: Map<string, LeadOutreachEmail[]>;
+  try {
+    emailsByLead = await leadOutreachEmails(leadIds);
+  } catch (error) {
+    return fail(error instanceof Error ? error.message : "Could not read the outreach emails.");
+  }
 
   // The view returns snake_case; the UI works with the camelCase row type.
   const rows = ((data ?? []) as Array<Record<string, unknown>>).map((row) => ({
@@ -364,7 +553,8 @@ export async function listOutreachHistory(
     latestMessageAt: (row.latest_message_at ?? null) as string | null,
     messageCount: Number(row.message_count ?? 0),
     lastFollowupNotifiedNumber:
-      row.last_followup_notified_number === null || row.last_followup_notified_number === undefined
+      row.last_followup_notified_number === null ||
+      row.last_followup_notified_number === undefined
         ? null
         : Number(row.last_followup_notified_number),
     lastFollowupNotifiedAt: (row.last_followup_notified_at ?? null) as string | null,
@@ -375,31 +565,36 @@ export async function listOutreachHistory(
   // NEWEST message per lead, so a lead whose primary went out and whose
   // follow-up is still a draft would otherwise look deletable here. The
   // heads are read separately and joined in.
-  const leadIds = rows.map((row) => row.id);
-  const { data: primaryMessages } =
-    leadIds.length === 0
-      ? { data: [] }
-      : await supabase
-          .from("outreach_messages")
-          .select("lead_id, status, sent_at")
-          .eq("sequence_number", 0)
-          .in("lead_id", leadIds);
+  const primaryMessagesByLead = new Map<
+    string,
+    { status: string; sent_at: string | null } | null
+  >();
+  if (leadIds.length > 0) {
+    const { data: primaryMessages } = await supabase
+      .from("outreach_messages")
+      .select("lead_id, status, sent_at")
+      .eq("sequence_number", 0)
+      .in("lead_id", leadIds);
+
+    for (const message of (primaryMessages ?? [])) {
+      primaryMessagesByLead.set(
+        String(message.lead_id),
+        { status: message.status, sent_at: message.sent_at },
+      );
+    }
+  }
 
   const unsentByLead = new Map<string, boolean>(
     leadIds.map((leadId) => [leadId, true]),
   );
-  for (const message of (primaryMessages ?? []) as Array<
-    | { lead_id: string; status: string; sent_at: string | null }
-    | undefined
-  >) {
-    // The real query never returns a partial row for a selected column, but TS
-    // cannot see through the supabase client once the outer generic is dropped.
-    if (message == null) continue;
-    unsentByLead.set(
-      message.lead_id,
-      message.sent_at === null &&
-        (message.status === "draft" || message.status === "ready"),
-    );
+  for (const [leadId, primary] of primaryMessagesByLead) {
+    if (primary) {
+      unsentByLead.set(
+        leadId,
+        primary.sent_at === null &&
+          (primary.status === "draft" || primary.status === "ready"),
+      );
+    }
   }
 
   return {
@@ -407,6 +602,8 @@ export async function listOutreachHistory(
     error: null,
     data: rows.map((row) => ({
       ...row,
+      mainEmail: emailsByLead.get(row.id)?.find((entry) => entry.kind === "main") ?? null,
+      followUpEmail: emailsByLead.get(row.id)?.find((entry) => entry.kind === "follow-up") ?? null,
       unsent: unsentByLead.get(row.id) ?? true,
     })),
   };

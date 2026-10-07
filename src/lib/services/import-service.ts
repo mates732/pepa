@@ -101,7 +101,7 @@ export async function createOutreachImport(
   }
 
   const supabase = getSupabaseAdmin();
-  const payload = {
+  const mainPayload = {
     lead_id: lead.id,
     recipient_email: recipient,
     subject,
@@ -122,7 +122,7 @@ export async function createOutreachImport(
   // follow-up already in the chain.
   const { data, error } = await supabase
     .from("outreach_messages")
-    .upsert(payload, {
+    .upsert(mainPayload, {
       onConflict: "lead_id,recipient_normalized,sequence_number",
       ignoreDuplicates: false,
     })
@@ -132,11 +132,42 @@ export async function createOutreachImport(
   if (error) return rejected("store_failed", "The imported draft could not be stored.");
   if (!data) return rejected("store_failed", "The imported draft could not be stored.");
 
-  const message = data as OutreachMessage;
+  const mainMessage = data as OutreachMessage;
+
+  // Also create a follow-up draft (sequence 1) as a copy of the main email.
+  // The operator can rewrite it independently in the composer before sending.
+  const followUpPayload = {
+    lead_id: lead.id,
+    recipient_email: recipient,
+    subject,
+    body,
+    status: "draft" as const,
+    provider: null,
+    provider_message_id: null,
+    sent_at: null,
+    sequence_number: 1,
+    parent_message_id: mainMessage.id,
+  };
+
+  const { error: followUpError } = await supabase
+    .from("outreach_messages")
+    .upsert(followUpPayload, {
+      onConflict: "lead_id,recipient_normalized,sequence_number",
+      ignoreDuplicates: false,
+    });
+
+  if (followUpError) {
+    // If follow-up creation fails, clean up the main message to maintain consistency
+    await supabase
+      .from("outreach_messages")
+      .delete()
+      .eq("id", mainMessage.id);
+    return rejected("store_failed", "The follow-up draft could not be stored.");
+  }
 
   const minted = await mintFollowUpToken({
     leadId: lead.id,
-    outreachId: message.id,
+    outreachId: mainMessage.id,
     ttlMs: IMPORT_TOKEN_TTL_MS,
     purpose: IMPORT_PURPOSE,
   });

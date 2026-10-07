@@ -2,7 +2,7 @@
 
 import type { OpenInGmailResult } from "@/app/actions";
 import { requireAuthenticatedUser } from "@/lib/auth/dal";
-import { buildGmailComposeUrl } from "@/lib/outreach/gmail-compose";
+import { buildComposeUrls } from "@/lib/outreach/gmail-compose";
 import { saveImportedDraft, resolveOutreachImport } from "@/lib/services/import-service";
 
 export type SaveImportResult =
@@ -82,13 +82,16 @@ export async function openImportInGmail(input: { token: string }): Promise<OpenI
 
   const sequenceNumber = Number(message.sequence_number ?? 0);
 
+  const urls = buildComposeUrls({
+    to: message.recipient_email,
+    subject: message.subject,
+    body: message.body,
+  });
+
   return {
     ok: true,
-    url: buildGmailComposeUrl({
-      to: message.recipient_email,
-      subject: message.subject,
-      body: message.body,
-    }),
+    mailtoUrl: urls.mailto,
+    webUrl: urls.web,
     sequenceNumber,
     isFollowUp: sequenceNumber > 0,
   };

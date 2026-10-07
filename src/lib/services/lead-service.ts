@@ -308,3 +308,59 @@ export async function deleteLead(
   if (!leadId) return fail("A lead is required.");
   return deleteLeadRow(leadId);
 }
+
+/**
+ * Delete a single outreach message by ID.
+ *
+ * If the message is a main outreach (sequence 0), any follow-up
+ * (sequence 1) with parent_message_id pointing to it will have its
+ * parent_message_id set to NULL to avoid orphaned references.
+ *
+ * If the message is a follow-up (sequence 1), it is simply deleted.
+ *
+ * The caller must ensure the message exists before calling this function.
+ */
+export async function deleteOutreachMessage(
+  messageId: string,
+): Promise<ServiceResult<{ deleted: boolean }>> {
+  if (!messageId) return fail("A message ID is required.");
+
+  const supabase = getSupabaseAdmin();
+
+  // First, read the message to know its sequence_number and lead_id
+  const { data: message, error: readError } = await supabase
+    .from("outreach_messages")
+    .select("id, lead_id, sequence_number, parent_message_id")
+    .eq("id", messageId)
+    .maybeSingle();
+
+  if (readError) return fail(readError.message);
+  if (!message) return fail("That outreach message does not exist.");
+
+  const leadId = message.lead_id;
+  const sequenceNumber = Number(message.sequence_number ?? 0);
+
+  // If this is a main message (sequence 0), find and update any follow-up
+  // that references it as parent to set parent_message_id to NULL
+  if (sequenceNumber === 0) {
+    const { error: updateError } = await supabase
+      .from("outreach_messages")
+      .update({ parent_message_id: null })
+      .eq("lead_id", leadId)
+      .eq("sequence_number", 1)
+      .eq("parent_message_id", messageId);
+
+    if (updateError) return fail(updateError.message);
+  }
+
+  // Delete the message
+  const { error: deleteError, count } = await supabase
+    .from("outreach_messages")
+    .delete({ count: "exact" })
+    .eq("id", messageId);
+
+  if (deleteError) return fail(deleteError.message);
+  if (!count) return fail("That outreach message could not be deleted.");
+
+  return { ok: true, error: null, data: { deleted: true } };
+}

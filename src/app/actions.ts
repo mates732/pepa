@@ -4,11 +4,12 @@ import { revalidatePath } from "next/cache";
 
 import { requireAuthenticatedUser } from "@/lib/auth/dal";
 import { isValidEmail, normalizeEmail } from "@/lib/email";
-import { buildGmailComposeUrl } from "@/lib/outreach/gmail-compose";
+import { buildComposeUrls } from "@/lib/outreach/gmail-compose";
 import {
   findLeadByEmail,
   deleteLead as deleteLeadService,
   deleteUnsentLead as deleteUnsentLeadService,
+  deleteOutreachMessage as deleteOutreachMessageService,
 } from "@/lib/services/lead-service";
 import {
   createDraft,
@@ -46,7 +47,7 @@ export type CheckRecipientResult =
   | ActionFailure;
 
 export type SaveDraftResult =
-  | { ok: true; lead: Lead; message: OutreachMessage; created: boolean }
+  | { ok: true; lead: Lead; message: OutreachMessage; followUp: OutreachMessage | null; created: boolean }
   | ActionFailure;
 
 function failure(error: string): ActionFailure {
@@ -78,8 +79,10 @@ export async function checkRecipient(recipient: string): Promise<CheckRecipientR
 /** Persist the composer contents as a draft and refresh the history table. */
 export async function saveDraft(input: {
   recipientEmail: string;
-  subject: string;
-  body: string;
+  mainSubject: string;
+  mainBody: string;
+  followUpSubject?: string | null;
+  followUpBody?: string | null;
   companyName?: string | null;
   contactName?: string | null;
   messageId?: string | null;
@@ -92,16 +95,21 @@ export async function saveDraft(input: {
     return failure(`"${recipientEmail}" is not a valid email address.`);
   }
 
-  const subject = (input.subject ?? "").slice(0, 998);
-  const body = (input.body ?? "").slice(0, 200_000);
-  if (!subject.trim()) return failure("A subject is required to save a draft.");
-  if (!body.trim()) return failure("A body is required to save a draft.");
+  const mainSubject = (input.mainSubject ?? "").slice(0, 998);
+  const mainBody = (input.mainBody ?? "").slice(0, 200_000);
+  if (!mainSubject.trim()) return failure("A main subject is required to save a draft.");
+  if (!mainBody.trim()) return failure("A main body is required to save a draft.");
+
+  const followUpSubject = (input.followUpSubject ?? "").slice(0, 998);
+  const followUpBody = (input.followUpBody ?? "").slice(0, 200_000);
 
   try {
     const result = await createDraft({
       recipientEmail,
-      subject,
-      body,
+      mainSubject,
+      mainBody,
+      followUpSubject: followUpSubject || null,
+      followUpBody: followUpBody || null,
       companyName: input.companyName?.slice(0, 200) ?? null,
       contactName: input.contactName?.slice(0, 200) ?? null,
       messageId: input.messageId ?? null,
@@ -110,7 +118,13 @@ export async function saveDraft(input: {
       return failure(result.error ?? "Could not save the draft.");
     }
     revalidatePath("/");
-    return { ok: true, ...result.data };
+    return {
+      ok: true,
+      lead: result.data.lead,
+      message: result.data.main,
+      created: result.data.created,
+      followUp: result.data.followUp,
+    };
   } catch (error) {
     return failure(error instanceof Error ? error.message : "Could not save the draft.");
   }
@@ -153,13 +167,13 @@ export type CheckQualityGateResult =
   | ActionFailure;
 
 export type OpenInGmailResult =
-  | { ok: true; url: string; sequenceNumber: number; isFollowUp: boolean }
+  | { ok: true; mailtoUrl: string; webUrl: string; sequenceNumber: number; isFollowUp: boolean }
   | ActionFailure;
 
 /**
  * Build a Gmail compose URL for a stored outreach message.
  *
- * This action READS and returns a URL. It performs no send, sets no `sent_at`,
+ * This action READS and returns URLs. It performs no send, sets no `sent_at`,
  * touches no status, and increments no counter. Opening Gmail is not sending:
  * only the explicit `recordOutreachSent()` below creates the sent state.
  *
@@ -167,6 +181,9 @@ export type OpenInGmailResult =
  * the client. The browser sends a message id and nothing else, so it cannot
  * redirect a draft at a different address or smuggle in its own content — the
  * values Gmail receives are exactly what PEPA stored.
+ *
+ * Returns both a `mailto:` URL (opens system default mail client — Gmail app/PWA
+ * if configured as default handler) and a Gmail web compose URL (fallback).
  */
 export async function openOutreachInGmail(messageId: string): Promise<OpenInGmailResult> {
   await requireAuthenticatedUser();
@@ -202,13 +219,16 @@ export async function openOutreachInGmail(messageId: string): Promise<OpenInGmai
     };
     const sequenceNumber = Number(row.sequence_number ?? 0);
 
+    const urls = buildComposeUrls({
+      to: row.recipient_email,
+      subject: row.subject,
+      body: row.body,
+    });
+
     return {
       ok: true,
-      url: buildGmailComposeUrl({
-        to: row.recipient_email,
-        subject: row.subject,
-        body: row.body,
-      }),
+      mailtoUrl: urls.mailto,
+      webUrl: urls.web,
       sequenceNumber,
       isFollowUp: sequenceNumber > 0,
     };
@@ -330,6 +350,64 @@ export async function loadInitialOutreachDetail(input: {
 }
 
 /**
+ * Load both main outreach (sequence 0) and follow-up (sequence 1) for a lead.
+ * Used by the composer to populate both email drafts independently.
+ */
+export async function loadLeadOutreachPair(input: {
+  leadId: string;
+}): Promise<
+  | { ok: true; lead: Lead; main: OutreachMessage; followUp: OutreachMessage | null }
+  | ActionFailure
+> {
+  await requireAuthenticatedUser();
+
+  const leadId = typeof input.leadId === "string" ? input.leadId.trim() : "";
+  if (!UUID_PATTERN.test(leadId)) {
+    return failure("That lead could not be identified.");
+  }
+
+  const supabase = getSupabaseAdmin();
+
+  // Load lead
+  const { data: lead, error: leadError } = await supabase
+    .from("leads")
+    .select("id, email, company_name, contact_name, status, created_at, updated_at, last_contacted_at, next_followup_at, followup_count")
+    .eq("id", leadId)
+    .maybeSingle();
+
+  if (leadError || !lead) {
+    return failure("That lead could not be loaded.");
+  }
+
+  // Load both messages (sequence 0 and 1)
+  const { data: messages, error: msgError } = await supabase
+    .from("outreach_messages")
+    .select("id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at, sequence_number, parent_message_id")
+    .eq("lead_id", leadId)
+    .in("sequence_number", [0, 1])
+    .order("sequence_number", { ascending: true });
+
+  if (msgError) {
+    return failure("Could not load outreach messages.");
+  }
+
+  const messageRows = (messages ?? []) as OutreachMessage[];
+  const main = messageRows.find((m) => m.sequence_number === 0);
+  const followUp = messageRows.find((m) => m.sequence_number === 1);
+
+  if (!main) {
+    return failure("That lead has no initial outreach stored yet.");
+  }
+
+  return {
+    ok: true,
+    lead: lead as Lead,
+    main: main as OutreachMessage,
+    followUp: followUp as OutreachMessage | null,
+  };
+}
+
+/**
  * Live, advisory quality-gate evaluation for the draft in the composer.
  *
  * Never authorises anything on its own: the send path re-runs the gate against
@@ -416,7 +494,7 @@ export async function recordOutreachSent(input: {
     return {
       ok: true,
       outcome: data.outcome,
-      message: data.message,
+      message: data.main,
       // An idempotent repeat has no new schedule, so it never claims one.
       nextFollowUpAt: data.outcome === "recorded" ? data.nextFollowUpAt : null,
       gate: data.gate,
@@ -529,6 +607,42 @@ export async function deleteLeadFromHistory(input: {
   } catch (error) {
     return failure(
       error instanceof Error ? error.message : "The lead could not be deleted.",
+    );
+  }
+}
+
+export type DeleteOutreachMessageResult = { ok: true; deleted: true } | ActionFailure;
+
+/**
+ * Delete a single outreach message by ID.
+ *
+ * This action can delete either the main outreach (sequence 0) or a follow-up (sequence 1).
+ * If deleting a main outreach that has a follow-up, the follow-up's parent_message_id
+ * is set to NULL to avoid orphaned references.
+ *
+ * The operator must confirm this action in the UI before calling.
+ */
+export async function deleteOutreachMessage(input: {
+  messageId: string;
+}): Promise<DeleteOutreachMessageResult> {
+  await requireAuthenticatedUser();
+
+  const messageId = String(input?.messageId ?? "");
+  if (!UUID_PATTERN.test(messageId)) {
+    return failure("That outreach message could not be identified.");
+  }
+
+  try {
+    const result = await deleteOutreachMessageService(messageId);
+    if (!result.ok || !result.data) {
+      return failure(result.error ?? "The outreach message could not be deleted.");
+    }
+
+    revalidatePath("/");
+    return { ok: true, deleted: true };
+  } catch (error) {
+    return failure(
+      error instanceof Error ? error.message : "The outreach message could not be deleted.",
     );
   }
 }
