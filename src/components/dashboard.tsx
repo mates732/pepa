@@ -6,6 +6,8 @@ import { loadOutreachActivity, loadOutreachActivityDetail } from "@/app/activity
 import {
   checkQualityGate,
   checkRecipient,
+  bulkDeleteLeadsFromHistory,
+  bulkMarkOutreachSent,
   deleteLeadFromHistory,
   deleteOutreachMessage,
   loadFollowUpDetail,
@@ -123,6 +125,7 @@ export function Dashboard({
   // from this list without a round trip through the server page.
   const [rows, setRows] = useState<OutreachHistoryRow[]>(initialRows);
   const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // Activity workspace. Read-only: opening it records nothing, and it exposes no
   // mutation controls, so there is nothing here that can write.
@@ -932,6 +935,54 @@ export function Dashboard({
     }
   }
 
+  /**
+   * Bulk delete selected leads.
+   */
+  async function handleBulkDeleteLeads(leadIds: string[]) {
+    setDeletingRowId("bulk");
+    setNotice(null);
+    try {
+      const result = await bulkDeleteLeadsFromHistory({ leadIds });
+      if (!result.ok) {
+        setNotice({ kind: "error", text: result.error });
+        return;
+      }
+      setRows((current) => current.filter((lead) => !leadIds.includes(lead.id)));
+      setNotice({
+        kind: "info",
+        text: `Deleted ${result.deleted} lead(s) from history and the database.`,
+      });
+      void loadWorkspace();
+    } finally {
+      setDeletingRowId(null);
+      setSelectedIds([]);
+    }
+  }
+
+  /**
+   * Bulk mark selected leads' outreach as sent.
+   */
+  async function handleBulkMarkSent(leadIds: string[]) {
+    setNotice(null);
+    try {
+      const result = await bulkMarkOutreachSent({ leadIds });
+      if (!result.ok) {
+        setNotice({ kind: "error", text: result.error });
+        return;
+      }
+      setNotice({
+        kind: "info",
+        text: `Marked ${result.marked} outreach message(s) as sent.`,
+      });
+      void loadWorkspace();
+      void loadActivity();
+      void loadStats();
+      void loadStreaks();
+    } finally {
+      setSelectedIds([]);
+    }
+  }
+
   async function handleOpenFromHistory(row: OutreachHistoryRow) {
     setOpeningComposerRowId(row.id);
     setNotice(null);
@@ -1082,6 +1133,10 @@ export function Dashboard({
         openingDetailId={openingDetailId}
         onDelete={(row) => void handleDeleteLead(row)}
         deletingRowId={deletingRowId}
+        onBulkDelete={(ids) => void handleBulkDeleteLeads(ids)}
+        onBulkMarkSent={(ids) => void handleBulkMarkSent(ids)}
+        selectedIds={selectedIds}
+        onSelectionChange={(ids) => setSelectedIds(ids)}
       />
 
       <FollowUpWorkspace

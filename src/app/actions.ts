@@ -646,3 +646,100 @@ export async function deleteOutreachMessage(input: {
     );
   }
 }
+
+export type BulkDeleteLeadsResult = { ok: true; deleted: number } | ActionFailure;
+
+/**
+ * Delete multiple leads from history and the database — sent or unsent.
+ *
+ * Server half of the history table's bulk "Smazat vybrané" control.
+ * Unlike `deleteUnsentLead` this action carries no sent guard: the
+ * operator has confirmed a dialog stating the removal is permanent.
+ *
+ * The cascade stays the database's — one single-id delete (shared with
+ * `deleteUnsentLead`) pulls the lead, its outreach messages (drafts and sent)
+ * and its pending follow-ups, and touches no other lead.
+ */
+export async function bulkDeleteLeadsFromHistory(input: {
+  leadIds: string[];
+}): Promise<BulkDeleteLeadsResult> {
+  await requireAuthenticatedUser();
+
+  const leadIds = (input?.leadIds ?? []).filter((id) => UUID_PATTERN.test(id));
+  if (leadIds.length === 0) {
+    return failure("No valid lead IDs provided.");
+  }
+
+  try {
+    const supabase = getSupabaseAdmin();
+    const { error: deleteError, count } = await supabase
+      .from("leads")
+      .delete({ count: "exact" })
+      .in("id", leadIds);
+
+    if (deleteError) return failure(deleteError.message);
+
+    revalidatePath("/");
+    return { ok: true, deleted: count ?? leadIds.length };
+  } catch (error) {
+    return failure(
+      error instanceof Error ? error.message : "The leads could not be deleted.",
+    );
+  }
+}
+
+export type BulkMarkSentResult = { ok: true; marked: number } | ActionFailure;
+
+/**
+ * Mark multiple outreach messages as sent.
+ *
+ * Only marks draft/ready messages as sent. Already sent messages are skipped.
+ * Runs the quality gate for each message.
+ */
+export async function bulkMarkOutreachSent(input: {
+  leadIds: string[];
+}): Promise<BulkMarkSentResult> {
+  await requireAuthenticatedUser();
+
+  const leadIds = (input?.leadIds ?? []).filter((id) => UUID_PATTERN.test(id));
+  if (leadIds.length === 0) {
+    return failure("No valid lead IDs provided.");
+  }
+
+  try {
+    const supabase = getSupabaseAdmin();
+
+    // Get all unsent sequence-0 messages for these leads
+    const { data: messages, error: msgError } = await supabase
+      .from("outreach_messages")
+      .select("id, lead_id, status")
+      .in("lead_id", leadIds)
+      .eq("sequence_number", 0)
+      .in("status", ["draft", "ready"]);
+
+    if (msgError) return failure(msgError.message);
+    if (!messages || messages.length === 0) {
+      return { ok: true, marked: 0 };
+    }
+
+    // Record each as sent
+    let marked = 0;
+    for (const msg of messages) {
+      const result = await recordOutreachSentService({
+        messageId: msg.id,
+        leadId: msg.lead_id,
+        confirmWarnings: true,
+      });
+      if (result.ok && result.data?.outcome === "recorded") {
+        marked++;
+      }
+    }
+
+    revalidatePath("/");
+    return { ok: true, marked };
+  } catch (error) {
+    return failure(
+      error instanceof Error ? error.message : "The messages could not be marked as sent.",
+    );
+  }
+}
