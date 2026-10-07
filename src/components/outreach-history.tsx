@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { FollowUpState } from "@/components/follow-up-state";
 import { StatusBadge } from "@/components/status-badge";
@@ -58,6 +58,8 @@ export function OutreachHistory({
   const [confirmDeleteRow, setConfirmDeleteRow] = useState<OutreachHistoryRow | null>(
     null,
   );
+  // Row with open dropdown menu
+  const [openMenuRowId, setOpenMenuRowId] = useState<string | null>(null);
 
   // Escape dismisses the confirmation, exactly like Zrušit.
   useEffect(() => {
@@ -68,6 +70,40 @@ export function OutreachHistory({
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [confirmDeleteRow]);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function onClick(event: MouseEvent) {
+      const target = event.target as HTMLElement;
+      if (!target.closest('[data-dropdown]')) {
+        setOpenMenuRowId(null);
+      }
+    }
+    document.addEventListener('click', onClick);
+    return () => document.removeEventListener('click', onClick);
+  }, []);
+
+  const toggleMenu = (rowId: string) => {
+    setOpenMenuRowId(prev => prev === rowId ? null : rowId);
+  };
+
+  const handleMenuAction = (action: 'edit' | 'sequence' | 'open' | 'delete', row: OutreachHistoryRow) => {
+    setOpenMenuRowId(null);
+    switch (action) {
+      case 'edit':
+        onLoadIntoComposer(row);
+        break;
+      case 'sequence':
+        onOpenDetail(row);
+        break;
+      case 'open':
+        onLoadIntoComposer(row);
+        break;
+      case 'delete':
+        setConfirmDeleteRow(row);
+        break;
+    }
+  };
 
   return (
     <>
@@ -142,55 +178,60 @@ export function OutreachHistory({
                     {formatDate(row.created_at)}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {row.unsent && onDelete ? (
+                    <div className="flex items-center justify-end gap-2" data-dropdown>
+                      {/* Dropdown menu button */}
+                      <div className="relative">
                         <button
                           type="button"
-                          onClick={() => onLoadIntoComposer(row)}
-                          disabled={
-                            openingComposerRowId === row.id ||
-                            deletingRowId === row.id
-                          }
-                          className="btn btn-sm"
-                          title="Edit this unsent lead's recipient, subject and message. Nothing is sent."
-                        >
-                          {openingComposerRowId === row.id
-                            ? "Opening…"
-                            : "Upravit"}
-                        </button>
-                      ) : null}
-                      {onDelete ? (
-                        <button
-                          type="button"
-                          onClick={() => setConfirmDeleteRow(row)}
+                          onClick={() => toggleMenu(row.id)}
                           disabled={deletingRowId === row.id}
-                          className="btn btn-sm btn-alarm"
-                          title="Delete this lead from history and the database, together with its drafts and pending follow-ups. This cannot be undone."
+                          className="btn btn-sm"
+                          aria-haspopup="true"
+                          aria-expanded={openMenuRowId === row.id}
                         >
-                          {deletingRowId === row.id ? "Deleting…" : "Smazat"}
+                          ⋮
                         </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => onOpenDetail(row)}
-                        disabled={
-                          openingDetailId === row.id || deletingRowId === row.id
-                        }
-                        className="btn btn-sm"
-                        title="Open this outreach's sequence detail, where the next follow-up can be drafted. Nothing is sent."
-                      >
-                        {openingDetailId === row.id ? "Opening…" : "Sequence"}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => onLoadIntoComposer(row)}
-                        disabled={
-                          openingComposerRowId === row.id || deletingRowId === row.id
-                        }
-                        className="btn btn-sm"
-                      >
-                        {openingComposerRowId === row.id ? "Opening…" : "Open"}
-                      </button>
+                        {openMenuRowId === row.id && (
+                          <div className="absolute right-0 top-full mt-1 z-20 sticker min-w-[140px] py-1 shadow-lg border-2 border-midnight">
+                            {row.unsent && (
+                              <button
+                                type="button"
+                                onClick={() => handleMenuAction('edit', row)}
+                                disabled={openingComposerRowId === row.id || deletingRowId === row.id}
+                                className="w-full px-3 py-2 text-left text-sm hover:bg-midnight-faint"
+                              >
+                                Upravit
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => handleMenuAction('sequence', row)}
+                              disabled={openingDetailId === row.id || deletingRowId === row.id}
+                              className="w-full px-3 py-2 text-left text-sm hover:bg-midnight-faint"
+                            >
+                              Sequence
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleMenuAction('open', row)}
+                              disabled={openingComposerRowId === row.id || deletingRowId === row.id}
+                              className="w-full px-3 py-2 text-left text-sm hover:bg-midnight-faint"
+                            >
+                              Open
+                            </button>
+                            {onDelete && (
+                              <button
+                                type="button"
+                                onClick={() => handleMenuAction('delete', row)}
+                                disabled={deletingRowId === row.id}
+                                className="w-full px-3 py-2 text-left text-sm hover:bg-midnight-faint text-alarm"
+                              >
+                                Smazat
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </td>
                 </tr>
