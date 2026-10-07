@@ -460,7 +460,7 @@ async function leadOutreachEmails(
   const { data, error } = await supabase
     .from("outreach_messages")
     .select(MESSAGE_COLUMNS)
-    .eq("lead_id", { in: leadIds })
+    .in("lead_id", leadIds)
     .order("lead_id", { ascending: true })
     .order("sequence_number", { ascending: true });
 
