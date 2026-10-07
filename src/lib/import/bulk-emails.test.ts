@@ -374,7 +374,7 @@ describe("parseBulkEmails — format D: LEAD blocks with follow-ups", () => {
   it("splits on the LEAD markers and keeps every body clean", () => {
     const { candidates, splitBy } = parseBulkEmails(FORMAT_D);
 
-    expect(splitBy).toBe("recipient_header");
+    expect(splitBy).toBe("separator");
     // Two leads — one card each, the follow-ups carried on the card.
     expect(candidates).toHaveLength(2);
     expect(candidates.map((c) => c.recipient)).toEqual(["a@test.cz", "b@test.cz"]);
@@ -663,5 +663,91 @@ recepce.tech`;
     expect(new Set(result.candidates.map((c) => c.recipient))).toHaveLength(
       10,
     );
+  });
+});
+
+describe("parseBulkEmails — regression: LEAD blocks with Email: and metadata fields", () => {
+  const LEAD_BLOCKS_WITH_METADATA = `--- LEAD 01 ---
+Company: Test Barber Praha
+Website: https://example.com
+Email: barber-test@example.com
+Phone: +420 700 000 001
+City: Praha 7
+Category: Barbershop
+
+Subject: Testovací outreach – Barber Praha
+
+Dobrý den,
+
+toto je testovací lead pro ověření Pepova outreach workflow.
+
+Follow-up Subject: Re: Testovací outreach – Barber Praha
+
+Dobrý den,
+
+toto je první testovací follow-up.
+
+Follow-up 2 Subject: Re: Testovací outreach – Barber Praha
+
+Dobrý den,
+
+toto je druhý testovací follow-up.
+
+--- LEAD 02 ---
+Company: Test Salon Praha
+Website: https://example.org
+Email: salon-test@example.com
+Phone: +420 700 000 002
+City: Praha 6
+Category: Hair salon
+
+Subject: Testovací outreach – Salon Praha
+
+Dobrý den,
+
+toto je druhý testovací lead pro ověření importu více leadů.
+
+Follow-up Subject: Re: Testovací outreach – Salon Praha
+
+Dobrý den,
+
+toto je první testovací follow-up.`;
+
+  it("splits on LEAD markers, not Email: lines, and skips metadata fields", () => {
+    const { candidates, splitBy } = parseBulkEmails(LEAD_BLOCKS_WITH_METADATA);
+
+    expect(splitBy).toBe("separator");
+    expect(candidates).toHaveLength(2);
+
+    // Lead 1
+    expect(candidates[0]!.recipient).toBe("barber-test@example.com");
+    expect(candidates[0]!.subject).toBe("Testovací outreach – Barber Praha");
+    expect(candidates[0]!.body).toBe(
+      "Dobrý den,\n\ntoto je testovací lead pro ověření Pepova outreach workflow.",
+    );
+    expect(candidates[0]!.body).not.toContain("Company:");
+    expect(candidates[0]!.body).not.toContain("Website:");
+    expect(candidates[0]!.body).not.toContain("Phone:");
+    expect(candidates[0]!.body).not.toContain("City:");
+    expect(candidates[0]!.body).not.toContain("Category:");
+    expect(candidates[0]!.followUps).toEqual([
+      { subject: "Re: Testovací outreach – Barber Praha", body: "Dobrý den,\n\ntoto je první testovací follow-up." },
+      { subject: "Re: Testovací outreach – Barber Praha", body: "Dobrý den,\n\ntoto je druhý testovací follow-up." },
+    ]);
+
+    // Lead 2
+    expect(candidates[1]!.recipient).toBe("salon-test@example.com");
+    expect(candidates[1]!.subject).toBe("Testovací outreach – Salon Praha");
+    expect(candidates[1]!.body).toBe(
+      "Dobrý den,\n\ntoto je druhý testovací lead pro ověření importu více leadů.",
+    );
+    expect(candidates[1]!.body).not.toContain("Company:");
+    expect(candidates[1]!.body).not.toContain("Website:");
+    expect(candidates[1]!.body).not.toContain("Phone:");
+    expect(candidates[1]!.body).not.toContain("City:");
+    expect(candidates[1]!.body).not.toContain("Category:");
+    expect(candidates[1]!.followUps).toEqual([
+      { subject: "Re: Testovací outreach – Salon Praha", body: "Dobrý den,\n\ntoto je první testovací follow-up." },
+    ]);
   });
 });

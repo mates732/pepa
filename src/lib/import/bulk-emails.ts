@@ -210,14 +210,24 @@ function findBoundaries(lines: string[]): { starts: number[]; splitBy: BulkEmail
     return next < lines.length && looksLikeEmailOpening(lines[next]!);
   });
 
-  // Shape A/C (recipient headers present) or shape D (LEAD markers
-  // present). Headers are trusted absolutely, and a LEAD marker is an
-  // explicit delimiter that opens a block on its own word — unlike a bare
-  // rule, it needs nothing to follow it. Rules join only when an email
+  // Shape D (LEAD markers present) takes priority. A LEAD marker is an
+  // explicit delimiter that opens a block on its own word. When markers exist,
+  // recipient headers INSIDE the blocks (e.g. "Email:" in lead metadata) are
+  // NOT separate email boundaries — they belong to the lead's data.
+  if (markers.length >= 1) {
+    const starts = new Set<number>([...markers, ...separatingRules]);
+    return {
+      starts: [...starts].sort((a, b) => a - b),
+      splitBy: starts.size > 1 ? "separator" : "single",
+    };
+  }
+
+  // Shape A/C (recipient headers present, no LEAD markers).
+  // Headers are trusted absolutely. Rules join only when an email
   // opening (a header or a marker) follows them; every other rule and
   // blank line stays body content.
-  if (headers.length >= 1 || markers.length >= 1) {
-    const starts = new Set<number>([...headers, ...markers, ...separatingRules]);
+  if (headers.length >= 1) {
+    const starts = new Set<number>([...headers, ...separatingRules]);
     // Material typed before the first header belongs to no email — "here are
     // the twenty emails:" and the like. Keeping it out of every block is what
     // stops it from being prepended to somebody's message body.
@@ -225,9 +235,7 @@ function findBoundaries(lines: string[]): { starts: number[]; splitBy: BulkEmail
       starts: [...starts].sort((a, b) => a - b),
       splitBy:
         starts.size > 1
-          ? headers.length >= 1
-            ? "recipient_header"
-            : "separator"
+          ? "recipient_header"
           : "single",
     };
   }
@@ -363,8 +371,15 @@ const BODY_LABELS = new Set([
  * Dropped from the top of a block so they cannot be mistaken for the body —
  * `From:` in particular, because a quoted thread puts the ORIGINAL sender's
  * address there and that is emphatically not who this email is for.
+ *
+ * Also includes lead metadata fields that appear in structured LEAD exports
+ * (Company, Website, Phone, City, Category, etc.) so they don't pollute
+ * the email body.
  */
-const NOISE_LABELS = new Set(["from", "od", "date", "datum", "sent", "cc", "bcc", "reply-to"]);
+const NOISE_LABELS = new Set([
+  "from", "od", "date", "datum", "sent", "cc", "bcc", "reply-to",
+  "company", "website", "phone", "city", "category",
+]);
 
 /**
  * The follow-up half of a `--- LEAD NN ---` block.
