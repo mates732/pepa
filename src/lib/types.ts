@@ -37,8 +37,7 @@ export const ALREADY_CONTACTED = "ALREADY_CONTACTED" as const;
 export const ALREADY_CONTACTED_DOMAIN = "ALREADY_CONTACTED_DOMAIN" as const;
 
 export type OutreachBlockReason =
-  | typeof ALREADY_CONTACTED
-  | typeof ALREADY_CONTACTED_DOMAIN;
+  typeof ALREADY_CONTACTED | typeof ALREADY_CONTACTED_DOMAIN;
 
 /**
  * What the imported legacy history knows about one address.
@@ -79,16 +78,6 @@ export interface OutreachMessage {
   sequence_number: number;
   /** The message this one follows. Null for an initial outreach. */
   parent_message_id: string | null;
-}
-
-export interface ParsedOutreachInput {
-  recipient: string;
-  subject: string;
-  body: string;
-  /** Fields that were not present in the pasted text. */
-  missing: Array<"recipient" | "subject" | "body">;
-  /** Non-fatal notes, e.g. unrecognised leading lines. */
-  warnings: string[];
 }
 
 /**

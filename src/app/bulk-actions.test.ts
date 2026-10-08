@@ -35,10 +35,16 @@ type Predicate =
   | { kind: "isNull" }
   | { kind: "notNull" };
 
-const db = { leads: [] as Row[], messages: [] as Row[], historical: [] as Row[] };
+const db = {
+  leads: [] as Row[],
+  messages: [] as Row[],
+  historical: [] as Row[],
+};
 
 function normalize(value: unknown): string {
-  return String(value ?? "").trim().toLowerCase();
+  return String(value ?? "")
+    .trim()
+    .toLowerCase();
 }
 
 /** Mirrors the generated columns the migrations create. */
@@ -49,10 +55,13 @@ function withGenerated(table: string, row: Row): Row {
       ...row,
       email_normalized: normalize(row.email),
       domain_normalized: domain,
-      is_shared_provider: ["gmail.com", "seznam.cz", "outlook.com"].includes(domain),
+      is_shared_provider: ["gmail.com", "seznam.cz", "outlook.com"].includes(
+        domain,
+      ),
     };
   }
-  if (table === "leads") return { ...row, email_normalized: normalize(row.email) };
+  if (table === "leads")
+    return { ...row, email_normalized: normalize(row.email) };
   if (table === "outreach_messages") {
     return { ...row, recipient_normalized: normalize(row.recipient_email) };
   }
@@ -66,7 +75,8 @@ function matches(row: Row, filters: Array<[string, unknown]>): boolean {
     if (p.kind === "eq") return row[column] === p.value;
     if (p.kind === "neq") return row[column] !== p.value;
     if (p.kind === "in") return (p.value as unknown[]).includes(row[column]);
-    if (p.kind === "notNull") return row[column] !== null && row[column] !== undefined;
+    if (p.kind === "notNull")
+      return row[column] !== null && row[column] !== undefined;
     return row[column] === null;
   });
 }
@@ -100,8 +110,11 @@ function selectBuilder(table: string, columns: string) {
     let rows = tableOf(table).filter((row) => matches(row, filters));
     if (order) {
       const direction = order.ascending ? 1 : -1;
-      rows = [...rows].sort((a, c) =>
-        String(a[order!.column] ?? "").localeCompare(String(c[order!.column] ?? "")) * direction,
+      rows = [...rows].sort(
+        (a, c) =>
+          String(a[order!.column] ?? "").localeCompare(
+            String(c[order!.column] ?? ""),
+          ) * direction,
       );
     }
     return rows;
@@ -117,12 +130,20 @@ function selectBuilder(table: string, columns: string) {
       ...rest,
       outreach_messages: db.messages
         .filter((m) => m.lead_id === row.id)
-        .map(({ id, status, sent_at, created_at }) => ({ id, status, sent_at, created_at })),
+        .map(({ id, status, sent_at, created_at }) => ({
+          id,
+          status,
+          sent_at,
+          created_at,
+        })),
     };
   };
 
   b.eq = (column: string, value: unknown) => {
-    filters.push([column, value === null ? { kind: "isNull" } : { kind: "eq", value }]);
+    filters.push([
+      column,
+      value === null ? { kind: "isNull" } : { kind: "eq", value },
+    ]);
     return b;
   };
   b.neq = (column: string, value: unknown) => {
@@ -134,7 +155,10 @@ function selectBuilder(table: string, columns: string) {
     return b;
   };
   b.is = (column: string, value: null) => {
-    filters.push([column, value === null ? { kind: "isNull" } : { kind: "eq", value }]);
+    filters.push([
+      column,
+      value === null ? { kind: "isNull" } : { kind: "eq", value },
+    ]);
     return b;
   };
   b.order = (column: string, options: { ascending?: boolean }) => {
@@ -149,8 +173,15 @@ function selectBuilder(table: string, columns: string) {
       : { data: decorate(matched()[0] ?? null), error: null };
   b.then = (onFulfilled: (value: unknown) => unknown) =>
     throwOnRead(table)
-      ? Promise.resolve(onFulfilled?.({ data: null, error: { message: `${table} is unreadable` } }))
-      : Promise.resolve(onFulfilled({ data: matched().map(decorate), error: null }));
+      ? Promise.resolve(
+          onFulfilled?.({
+            data: null,
+            error: { message: `${table} is unreadable` },
+          }),
+        )
+      : Promise.resolve(
+          onFulfilled({ data: matched().map(decorate), error: null }),
+        );
 
   return b;
 }
@@ -199,7 +230,9 @@ function upsertBuilder(table: string, input: Row | Row[]) {
       // makes a repeated import observable as a refresh rather than a duplicate.
       const existing =
         table === "leads"
-          ? tableOf(table).find((row) => row.email_normalized === normalizedEmail)
+          ? tableOf(table).find(
+              (row) => row.email_normalized === normalizedEmail,
+            )
           : tableOf(table).find(
               (row) =>
                 row.lead_id === generated.lead_id &&
@@ -256,7 +289,11 @@ function upsertBuilder(table: string, input: Row | Row[]) {
   b.then = (onFulfilled: (value: unknown) => unknown) => {
     run();
     return Promise.resolve(
-      onFulfilled?.(failure ? { data: null, error: { message: failure } } : { data: null, error: null }),
+      onFulfilled?.(
+        failure
+          ? { data: null, error: { message: failure } }
+          : { data: null, error: null },
+      ),
     );
   };
 
@@ -285,7 +322,9 @@ const cookieStore = new Map<string, string>();
 vi.mock("next/headers", () => ({
   cookies: async () => ({
     get: (name: string) =>
-      cookieStore.has(name) ? { name, value: cookieStore.get(name) } : undefined,
+      cookieStore.has(name)
+        ? { name, value: cookieStore.get(name) }
+        : undefined,
   }),
   headers: async () => new Headers(),
 }));
@@ -332,13 +371,21 @@ function seedLead(email: string, overrides: Partial<Row> = {}) {
 }
 
 /** A finished email, exactly as an operator would paste it. */
-function email(recipient: string, subject: string, body = "Dobrý den,\n\ntext.\n\nS pozdravem") {
+function email(
+  recipient: string,
+  subject: string,
+  body = "Dobrý den,\n\ntext.\n\nS pozdravem",
+) {
   return `To: ${recipient}\nSubject: ${subject}\n${body}`;
 }
 
 function twentyEmails(): string {
   return Array.from({ length: 20 }, (_, i) =>
-    email(`info@firma${i + 1}.cz`, `Nabídka ${i + 1}`, `Dobrý den,\n\ntext firmy ${i + 1}.\n\nS pozdravem`),
+    email(
+      `info@firma${i + 1}.cz`,
+      `Nabídka ${i + 1}`,
+      `Dobrý den,\n\ntext firmy ${i + 1}.\n\nS pozdravem`,
+    ),
   ).join("\n\n---\n\n");
 }
 
@@ -369,7 +416,8 @@ describe("TEST 1 and 11 — twenty finished emails become twenty drafts", () => 
   it("parses all twenty and saves twenty independent drafts", async () => {
     seedTwentyLeads();
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
     const preview = await previewBulkEmails(twentyEmails());
     if (!preview.ok) throw new Error(preview.error);
@@ -378,7 +426,12 @@ describe("TEST 1 and 11 — twenty finished emails become twenty drafts", () => 
 
     const requests = preview.plan.rows
       .filter((row) => row.status === "ready")
-      .map((row) => ({ index: row.index, recipient: row.recipient!, subject: row.subject, body: row.body }));
+      .map((row) => ({
+        index: row.index,
+        recipient: row.recipient!,
+        subject: row.subject,
+        body: row.body,
+      }));
 
     const result = await importBulkEmails(requests);
     if (!result.ok) throw new Error(result.error);
@@ -397,7 +450,8 @@ describe("TEST 1 and 11 — twenty finished emails become twenty drafts", () => 
   it("keeps twenty distinct subjects — no draft inherits another's", async () => {
     seedTwentyLeads();
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
     const preview = await previewBulkEmails(twentyEmails());
     if (!preview.ok) throw new Error(preview.error);
@@ -405,7 +459,12 @@ describe("TEST 1 and 11 — twenty finished emails become twenty drafts", () => 
     await importBulkEmails(
       preview.plan.rows
         .filter((row) => row.status === "ready")
-        .map((row) => ({ index: row.index, recipient: row.recipient!, subject: row.subject, body: row.body })),
+        .map((row) => ({
+          index: row.index,
+          recipient: row.recipient!,
+          subject: row.subject,
+          body: row.body,
+        })),
     );
 
     expect(new Set(db.messages.map((m) => m.subject)).size).toBe(20);
@@ -417,9 +476,11 @@ describe("TEST 2, 3 and 10 — recipient, subject and body reach the draft intac
   it("stores exactly what was pasted", async () => {
     seedLead("info@bella.cz");
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
-    const body = "Dobrý den,\n\nrád bych vám ukázal, jak lze zlepšit váš web.\n\nS pozdravem\nPetr";
+    const body =
+      "Dobrý den,\n\nrád bych vám ukázal, jak lze zlepšit váš web.\n\nS pozdravem\nPetr";
     const preview = await previewBulkEmails(
       `To: Kadeřnictví Bella <INFO@Bella.CZ>\nSubject: Váš web\n${body}`,
     );
@@ -431,7 +492,12 @@ describe("TEST 2, 3 and 10 — recipient, subject and body reach the draft intac
     expect(row.body).toBe(body);
 
     const result = await importBulkEmails([
-      { index: 1, recipient: row.recipient!, subject: row.subject, body: row.body },
+      {
+        index: 1,
+        recipient: row.recipient!,
+        subject: row.subject,
+        body: row.body,
+      },
     ]);
     if (!result.ok) throw new Error(result.error);
     expect(result.rows[0]!.outcome).toBe("created");
@@ -445,7 +511,8 @@ describe("TEST 2, 3 and 10 — recipient, subject and body reach the draft intac
   it("does not rewrite, shorten or reword a single character", async () => {
     seedLead("info@bella.cz");
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
     // Deliberately awkward text: a dash range, a URL with a query string, a Czech
     // sentence, and a signature divider. None of it may be tidied away — the only
@@ -464,7 +531,9 @@ describe("TEST 2, 3 and 10 — recipient, subject and body reach the draft intac
     ].join("\n");
     const tidied = body.replace(/[ \t]+$/gm, "").trim();
 
-    const preview = await previewBulkEmails(`To: info@bella.cz\nSubject: Nabídka — 5–10 dní\n${body}`);
+    const preview = await previewBulkEmails(
+      `To: info@bella.cz\nSubject: Nabídka — 5–10 dní\n${body}`,
+    );
     if (!preview.ok) throw new Error(preview.error);
     expect(preview.plan.rows[0]!.body).toBe(tidied);
 
@@ -489,7 +558,8 @@ describe("TEST 5 — an existing lead is matched", () => {
   it("attaches the draft to the lead and shows its company", async () => {
     seedLead("info@bella.cz", { company_name: "Kadeřnictví Bella" });
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
     const preview = await previewBulkEmails(email("info@bella.cz", "Váš web"));
     if (!preview.ok) throw new Error(preview.error);
@@ -500,7 +570,12 @@ describe("TEST 5 — an existing lead is matched", () => {
     expect(row.leadId).toBeTruthy();
 
     const result = await importBulkEmails([
-      { index: 1, recipient: row.recipient!, subject: row.subject, body: row.body },
+      {
+        index: 1,
+        recipient: row.recipient!,
+        subject: row.subject,
+        body: row.body,
+      },
     ]);
     if (!result.ok) throw new Error(result.error);
 
@@ -514,12 +589,15 @@ describe("TEST 5 — an existing lead is matched", () => {
 describe("TEST 6 — a missing lead is NOT a blocker", () => {
   it("plans an unknown recipient as READY and creates the lead and the draft", async () => {
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
     // No lead exists, and that changes nothing about a finished email.
     expect(db.leads).toHaveLength(0);
 
-    const preview = await previewBulkEmails(email("neznama@firma-ktera-nemexistuje.cz", "Nabídka"));
+    const preview = await previewBulkEmails(
+      email("neznama@firma-ktera-nemexistuje.cz", "Nabídka"),
+    );
     if (!preview.ok) throw new Error(preview.error);
 
     const row = preview.plan.rows[0]!;
@@ -532,7 +610,12 @@ describe("TEST 6 — a missing lead is NOT a blocker", () => {
     expect(db.leads).toHaveLength(0);
 
     const result = await importBulkEmails([
-      { index: 1, recipient: row.recipient!, subject: row.subject, body: row.body },
+      {
+        index: 1,
+        recipient: row.recipient!,
+        subject: row.subject,
+        body: row.body,
+      },
     ]);
     if (!result.ok) throw new Error(result.error);
 
@@ -553,7 +636,8 @@ describe("TEST 6 — a missing lead is NOT a blocker", () => {
 
   it("does not derive a company name from the email domain", async () => {
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
     const preview = await previewBulkEmails(email("info@bella.cz", "Nabídka"));
     if (!preview.ok) throw new Error(preview.error);
@@ -562,7 +646,12 @@ describe("TEST 6 — a missing lead is NOT a blocker", () => {
     expect(preview.plan.rows[0]!.leadCompany).toBeNull();
 
     await importBulkEmails([
-      { index: 1, recipient: "info@bella.cz", subject: "Nabídka", body: "text" },
+      {
+        index: 1,
+        recipient: "info@bella.cz",
+        subject: "Nabídka",
+        body: "text",
+      },
     ]);
 
     // The lead exists, but with no invented identity written into it.
@@ -580,7 +669,12 @@ describe("TEST 6 — a missing lead is NOT a blocker", () => {
     const { importBulkEmails } = await import("@/app/bulk-actions");
 
     await importBulkEmails([
-      { index: 1, recipient: "info@bella.cz", subject: "Nabídka", body: "text" },
+      {
+        index: 1,
+        recipient: "info@bella.cz",
+        subject: "Nabídka",
+        body: "text",
+      },
     ]);
 
     expect(db.leads).toHaveLength(1);
@@ -618,16 +712,24 @@ describe("TEST 6 — a missing lead is NOT a blocker", () => {
     // the missing lead must not open the door history closes.
     seedHistory("info@salonabc.cz");
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
-    const preview = await previewBulkEmails(email("info@salonabc.cz", "AI recepce"));
+    const preview = await previewBulkEmails(
+      email("info@salonabc.cz", "AI recepce"),
+    );
     if (!preview.ok) throw new Error(preview.error);
 
     expect(preview.plan.rows[0]!.status).toBe("already_contacted");
     expect(preview.plan.summary.importable).toBe(0);
 
     const result = await importBulkEmails([
-      { index: 1, recipient: "info@salonabc.cz", subject: "AI recepce", body: "text" },
+      {
+        index: 1,
+        recipient: "info@salonabc.cz",
+        subject: "AI recepce",
+        body: "text",
+      },
     ]);
     if (!result.ok) throw new Error(result.error);
 
@@ -643,7 +745,9 @@ describe("TEST 7 and the SAFETY TEST — a historical contact can never be draft
     await authenticate();
     const { previewBulkEmails } = await import("@/app/bulk-actions");
 
-    const result = await previewBulkEmails(email("info@salonabc.cz", "AI recepce"));
+    const result = await previewBulkEmails(
+      email("info@salonabc.cz", "AI recepce"),
+    );
 
     if (!result.ok) throw new Error(result.error);
     const row = result.plan.rows[0]!;
@@ -659,7 +763,9 @@ describe("TEST 7 and the SAFETY TEST — a historical contact can never be draft
     await authenticate();
     const { previewBulkEmails } = await import("@/app/bulk-actions");
 
-    const result = await previewBulkEmails(email("objednavky@salonabc.cz", "AI recepce"));
+    const result = await previewBulkEmails(
+      email("objednavky@salonabc.cz", "AI recepce"),
+    );
 
     if (!result.ok) throw new Error(result.error);
     expect(result.plan.rows[0]!.status).toBe("already_contacted");
@@ -675,7 +781,12 @@ describe("TEST 7 and the SAFETY TEST — a historical contact can never be draft
     // The strongest form of the test: the row is well formed, the lead EXISTS,
     // and it is named directly by the client. History still wins.
     const result = await importBulkEmails([
-      { index: 1, recipient: "info@salonabc.cz", subject: "AI recepce", body: "text" },
+      {
+        index: 1,
+        recipient: "info@salonabc.cz",
+        subject: "AI recepce",
+        body: "text",
+      },
     ]);
 
     if (!result.ok) throw new Error(result.error);
@@ -689,7 +800,9 @@ describe("TEST 7 and the SAFETY TEST — a historical contact can never be draft
     await authenticate();
     const { previewBulkEmails } = await import("@/app/bulk-actions");
 
-    const result = await previewBulkEmails("To:    INFO@SalonABC.CZ   \nSubject: X\ntext");
+    const result = await previewBulkEmails(
+      "To:    INFO@SalonABC.CZ   \nSubject: X\ntext",
+    );
 
     if (!result.ok) throw new Error(result.error);
     expect(result.plan.rows[0]!.status).toBe("already_contacted");
@@ -701,7 +814,9 @@ describe("TEST 7 and the SAFETY TEST — a historical contact can never be draft
     await authenticate();
     const { previewBulkEmails } = await import("@/app/bulk-actions");
 
-    const result = await previewBulkEmails(email("jina.firma@gmail.com", "Nabídka"));
+    const result = await previewBulkEmails(
+      email("jina.firma@gmail.com", "Nabídka"),
+    );
 
     if (!result.ok) throw new Error(result.error);
     expect(result.plan.rows[0]!.status).toBe("ready");
@@ -713,7 +828,8 @@ describe("TEST 8 — duplicate recipients in one paste", () => {
     seedLead("info@bella.cz");
     seedLead("barber@barberx.cz");
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
     const preview = await previewBulkEmails(
       [
@@ -735,14 +851,23 @@ describe("TEST 8 — duplicate recipients in one paste", () => {
     const result = await importBulkEmails(
       preview.plan.rows
         .filter((row) => row.status === "ready")
-        .map((row) => ({ index: row.index, recipient: row.recipient!, subject: row.subject, body: row.body })),
+        .map((row) => ({
+          index: row.index,
+          recipient: row.recipient!,
+          subject: row.subject,
+          body: row.body,
+        })),
     );
     if (!result.ok) throw new Error(result.error);
 
     expect(db.messages).toHaveLength(2);
-    expect(db.messages.filter((m) => m.recipient_email === "info@bella.cz")).toHaveLength(1);
+    expect(
+      db.messages.filter((m) => m.recipient_email === "info@bella.cz"),
+    ).toHaveLength(1);
     // The first copy wins, so its text is the one stored.
-    expect(db.messages.find((m) => m.recipient_email === "info@bella.cz")!.subject).toBe("První verze");
+    expect(
+      db.messages.find((m) => m.recipient_email === "info@bella.cz")!.subject,
+    ).toBe("První verze");
   });
 });
 
@@ -750,7 +875,8 @@ describe("TEST 9 — one malformed block does not destroy the other nineteen", (
   it("keeps nineteen and flags the one for review", async () => {
     for (let i = 1; i <= 20; i += 1) seedLead(`info@firma${i}.cz`);
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
     const blocks = Array.from({ length: 20 }, (_, i) =>
       email(`info@firma${i + 1}.cz`, `S${i + 1}`, `text ${i + 1}`),
@@ -773,7 +899,12 @@ describe("TEST 9 — one malformed block does not destroy the other nineteen", (
     const result = await importBulkEmails(
       preview.plan.rows
         .filter((row) => row.status === "ready")
-        .map((row) => ({ index: row.index, recipient: row.recipient!, subject: row.subject, body: row.body })),
+        .map((row) => ({
+          index: row.index,
+          recipient: row.recipient!,
+          subject: row.subject,
+          body: row.body,
+        })),
     );
     if (!result.ok) throw new Error(result.error);
     expect(db.messages).toHaveLength(19);
@@ -782,7 +913,8 @@ describe("TEST 9 — one malformed block does not destroy the other nineteen", (
   it("survives a database failure on one email and saves the rest", async () => {
     for (let i = 1; i <= 20; i += 1) seedLead(`info@firma${i}.cz`);
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
     const { summarizeOutcomes } = await import("@/lib/import/bulk-plan");
 
     const preview = await previewBulkEmails(twentyEmails());
@@ -790,7 +922,12 @@ describe("TEST 9 — one malformed block does not destroy the other nineteen", (
 
     const requests = preview.plan.rows
       .filter((row) => row.status === "ready")
-      .map((row) => ({ index: row.index, recipient: row.recipient!, subject: row.subject, body: row.body }));
+      .map((row) => ({
+        index: row.index,
+        recipient: row.recipient!,
+        subject: row.subject,
+        body: row.body,
+      }));
 
     failInserts.add("info@firma8.cz");
 
@@ -809,9 +946,16 @@ describe("TEST 9 — one malformed block does not destroy the other nineteen", (
 
     // And the retry creates it without touching the other nineteen.
     failInserts.clear();
-    const source = preview.plan.rows.find((row) => row.recipient === "info@firma8.cz")!;
+    const source = preview.plan.rows.find(
+      (row) => row.recipient === "info@firma8.cz",
+    )!;
     const second = await importBulkEmails([
-      { index: source.index, recipient: source.recipient!, subject: source.subject, body: source.body },
+      {
+        index: source.index,
+        recipient: source.recipient!,
+        subject: source.subject,
+        body: source.body,
+      },
     ]);
     if (!second.ok) throw new Error(second.error);
     expect(second.rows[0]!.outcome).toBe("created");
@@ -823,14 +967,20 @@ describe("TEST 12 — nothing is ever sent", () => {
   it("creates drafts and leaves every send field alone", async () => {
     seedTwentyLeads();
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
     const preview = await previewBulkEmails(twentyEmails());
     if (!preview.ok) throw new Error(preview.error);
     await importBulkEmails(
       preview.plan.rows
         .filter((row) => row.status === "ready")
-        .map((row) => ({ index: row.index, recipient: row.recipient!, subject: row.subject, body: row.body })),
+        .map((row) => ({
+          index: row.index,
+          recipient: row.recipient!,
+          subject: row.subject,
+          body: row.body,
+        })),
     );
 
     expect(db.messages).toHaveLength(20);
@@ -856,15 +1006,16 @@ describe("TEST 12 — nothing is ever sent", () => {
 
 describe("TEST 13 — the single-email flow is unchanged", () => {
   it("still parses one pasted email", async () => {
-    const { parseOutreachInput } = await import("@/lib/parser");
+    const { parseBulkEmails } = await import("@/lib/import/bulk-emails");
 
-    const parsed = parseOutreachInput(
+    const { candidates } = parseBulkEmails(
       "recipient: info@bella.cz\nsubject: AI recepce pro Bella\nbody: Dobrý den,\n\nrád bych vám ukázal řešení.",
     );
 
-    expect(parsed.recipient).toBe("info@bella.cz");
-    expect(parsed.subject).toBe("AI recepce pro Bella");
-    expect(parsed.missing).toEqual([]);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.recipient).toBe("info@bella.cz");
+    expect(candidates[0]!.subject).toBe("AI recepce pro Bella");
+    expect(candidates[0]!.status).toBe("parsed");
   });
 
   it("still saves one draft through the existing composer action", async () => {
@@ -887,7 +1038,11 @@ describe("TEST 13 — the single-email flow is unchanged", () => {
     await authenticate();
     const { saveDraft } = await import("@/app/actions");
 
-    const result = await saveDraft({ recipientEmail: "not-an-email", subject: "x", body: "y" });
+    const result = await saveDraft({
+      recipientEmail: "not-an-email",
+      subject: "x",
+      body: "y",
+    });
 
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected a refusal");
@@ -900,7 +1055,8 @@ describe("bulk import — resilience and bounds", () => {
   it("fails a row closed when the history lookup throws", async () => {
     db.historical.push({ __throw: true } as Row);
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
     const result = await previewBulkEmails(email("info@bella.cz", "X"));
 
@@ -925,12 +1081,15 @@ describe("bulk import — resilience and bounds", () => {
     await authenticate();
     const { importBulkEmails } = await import("@/app/bulk-actions");
 
-    const rows = Array.from({ length: BULK_IMPORT_CHUNK_SIZE * 3 + 1 }, (_, i) => ({
-      index: i + 1,
-      recipient: `info@firma${i + 1}.cz`,
-      subject: "X",
-      body: "text",
-    }));
+    const rows = Array.from(
+      { length: BULK_IMPORT_CHUNK_SIZE * 3 + 1 },
+      (_, i) => ({
+        index: i + 1,
+        recipient: `info@firma${i + 1}.cz`,
+        subject: "X",
+        body: "text",
+      }),
+    );
 
     const result = await importBulkEmails(rows);
 
@@ -940,11 +1099,16 @@ describe("bulk import — resilience and bounds", () => {
   });
 
   it("requires a session for both actions", async () => {
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
-    await expect(previewBulkEmails(twentyEmails())).rejects.toThrow("Not authenticated.");
+    await expect(previewBulkEmails(twentyEmails())).rejects.toThrow(
+      "Not authenticated.",
+    );
     await expect(
-      importBulkEmails([{ index: 1, recipient: "info@bella.cz", subject: "X", body: "y" }]),
+      importBulkEmails([
+        { index: 1, recipient: "info@bella.cz", subject: "X", body: "y" },
+      ]),
     ).rejects.toThrow("Not authenticated.");
   });
 
@@ -962,13 +1126,19 @@ describe("bulk import — resilience and bounds", () => {
   it("importing the same paste twice refreshes the drafts instead of duplicating", async () => {
     seedTwentyLeads();
     await authenticate();
-    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } =
+      await import("@/app/bulk-actions");
 
     const preview = await previewBulkEmails(twentyEmails());
     if (!preview.ok) throw new Error(preview.error);
     const requests = preview.plan.rows
       .filter((row) => row.status === "ready")
-      .map((row) => ({ index: row.index, recipient: row.recipient!, subject: row.subject, body: row.body }));
+      .map((row) => ({
+        index: row.index,
+        recipient: row.recipient!,
+        subject: row.subject,
+        body: row.body,
+      }));
 
     const first = await importBulkEmails(requests);
     if (!first.ok) throw new Error(first.error);

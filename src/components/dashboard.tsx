@@ -2,7 +2,10 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { loadOutreachActivity, loadOutreachActivityDetail } from "@/app/activity-actions";
+import {
+  loadOutreachActivity,
+  loadOutreachActivityDetail,
+} from "@/app/activity-actions";
 import {
   checkQualityGate,
   checkRecipient,
@@ -19,7 +22,11 @@ import {
   recordOutreachSent,
   saveDraft,
 } from "@/app/actions";
-import { EmailComposer, type ComposerValues } from "@/components/email-composer";
+import type { BulkEmailCandidate } from "@/lib/import/bulk-emails";
+import {
+  EmailComposer,
+  type ComposerValues,
+} from "@/components/email-composer";
 import { FollowUpDetail } from "@/components/follow-up-detail";
 import { FollowUpWorkspace } from "@/components/follow-up-workspace";
 import { createFollowUp } from "@/app/followup-actions";
@@ -39,13 +46,16 @@ import {
   navigateComposeWindow,
   preopenComposeWindow,
 } from "@/lib/outreach/open-compose-window";
-import type { FollowUpDetail as FollowUpDetailData, FollowUpListItem } from "@/lib/services/follow-up-sequence-service";
+import type {
+  FollowUpDetail as FollowUpDetailData,
+  FollowUpListItem,
+} from "@/lib/services/follow-up-sequence-service";
 import type {
   OutreachActivityDetail as OutreachActivityDetailData,
   OutreachActivityItem,
 } from "@/lib/services/outreach-activity-service";
 import type { GateEvaluation } from "@/lib/services/outreach-quality-gate";
-import type { DuplicateCheckResult, OutreachHistoryRow, ParsedOutreachInput } from "@/lib/types";
+import type { DuplicateCheckResult, OutreachHistoryRow } from "@/lib/types";
 
 const EMPTY: ComposerValues = {
   recipient: "",
@@ -115,12 +125,17 @@ export function Dashboard({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<FollowUpDetailData | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [detailNotice, setDetailNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
+  const [detailNotice, setDetailNotice] = useState<{
+    kind: "info" | "error";
+    text: string;
+  } | null>(null);
   const [recordingDetail, setRecordingDetail] = useState(false);
   const [creatingFollowUp, setCreatingFollowUp] = useState(false);
   const [deletingDetail, setDeletingDetail] = useState(false);
   const [openingDetailId, setOpeningDetailId] = useState<string | null>(null);
-  const [openingComposerRowId, setOpeningComposerRowId] = useState<string | null>(null);
+  const [openingComposerRowId, setOpeningComposerRowId] = useState<
+    string | null
+  >(null);
   // The history table is live: deleting an unsent lead removes it
   // from this list without a round trip through the server page.
   const [rows, setRows] = useState<OutreachHistoryRow[]>(initialRows);
@@ -134,10 +149,16 @@ export function Dashboard({
   const [activityError, setActivityError] = useState<string | null>(null);
   const [activityTruncated, setActivityTruncated] = useState(false);
   const [activityLimit, setActivityLimit] = useState(0);
-  const [activitySelectedId, setActivitySelectedId] = useState<string | null>(null);
-  const [activityDetail, setActivityDetail] = useState<OutreachActivityDetailData | null>(null);
+  const [activitySelectedId, setActivitySelectedId] = useState<string | null>(
+    null,
+  );
+  const [activityDetail, setActivityDetail] =
+    useState<OutreachActivityDetailData | null>(null);
   const [activityDetailLoading, setActivityDetailLoading] = useState(false);
-  const [activityNotice, setActivityNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
+  const [activityNotice, setActivityNotice] = useState<{
+    kind: "info" | "error";
+    text: string;
+  } | null>(null);
 
   // Stats. Read-only and server-counted: the browser never holds a message row,
   // only the seven figures. The reader's zone is sent so the server can resolve
@@ -249,7 +270,6 @@ export function Dashboard({
   const runDuplicateCheck = useCallback(async (recipient: string) => {
     if (!recipient.trim()) {
       setDuplicate(null);
-      setDuplicateError(null);
       return;
     }
     setDuplicatePending(true);
@@ -292,7 +312,10 @@ export function Dashboard({
   // never drift from what is stored in Postgres.
   useEffect(() => {
     if (!hasContent) return;
-    const handle = setTimeout(() => void runDuplicateCheck(values.recipient), 400);
+    const handle = setTimeout(
+      () => void runDuplicateCheck(values.recipient),
+      400,
+    );
     return () => clearTimeout(handle);
   }, [values.recipient, hasContent, runDuplicateCheck]);
 
@@ -312,7 +335,7 @@ export function Dashboard({
     runGateCheck,
   ]);
 
-  function handleParsed(parsed: ParsedOutreachInput) {
+  function handleParsed(parsed: BulkEmailCandidate) {
     setValues((current) => ({
       ...current,
       recipient: parsed.recipient || current.recipient,
@@ -321,11 +344,10 @@ export function Dashboard({
     }));
     setHasContent(true);
     setSaved(false);
-    setDuplicateError(
-      parsed.warnings.join(" ") ||
-        (parsed.missing.length ? `Missing: ${parsed.missing.join(", ")}` : null),
-    );
-    void runDuplicateCheck(parsed.recipient);
+    setDuplicateError(parsed.warnings.join(" "));
+    if (parsed.recipient) {
+      void runDuplicateCheck(parsed.recipient);
+    }
   }
 
   function handleClear() {
@@ -351,7 +373,10 @@ export function Dashboard({
    */
   async function handleOpenInGmail() {
     if (!values.messageId) {
-      setNotice({ kind: "error", text: "Save the draft first, then open it in Gmail." });
+      setNotice({
+        kind: "error",
+        text: "Save the draft first, then open it in Gmail.",
+      });
       return;
     }
 
@@ -369,12 +394,16 @@ export function Dashboard({
 
       // Try mailto: first — this opens the system default mail client.
       // If the user has Gmail set as default handler (in OS settings), this opens Gmail app/PWA.
-      const mailtoOpened = tab && !tab.closed && navigateComposeWindow(tab, result.mailtoUrl);
+      const mailtoOpened =
+        tab && !tab.closed && navigateComposeWindow(tab, result.mailtoUrl);
 
       // Also open Gmail web in a new tab as a reliable fallback.
       // This ensures the user always has a working compose window.
       const webTab = preopenComposeWindow();
-      const webOpened = webTab && !webTab.closed && navigateComposeWindow(webTab, result.webUrl);
+      const webOpened =
+        webTab &&
+        !webTab.closed &&
+        navigateComposeWindow(webTab, result.webUrl);
 
       if (!mailtoOpened && !webOpened) {
         // Both failed — browser blocked popups. Give the user the URLs manually.
@@ -486,11 +515,15 @@ export function Dashboard({
       }
 
       // Try mailto: first — opens system default mail client.
-      const mailtoOpened = tab && !tab.closed && navigateComposeWindow(tab, result.mailtoUrl);
+      const mailtoOpened =
+        tab && !tab.closed && navigateComposeWindow(tab, result.mailtoUrl);
 
       // Also open Gmail web as fallback.
       const webTab = preopenComposeWindow();
-      const webOpened = webTab && !webTab.closed && navigateComposeWindow(webTab, result.webUrl);
+      const webOpened =
+        webTab &&
+        !webTab.closed &&
+        navigateComposeWindow(webTab, result.webUrl);
 
       if (!mailtoOpened && !webOpened) {
         setActivityNotice({
@@ -544,7 +577,10 @@ export function Dashboard({
    */
   useEffect(() => {
     if (!initialFollowUpId) return;
-    const handle = setTimeout(() => void handleSelectFollowUp(initialFollowUpId), 0);
+    const handle = setTimeout(
+      () => void handleSelectFollowUp(initialFollowUpId),
+      0,
+    );
     return () => clearTimeout(handle);
   }, [initialFollowUpId, handleSelectFollowUp]);
 
@@ -568,11 +604,15 @@ export function Dashboard({
       }
 
       // Try mailto: first — opens system default mail client.
-      const mailtoOpened = tab && !tab.closed && navigateComposeWindow(tab, result.mailtoUrl);
+      const mailtoOpened =
+        tab && !tab.closed && navigateComposeWindow(tab, result.mailtoUrl);
 
       // Also open Gmail web as fallback.
       const webTab = preopenComposeWindow();
-      const webOpened = webTab && !webTab.closed && navigateComposeWindow(webTab, result.webUrl);
+      const webOpened =
+        webTab &&
+        !webTab.closed &&
+        navigateComposeWindow(webTab, result.webUrl);
 
       if (!mailtoOpened && !webOpened) {
         setDetailNotice({
@@ -622,9 +662,15 @@ export function Dashboard({
       }
 
       if (result.outcome === "already_sent") {
-        setDetailNotice({ kind: "info", text: "Already recorded as sent. Nothing was changed." });
+        setDetailNotice({
+          kind: "info",
+          text: "Already recorded as sent. Nothing was changed.",
+        });
       } else {
-        setDetailNotice({ kind: "info", text: "Recorded as sent. The next follow-up is scheduled." });
+        setDetailNotice({
+          kind: "info",
+          text: "Recorded as sent. The next follow-up is scheduled.",
+        });
       }
 
       // Re-read from the server rather than patching local state, so the UI can
@@ -741,7 +787,10 @@ export function Dashboard({
         contactName: result.lead.contact_name ?? current.contactName,
       }));
       setSaved(true);
-      setNotice({ kind: "info", text: `Draft saved for ${result.lead.email}.` });
+      setNotice({
+        kind: "info",
+        text: `Draft saved for ${result.lead.email}.`,
+      });
       void runDuplicateCheck(result.lead.email);
       setFocusSignal((n) => n + 1);
 
@@ -947,7 +996,9 @@ export function Dashboard({
         setNotice({ kind: "error", text: result.error });
         return;
       }
-      setRows((current) => current.filter((lead) => !leadIds.includes(lead.id)));
+      setRows((current) =>
+        current.filter((lead) => !leadIds.includes(lead.id)),
+      );
       setNotice({
         kind: "info",
         text: `Deleted ${result.deleted} lead(s) from history and the database.`,
@@ -1018,11 +1069,13 @@ export function Dashboard({
         return;
       }
 
-      setValues(composerValuesFromSavedMessage({
-        lead: result.lead,
-        mainMessage: result.main,
-        followUpMessage: result.followUp,
-      }));
+      setValues(
+        composerValuesFromSavedMessage({
+          lead: result.lead,
+          mainMessage: result.main,
+          followUpMessage: result.followUp,
+        }),
+      );
       setHasContent(true);
       // The content in the composer IS the stored draft, so it is saved by
       // definition. Saying otherwise would grey out the controls that are

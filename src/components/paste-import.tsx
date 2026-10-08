@@ -2,8 +2,9 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { parseOutreachInput } from "@/lib/parser";
-import type { ParsedOutreachInput } from "@/lib/types";
+import { isLeadMarker } from "@/lib/import/bulk-emails";
+import { parseBulkEmails } from "@/lib/import/bulk-emails";
+import type { BulkEmailCandidate } from "@/lib/import/bulk-emails";
 
 /**
  * Paste / Import — a compact bar that opens a paste dialog.
@@ -22,8 +23,9 @@ import type { ParsedOutreachInput } from "@/lib/types";
  */
 
 interface PasteImportProps {
-  onParsed: (parsed: ParsedOutreachInput, raw: string) => void;
+  onParsed: (parsed: BulkEmailCandidate, raw: string) => void;
   onError: (message: string) => void;
+
   focusSignal: number;
   disabled: boolean;
 }
@@ -35,7 +37,10 @@ export type PastePanelAction = "open" | "close" | "toggle";
  * The whole state machine. `closed` is the initial state, which is what keeps
  * the large textarea out of the document by default.
  */
-export function nextPastePanel(current: PastePanel, action: PastePanelAction): PastePanel {
+export function nextPastePanel(
+  current: PastePanel,
+  action: PastePanelAction,
+): PastePanel {
   if (action === "open") return "open";
   if (action === "close") return "closed";
   return current === "open" ? "closed" : "open";
@@ -48,21 +53,129 @@ interface PasteBodyProps extends PasteImportProps {
   onClose: () => void;
 }
 
-function PasteBody({ value, setValue, onClose, onParsed, onError, disabled }: PasteBodyProps) {
+/**
+ * The single-lead bar's verdict — one candidate, or the reason to refuse.
+ */
+
+/**
+ * Narrow the ONE canonical parser to the single-lead context.
+ *
+ * Every paste — this bar's and the bulk dialog's — is read by
+ * `parseBulkEmails()`. This wrapper only decides what the single-lead dialog
+ * does with the answer:
+ *
+ *   0 candidates  → nothing to parse;
+ *   1 candidate   → hand it to the composer (the ONLY accepted outcome);
+ *   2+ candidates → refuse and point at "Paste Emails" (bar 1b), because a
+ *                   single-lead dialog must never merge a batch — the failure
+ *                   mode that produced one composer with both recipients
+ *                   space-joined. The batch stays intact in the bulk flow,
+ *                   where each lead gets its own row, draft and sequences.
+ *
+ * Exported so tests can prove this path and the bulk path return the SAME
+ * candidate for the same input — one parser, one grammar, one data model.
+ */
+export function singleLeadFromPaste(raw: string): SingleLeadParse {
+  if (!raw.trim()) {
+    return {
+      ok: false,
+      error: "Nothing to parse — paste the recipient, subject and body first.",
+    };
+  }
+
+  const { candidates } = parseBulkEmails(raw);
+
+  if (candidates.length === 0) {
+    return {
+      ok: false,
+      error: "Nothing to parse — paste the recipient, subject and body first.",
+    };
+  }
+
+  if (candidates.length > 1) {
+    return {
+      ok: false,
+      error:
+        `This input contains ${candidates.length} lead${candidates.length === 1 ? "" : "s"}, not one. Use “Paste Emails” (bar 1b) ` +
+        "to preview and import them separately — each lead keeps its own recipient, subject " +
+        "and follow-ups, and nothing is merged.",
+    };
+  }
+
+  const candidate = candidates[0]!;
+
+  // A LEAD block with no subject or body is an incomplete batch entry —
+  // it belongs in the bulk dialog, not the single-lead bar.
+  if (
+    raw.split("\n").some((line) => isLeadMarker(line)) &&
+    (candidate.subject === null || candidate.body === null)
+  ) {
+    return {
+      ok: false,
+      error:
+        `This input contains 1 lead, not one. Use “Paste Emails” (bar 1b) ` +
+        "to preview and import them separately — nothing is merged.",
+    };
+  }
+
+  return { ok: true, candidate };
+}
+/** The single-lead bar's verdict — one candidate, or the reason to refuse. */
+export type SingleLeadParse =
+  { ok: true; candidate: BulkEmailCandidate } | { ok: false; error: string };
+/**
+ * Parse the paste and return the single-lead verdict, the same wrapper the
+ * dialog uses.
+ */
+
+/**
+ * The reported production bug: a `--- LEAD NN ---` batch pasted into the single-lead dialog
+ * would have produced one composer with both recipients space-joined, both
+ * subjects concatenated, and the raw metadata plus `Follow-up …` labels as
+ * the body. The guard now runs against the canonical parser: any input whose
+ * block count is not exactly one is refused before it ever reaches the composer.
+ */
+export function batchPasteHint(raw: string): string | null {
+  if (!raw.trim()) return null;
+
+  const { candidates } = parseBulkEmails(raw);
+
+  if (candidates.length > 1) {
+    return `This input contains ${candidates.length} \`--- LEAD ---\` markers. Use “Paste Emails” (bar 1b) to preview and import them separately — nothing is merged.`;
+  }
+
+  const markers = raw.split("\n").filter((line) => isLeadMarker(line)).length;
+  if (markers > 0) {
+    return `This input contains ${markers} \`--- LEAD ---\` marker${markers > 1 ? "s" : ""}. Use “Paste Emails” (bar 1b) to preview and import them separately — nothing is merged.`;
+  }
+
+  return null;
+}
+
+/** The compact bar — opens the paste dialog on toggle. */
+
+/** Shared body of the bar and the dialog. */
+function PasteBody({
+  value,
+  setValue,
+  onClose,
+  onParsed,
+  onError,
+  disabled,
+}: PasteBodyProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   function handleParse() {
-    if (!value.trim()) {
-      onError("Nothing to parse — paste the recipient, subject and body first.");
+    // ONE parser: the same `parseBulkEmails()` the bulk dialog runs. This
+    // wrapper only enforces the single-lead contract — exactly one candidate
+    // with a recipient, or a refusal that never reaches the composer.
+    const result = singleLeadFromPaste(value);
+    if (!result.ok) {
+      onError(result.error);
       textareaRef.current?.focus();
       return;
     }
-    const parsed = parseOutreachInput(value);
-    if (parsed.missing.includes("recipient")) {
-      onError("No recipient email found. Use a line like `recipient: info@example.com`.");
-      return;
-    }
-    onParsed(parsed, value);
+    onParsed(result.candidate, value);
   }
 
   return (
@@ -84,17 +197,25 @@ function PasteBody({ value, setValue, onClose, onParsed, onError, disabled }: Pa
         disabled={disabled}
         rows={11}
         spellCheck={false}
-        placeholder={
-          "recipient: info@example.com\nsubject: AI recepce pro Example\nbody: Dobrý den,\n\nchtěl jsem Vám ukázat..."
-        }
+        placeholder="recipient: info@example.com\nsubject: AI recepce pro Example\nbody: Dobrý den,\n\nchtěl jsem Vám ukázat..."
         className="field resize-y font-mono text-[13px] leading-relaxed"
       />
 
       <div className="mt-4 flex flex-wrap items-center gap-3">
-        <button type="button" onClick={handleParse} disabled={disabled} className="btn btn-primary">
+        <button
+          type="button"
+          onClick={handleParse}
+          disabled={disabled}
+          className="btn btn-primary"
+        >
           Import
         </button>
-        <button type="button" onClick={() => setValue("")} className="btn" disabled={disabled}>
+        <button
+          type="button"
+          onClick={() => setValue("")}
+          className="btn"
+          disabled={disabled}
+        >
           Clear
         </button>
         <button type="button" onClick={onClose} className="btn">
@@ -108,7 +229,6 @@ function PasteBody({ value, setValue, onClose, onParsed, onError, disabled }: Pa
     </div>
   );
 }
-
 export function PasteImport(props: PasteImportProps) {
   const [panel, setPanel] = useState<PastePanel>("closed");
   const [value, setValue] = useState("");
@@ -150,7 +270,9 @@ export function PasteImport(props: PasteImportProps) {
 
           <button
             type="button"
-            onClick={() => setPanel((current) => nextPastePanel(current, "toggle"))}
+            onClick={() =>
+              setPanel((current) => nextPastePanel(current, "toggle"))
+            }
             disabled={props.disabled}
             aria-expanded={open}
             aria-haspopup="dialog"
@@ -165,11 +287,7 @@ export function PasteImport(props: PasteImportProps) {
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-midnight/40 px-4 py-8">
           {/* Backdrop click closes; the panel stops propagation so a click inside
               cannot dismiss the dialog the operator is typing in. */}
-          <div
-            className="absolute inset-0"
-            onClick={close}
-            aria-hidden
-          />
+          <div className="absolute inset-0" onClick={close} aria-hidden />
           <section
             role="dialog"
             aria-modal="true"
@@ -178,13 +296,25 @@ export function PasteImport(props: PasteImportProps) {
             onClick={(event) => event.stopPropagation()}
           >
             <header className="flex items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
-              <h3 className="heading-sticker text-base text-midnight">Paste lead</h3>
-              <button type="button" onClick={close} className="btn btn-sm" aria-label="Close">
+              <h3 className="heading-sticker text-base text-midnight">
+                Paste lead
+              </h3>
+              <button
+                type="button"
+                onClick={close}
+                className="btn btn-sm"
+                aria-label="Close"
+              >
                 Close
               </button>
             </header>
 
-            <PasteBody {...props} value={value} setValue={setValue} onClose={close} />
+            <PasteBody
+              {...props}
+              value={value}
+              setValue={setValue}
+              onClose={close}
+            />
           </section>
         </div>
       ) : null}

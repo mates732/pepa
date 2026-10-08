@@ -82,15 +82,59 @@ export const MAX_BULK_EMAILS = 100;
 /** Where a parsed email's identity came from, for the preview table. */
 export type BulkEmailStatus = "parsed" | "duplicate" | "needs_review";
 
+/**
+ * The lead's metadata block (canonical §4) — fields of the LEAD, never part of
+ * any email body. `Email:` is not listed here: it is a recipient label and
+ * resolves the candidate's `email` / `recipient` instead.
+ */
+export interface BulkEmailMetadata {
+  company: string | null;
+  website: string | null;
+  phone: string | null;
+  city: string | null;
+  category: string | null;
+  address: string | null;
+}
+
+/**
+ * One parsed lead — the ONE data model of Pepa V1.
+ *
+ * Every pasted input, whether it came from the single-lead "Paste lead +" bar
+ * or the bulk "Paste Emails" dialog, produces candidates of exactly this shape:
+ *
+ *     { company, website, email, phone, city, category, address,
+ *       initial: { subject, body }, followUps: [{ subject, body }] }
+ *
+ * plus the preview/import bookkeeping below (`index`, `status`, `reason`,
+ * `duplicateOf`, `warnings`). The canonical fields are named per the lead
+ * model — `email` is the same string as `recipient`, `initial.subject` and
+ * `initial.body` are the same strings as `subject` and `body` — so existing
+ * preview rows and the legacy field names keep working while the shape stays
+ * uniform for every consumer.
+ */
 export interface BulkEmailCandidate {
   /** 1-based position in the paste. Stable across parse → preview → import. */
   index: number;
-  /** Normalized (trimmed, unwrapped, lowercased) — the canonical identity. */
+  /**
+   * Normalized (trimmed, unwrapped, lowercased) — the canonical identity.
+   * Same value as `email`, named for the preview table.
+   */
   recipient: string | null;
-  /** Exactly as pasted, minus surrounding whitespace. */
+  /** Exactly as pasted, minus surrounding whitespace. Same as `initial.subject`. */
   subject: string | null;
-  /** Exactly as pasted, minus surrounding whitespace. */
+  /** Exactly as pasted, minus surrounding whitespace. Same as `initial.body`. */
   body: string | null;
+  /** Canonical `email` — always identical to `recipient`, never concatenated. */
+  email: string | null;
+  /** Canonical metadata (§4). Never part of any body, follow-up or label. */
+  company: string | null;
+  website: string | null;
+  phone: string | null;
+  city: string | null;
+  category: string | null;
+  address: string | null;
+  /** Canonical `initial` — the first outreach, identical to `subject`/`body`. */
+  initial: { subject: string | null; body: string | null };
   status: BulkEmailStatus;
   /** Why this is `duplicate` or `needs_review`. Null when it is usable. */
   reason: string | null;
@@ -155,7 +199,15 @@ function isRule(line: string): boolean {
  */
 const LEAD_MARKER = /^\s*[-*_=~#]{2,}\s*LEAD\s+\d+\s*[-*_=~#]{2,}\s*$/i;
 
-function isLeadMarker(line: string): boolean {
+/**
+ * Is this line a `--- LEAD NN ---` marker?
+ *
+ * Exported because it is the single definition of "a batch starts here": the
+ * single-lead paste dialog refuses exactly this shape (see `batchPasteHint` in
+ * `paste-import.tsx`), and reimplementing the pattern there would let the two
+ * surfaces disagree about what counts as a batch.
+ */
+export function isLeadMarker(line: string): boolean {
   return LEAD_MARKER.test(line);
 }
 
@@ -202,7 +254,12 @@ function looksLikeEmailOpening(line: string): boolean {
   if (isLeadMarker(line)) return true;
   const label = labelOf(line);
   if (label && NOISE_LABELS.has(label.name)) return false;
-  if (label && (SUBJECT_LABELS.has(label.name) || BODY_LABELS.has(label.name) || RECIPIENT_LABELS.has(label.name))) {
+  if (
+    label &&
+    (SUBJECT_LABELS.has(label.name) ||
+      BODY_LABELS.has(label.name) ||
+      RECIPIENT_LABELS.has(label.name))
+  ) {
     return true;
   }
   // A bare address on its own line, as in the headerless format.
@@ -256,15 +313,13 @@ function findBoundaries(lines: string[]): {
     // stops it from being prepended to somebody's message body.
     return {
       starts: [...starts].sort((a, b) => a - b),
-      splitBy:
-        starts.size > 1
-          ? "recipient_header"
-          : "single",
+      splitBy: starts.size > 1 ? "recipient_header" : "single",
       leadBlocks: false,
     };
   }
 
-  if (rules.length >= 1) return { starts: rules, splitBy: "separator", leadBlocks: false };
+  if (rules.length >= 1)
+    return { starts: rules, splitBy: "separator", leadBlocks: false };
 
   // No headers and no rules. Two or more blank lines are the last structural
   // hint; a single blank line inside a body is far more common than a separator.
@@ -272,7 +327,8 @@ function findBoundaries(lines: string[]): {
   for (let i = 1; i < lines.length; i += 1) {
     if (lines[i]!.trim() === "" && lines[i - 1]!.trim() === "") blanks.push(i);
   }
-  if (blanks.length >= 1) return { starts: blanks, splitBy: "blank_line", leadBlocks: false };
+  if (blanks.length >= 1)
+    return { starts: blanks, splitBy: "blank_line", leadBlocks: false };
 
   return { starts: [0], splitBy: "single", leadBlocks: false };
 }
@@ -308,7 +364,8 @@ function toBlocks(
   // plus a real one. In LEAD-BLOCK mode there is never anything before the
   // first marker by construction — `parseBulkEmails` drops it — so no block of
   // prose is ever invented from it.
-  const boundaryIsBetweenEmails = splitBy === "separator" || splitBy === "blank_line";
+  const boundaryIsBetweenEmails =
+    splitBy === "separator" || splitBy === "blank_line";
   if (!leadBlocks && boundaryIsBetweenEmails && starts[0]! > 0) {
     blocks.push(lines.slice(0, starts[0]!));
   }
@@ -320,7 +377,8 @@ function toBlocks(
 
     // The boundary itself is the first line of the block; strip the
     // delimiter (a separator rule or a LEAD marker counted as a boundary).
-    while (slice.length > 0 && (isRule(slice[0]!) || isLeadMarker(slice[0]!))) slice.shift();
+    while (slice.length > 0 && (isRule(slice[0]!) || isLeadMarker(slice[0]!)))
+      slice.shift();
     const trimmed = trimTrailingRuleChatter(slice);
     blocks.push(leadBlocks ? popTrailingSeparators(trimmed) : trimmed);
   }
@@ -340,7 +398,8 @@ function toBlocks(
  */
 function popTrailingSeparators(block: string[]): string[] {
   let end = block.length;
-  while (end > 0 && (block[end - 1]!.trim() === "" || isRule(block[end - 1]!))) end -= 1;
+  while (end > 0 && (block[end - 1]!.trim() === "" || isRule(block[end - 1]!)))
+    end -= 1;
   return block.slice(0, end);
 }
 
@@ -366,7 +425,8 @@ function popTrailingSeparators(block: string[]): string[] {
  */
 function trimTrailingRuleChatter(block: string[]): string[] {
   let end = block.length;
-  while (end > 0 && (isRule(block[end - 1]!) || block[end - 1]!.trim() === "")) end -= 1;
+  while (end > 0 && (isRule(block[end - 1]!) || block[end - 1]!.trim() === ""))
+    end -= 1;
 
   const lastRule = block.findLastIndex(isRule);
   if (lastRule === -1) return block;
@@ -391,25 +451,40 @@ function trimTrailingRuleChatter(block: string[]): string[] {
 /* -------------------------------------------------------------------------- */
 
 /**
- * `To:`, `Subject:`, `Body:`, and the aliases `parseOutreachInput` already knows.
- *
- * This is a small reader rather than a second parser: the single-email parser is
- * the authority on which words are field labels, and `recipientFromHeaderLine`
- * above is its own logic reused so both sides agree. The inline value after a
- * label is only taken when it is on the SAME line — `To:` followed by the
- * address on the next line is handled by the fallback below, because a subject
- * body must never be swallowed as a recipient.
+ * `To:`, `Subject:`, `Body:`, and every alias the single-lead paste ever
+ * accepted — the label table lives HERE now, since `parseBulkEmails` is the
+ * one parser of Pepa V1 and `recipientFromHeaderLine` reuses this same reader
+ * for boundary detection. The inline value after a label is only taken when it
+ * is on the SAME line — `To:` followed by the address on the next line is
+ * handled by the fallback below, because a subject body must never be
+ * swallowed as a recipient.
  */
-const INLINE_LABEL = /^\s{0,4}(?:[-*>+]\s*)?(?:\*\*|__)?\s*([A-Za-z][A-Za-z0-9À-ž _-]{0,24}?)\s*(?:\*\*|__)?\s*[:：]\s*(.*)$/;
+const INLINE_LABEL =
+  /^\s{0,4}(?:[-*>+]\s*)?(?:\*\*|__)?\s*([A-Za-z][A-Za-z0-9À-ž _-]{0,24}?)\s*(?:\*\*|__)?\s*[:：]\s*(.*)$/;
 
 const RECIPIENT_LABELS = new Set([
-  "to", "recipient", "recipientka", "adresat", "prijemce", "komu", "e", "email", "mail", "e-mail",
+  "to",
+  "recipient",
+  "recipientka",
+  "adresat",
+  "prijemce",
+  "komu",
+  "e",
+  "email",
+  "mail",
+  "e-mail",
 ]);
 
 const SUBJECT_LABELS = new Set(["subject", "predmet", "nadpis", "title"]);
 
 const BODY_LABELS = new Set([
-  "body", "message", "message-body", "text", "zprava", "obsah", "sdeleni",
+  "body",
+  "message",
+  "message-body",
+  "text",
+  "zprava",
+  "obsah",
+  "sdeleni",
 ]);
 
 /**
@@ -425,9 +500,45 @@ const BODY_LABELS = new Set([
  * body text (canonical §4).
  */
 const NOISE_LABELS = new Set([
-  "from", "od", "date", "datum", "sent", "cc", "bcc", "reply-to",
-  "company", "website", "phone", "city", "category", "address",
+  "from",
+  "od",
+  "date",
+  "datum",
+  "sent",
+  "cc",
+  "bcc",
+  "reply-to",
+  "company",
+  "website",
+  "phone",
+  "city",
+  "category",
+  "address",
 ]);
+
+/**
+ * The lead metadata labels (canonical §4): fields of the LEAD, captured onto
+ * the candidate and never read as a boundary or as body text — anywhere in
+ * the block, including inside a follow-up. `Email:` is deliberately NOT here:
+ * it is a recipient label and resolves the candidate's `email` instead.
+ */
+const METADATA_FIELDS = new Set([
+  "company",
+  "website",
+  "phone",
+  "city",
+  "category",
+  "address",
+]);
+
+const EMPTY_METADATA: BulkEmailMetadata = {
+  company: null,
+  website: null,
+  phone: null,
+  city: null,
+  category: null,
+  address: null,
+};
 
 /**
  * The follow-up half of a `--- LEAD NN ---` block.
@@ -468,6 +579,8 @@ interface Extracted {
   bareAddress: string | null;
   /** The block's follow-up sections, when they carry any. */
   followUps: Array<{ subject: string | null; body: string }>;
+  /** The lead's metadata block (§4) — captured, never body text. */
+  metadata: BulkEmailMetadata;
 }
 
 function labelOf(line: string): { name: string; value: string } | null {
@@ -498,6 +611,7 @@ function extract(block: string[]): Extracted {
   const preamble: string[] = [];
   const bodyLines: string[] = [];
   const warnings: string[] = [];
+  const metadata: BulkEmailMetadata = { ...EMPTY_METADATA };
 
   let recipientRaw: string | null = null;
   let subject: string | null = null;
@@ -513,6 +627,18 @@ function extract(block: string[]): Extracted {
     // away — see FOLLOWUP_SUBJECT_LABELS above.
     const squished = label ? label.name.replace(/[-\s_]/g, "") : "";
 
+    // Lead metadata is a field of the LEAD wherever it sits: captured once
+    // (first value wins) and never allowed to become a boundary, a subject or
+    // body text — not in the initial, not in a follow-up (canonical §4).
+    if (label && METADATA_FIELDS.has(label.name)) {
+      const key = label.name as keyof BulkEmailMetadata;
+      if (!metadata[key]) {
+        const value = label.value.trim();
+        if (value) metadata[key] = value;
+      }
+      continue;
+    }
+
     // Once a follow-up section has opened, only the follow-up labels are
     // still fields — the section ends at the next follow-up label or at the
     // next `--- LEAD NN ---` marker (the marker cuts the block itself).
@@ -521,17 +647,38 @@ function extract(block: string[]): Extracted {
     const inFollowUp = currentFollowUpIndex >= 0;
 
     if (!inFollowUp && label && RECIPIENT_LABELS.has(label.name)) {
+      // Once the body is open, a recipient label is quoted content — a
+      // forwarded `To:` line or a signature — and stays in the body. It must
+      // never replace the address the lead was resolved with.
+      if (current === "body") {
+        bodyLines.push(line);
+        continue;
+      }
       current = "recipient";
-      if (!label.value.trim()) continue;
-      recipientRaw = label.value.trim();
+      if (!label.value.trim()) continue; // the address may follow on the next line
+      // The FIRST readable address wins. A later recipient label (a quoted
+      // header, a second `Email:`) is dropped, never merged: `email` must stay
+      // a single address, never `a@x.cz b@y.cz`.
+      const alreadySet =
+        recipientRaw !== null && isValidEmail(normalizeEmail(recipientRaw));
+      if (!alreadySet) recipientRaw = label.value.trim();
       if (isValidEmail(inlineEmail)) continue;
-      warnings.push(`Could not read an email address from "${label.value.trim()}".`);
+      if (alreadySet) continue;
+      warnings.push(
+        `Could not read an email address from "${label.value.trim()}".`,
+      );
       continue;
     }
 
     if (!inFollowUp && label && SUBJECT_LABELS.has(label.name)) {
+      // Same rule as recipients: once the body is open, a subject label is
+      // quoted content — it must not replace the initial subject.
+      if (current === "body") {
+        bodyLines.push(line);
+        continue;
+      }
       current = "subject";
-      if (label.value.trim()) subject = label.value.trim();
+      if (label.value.trim()) subject = unquoteField(label.value.trim());
       continue;
     }
 
@@ -556,7 +703,8 @@ function extract(block: string[]): Extracted {
         followUps.push({ subject: null, body: [] });
         currentFollowUpIndex = 0;
       }
-      if (label.value.trim()) followUps[currentFollowUpIndex]!.body.push(label.value);
+      if (label.value.trim())
+        followUps[currentFollowUpIndex]!.body.push(label.value);
       continue;
     }
 
@@ -629,11 +777,30 @@ function extract(block: string[]): Extracted {
     body,
     warnings,
     bareAddress,
+    metadata,
     followUps: followUps.map((fu) => ({
       subject: fu.subject,
       body: fu.body.join("\n"),
     })),
   };
+}
+
+/**
+ * Strip one wrapping pair of quotes from a field value.
+ *
+ * The single-lead paste always did this — `subject: "Nabídka"` read as
+ * `Nabídka`, not as a quoted string — and the canonical parser keeps the
+ * behaviour so migrated pastes read the same. Only a pair that wraps the
+ * WHOLE value is removed; internal quotes are the operator's text.
+ */
+function unquoteField(value: string): string {
+  const trimmed = value.trim();
+  const first = trimmed[0];
+  const last = trimmed[trimmed.length - 1];
+  if (trimmed.length > 1 && first === last && ['"', "'", "`"].includes(first)) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
 }
 
 /**
@@ -704,12 +871,15 @@ export function parseBulkEmails(text: string): BulkEmailParseResult {
     // address rather than a sentence containing one.
     const recipient =
       found.recipient ??
-      (found.recipientRaw === null && found.bareAddress && isValidEmail(found.bareAddress)
+      (found.recipientRaw === null &&
+      found.bareAddress &&
+      isValidEmail(found.bareAddress)
         ? normalizeEmail(found.bareAddress)
         : null);
 
     const subject = found.subject ? tidy(found.subject) : null;
     const body = unquote(tidy(found.body));
+    const bodyOrNull = body === "" ? null : body;
     const warnings = [...found.warnings];
 
     let status: BulkEmailStatus = "parsed";
@@ -759,7 +929,18 @@ export function parseBulkEmails(text: string): BulkEmailParseResult {
         index,
         recipient,
         subject,
-        body: body === "" ? null : body,
+        body: bodyOrNull,
+        // The canonical lead shape — same values under the lead model's names,
+        // so every consumer (single-lead bar, bulk preview, import) reads one
+        // uniform shape and nothing can concatenate or drift.
+        email: recipient,
+        company: found.metadata.company,
+        website: found.metadata.website,
+        phone: found.metadata.phone,
+        city: found.metadata.city,
+        category: found.metadata.category,
+        address: found.metadata.address,
+        initial: { subject, body: bodyOrNull },
         status,
         reason,
         duplicateOf,
