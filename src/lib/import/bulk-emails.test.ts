@@ -751,3 +751,424 @@ toto je první testovací follow-up.`;
     ]);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* canonical LEAD-BLOCK specification — regression tests A–J                  */
+/* -------------------------------------------------------------------------- */
+
+describe("parseBulkEmails — canonical LEAD-BLOCK specification (regression A–J)", () => {
+  /**
+   * The canonical fixture: two leads, each a metadata header + initial email,
+   * the first carrying two follow-ups, the second one. This is the exact input
+   * the spec's §11 example uses — the unit suite, the end-to-end suite and the
+   * manual UI smoke test all run this same text.
+   */
+  const CANONICAL = `--- LEAD 01 ---
+Company: Test Barber Praha
+Website: https://example.com
+Email: barber@example.com
+Phone: +420700000001
+City: Praha 7
+Category: Barbershop
+Address: Praha 7
+
+Subject: Nabídka pro Test Barber Praha
+
+Dobrý den,
+
+toto je hlavní email.
+
+Follow-up Subject: Re: Nabídka pro Test Barber Praha
+
+Follow-up Body:
+
+Dobrý den,
+
+toto je první follow-up.
+
+Follow-up 2 Subject: Re: Nabídka pro Test Barber Praha
+
+Follow-up 2 Body:
+
+Dobrý den,
+
+toto je druhý follow-up.
+
+
+--- LEAD 02 ---
+Company: Test Salon Praha
+Website: https://example.org
+Email: salon@example.com
+Phone: +420700000002
+City: Praha 6
+Category: Salon
+Address: Praha 6
+
+Subject: Nabídka pro Test Salon Praha
+
+Dobrý den,
+
+toto je hlavní email druhého leadu.
+
+Follow-up Subject: Re: Nabídka pro Test Salon Praha
+
+Follow-up Body:
+
+Dobrý den,
+
+toto je první follow-up druhého leadu.`;
+
+  /** The metadata keys of the canonical format — fields, never body text. */
+  const METADATA_LABELS = [
+    "Company:", "Website:", "Email:", "Phone:", "City:", "Category:", "Address:",
+  ];
+
+  it("A: two leads with metadata + initial email split into exactly two candidates", () => {
+    const { candidates, splitBy } = parseBulkEmails(CANONICAL);
+
+    expect(splitBy).toBe("separator");
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0]!.recipient).toBe("barber@example.com");
+    expect(candidates[0]!.subject).toBe("Nabídka pro Test Barber Praha");
+    expect(candidates[0]!.body).toBe("Dobrý den,\n\ntoto je hlavní email.");
+    expect(candidates[1]!.recipient).toBe("salon@example.com");
+    expect(candidates[1]!.subject).toBe("Nabídka pro Test Salon Praha");
+    expect(candidates[1]!.body).toBe(
+      "Dobrý den,\n\ntoto je hlavní email druhého leadu.",
+    );
+    expect(candidates.every((c) => c.status === "parsed")).toBe(true);
+  });
+
+  it("B: each lead carries its own follow-up, not a card of its own", () => {
+    const { candidates } = parseBulkEmails(CANONICAL);
+
+    expect(candidates[0]!.followUps).toEqual([
+      {
+        subject: "Re: Nabídka pro Test Barber Praha",
+        body: "Dobrý den,\n\ntoto je první follow-up.",
+      },
+      {
+        subject: "Re: Nabídka pro Test Barber Praha",
+        body: "Dobrý den,\n\ntoto je druhý follow-up.",
+      },
+    ]);
+    expect(candidates[1]!.followUps).toEqual([
+      {
+        subject: "Re: Nabídka pro Test Salon Praha",
+        body: "Dobrý den,\n\ntoto je první follow-up druhého leadu.",
+      },
+    ]);
+  });
+
+  it("C: one lead with follow-ups 1, 2 and 3, in sequence", () => {
+    const withUnnumbered = `--- LEAD 01 ---
+Email: mix@example.com
+Subject: Hlavní
+
+Tělo hlavního emailu.
+
+Follow-up Subject: První follow-up
+
+Follow-up Body:
+
+Tělo prvního follow-upu.
+
+Follow-up 2 Subject: Druhý follow-up
+
+Follow-up 2 Body:
+
+Tělo druhého follow-upu.
+
+Follow-up 3 Subject: Třetí follow-up
+
+Follow-up 3 Body:
+
+Tělo třetího follow-upu.`;
+    // The first sequence may be written unnumbered (`Follow-up Subject:`) or
+    // explicitly numbered (`Follow-up 1 Subject:`) — both read as sequence 1.
+    const withNumbered = withUnnumbered
+      .replace("Follow-up Subject: První follow-up", "Follow-up 1 Subject: První follow-up")
+      .replace("Follow-up Body:", "Follow-up 1 Body:");
+
+    for (const input of [withUnnumbered, withNumbered]) {
+      const { candidates } = parseBulkEmails(input);
+
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]!.body).toBe("Tělo hlavního emailu.");
+      expect(candidates[0]!.followUps).toEqual([
+        { subject: "První follow-up", body: "Tělo prvního follow-upu." },
+        { subject: "Druhý follow-up", body: "Tělo druhého follow-upu." },
+        { subject: "Třetí follow-up", body: "Tělo třetího follow-upu." },
+      ]);
+    }
+  });
+
+  it("D: Email: metadata inside a lead is the recipient, never a boundary", () => {
+    const input = `--- LEAD 01 ---
+Email: a@example.com
+Subject: A
+
+Body A
+
+--- LEAD 02 ---
+Email: b@example.com
+Subject: B
+
+Body B`;
+    const { candidates } = parseBulkEmails(input);
+
+    // One marker, one candidate — the Email: lines never split anything.
+    expect(candidates).toHaveLength(2);
+    expect(candidates.map((c) => c.recipient)).toEqual([
+      "a@example.com",
+      "b@example.com",
+    ]);
+    expect(candidates[0]!.body).toBe("Body A");
+    expect(candidates[1]!.body).toBe("Body B");
+    expect(candidates.every((c) => !String(c.body).includes("Email:"))).toBe(true);
+  });
+
+  it("E: Address: metadata inside a lead never enters the body", () => {
+    const input = `--- LEAD 01 ---
+Company: S.r.o.
+Address: Vodičkova 7, Praha 1
+Email: a@example.com
+Subject: A
+
+Dobrý den,
+
+prosím o kontakt.
+
+Follow-up Subject: Re: A
+
+Follow-up Body:
+
+Navazuji.
+
+Address: Praha 7`;
+    const { candidates } = parseBulkEmails(input);
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]!.body).toBe("Dobrý den,\n\nprosím o kontakt.");
+    expect(candidates[0]!.body).not.toContain("Address:");
+    // Nor in the follow-up — metadata is a field of the lead wherever it sits.
+    expect(candidates[0]!.followUps[0]!.body).toBe("Navazuji.");
+    expect(candidates[0]!.followUps[0]!.body).not.toContain("Address:");
+  });
+
+  it("F: --- LEAD 02 --- always terminates Lead 01, even mid-body", () => {
+    const midBody = `--- LEAD 01 ---
+To: a@test.cz
+Subject: A
+
+Main 1
+
+--- LEAD 02 ---
+To: b@test.cz
+Subject: B
+
+Main 2`;
+    const first = parseBulkEmails(midBody).candidates;
+    expect(first).toHaveLength(2);
+    expect(first[0]!.body).toBe("Main 1");
+    expect(first[1]!.body).toBe("Main 2");
+
+    // …and mid-follow-up: the marker closes the follow-up's body too.
+    const midFollowUp = `--- LEAD 01 ---
+To: a@test.cz
+Subject: A
+
+Main 1
+
+Follow-up Subject: FU 1
+
+Follow-up Body:
+
+FU body part 1
+
+--- LEAD 02 ---
+To: b@test.cz
+Subject: B
+
+Main 2`;
+    const second = parseBulkEmails(midFollowUp).candidates;
+    expect(second).toHaveLength(2);
+    expect(second[0]!.body).toBe("Main 1");
+    expect(second[0]!.followUps).toEqual([
+      { subject: "FU 1", body: "FU body part 1" },
+    ]);
+    expect(second[1]!.body).toBe("Main 2");
+  });
+
+  it("G: metadata is never part of any initial body", () => {
+    const { candidates } = parseBulkEmails(CANONICAL);
+
+    for (const candidate of candidates) {
+      for (const key of METADATA_LABELS) {
+        expect(candidate.body).not.toContain(key);
+      }
+    }
+  });
+
+  it("H: follow-ups are never part of the initial body", () => {
+    const { candidates } = parseBulkEmails(CANONICAL);
+
+    for (const candidate of candidates) {
+      expect(candidate.body).not.toContain("Follow-up");
+      expect(candidate.body).not.toContain("follow-up");
+      // The follow-up's own halves are read under their explicit labels.
+      expect(candidate.followUps.every((fu) => Boolean(fu.subject && fu.body))).toBe(true);
+    }
+    expect(candidates[0]!.body).toBe("Dobrý den,\n\ntoto je hlavní email.");
+    expect(candidates[1]!.body).toBe(
+      "Dobrý den,\n\ntoto je hlavní email druhého leadu.",
+    );
+  });
+
+  it("I: legacy input without markers still uses the header heuristics", () => {
+    const { candidates, splitBy } = parseBulkEmails(FORMAT_A);
+
+    expect(splitBy).toBe("recipient_header");
+    expect(candidates).toHaveLength(2);
+    expect(candidates.map((c) => c.recipient)).toEqual([
+      "info@bella.cz",
+      "barber@barberx.cz",
+    ]);
+    expect(candidates[0]!.subject).toBe("Váš web");
+    expect(candidates[0]!.body).toBe(
+      "Dobrý den,\n\nrád bych vám ukázal web pro vaši společnost.\n\nS pozdravem\nPetr",
+    );
+    expect(candidates[1]!.body).toBe(
+      "Dobrý den,\n\nnabízím AI recepci pro vaši provozovnu.\n\nS pozdravem\nPetr",
+    );
+    // No markers anywhere means no marker ever claimed a boundary.
+    expect(candidates.every((c) => !String(c.body).includes("LEAD"))).toBe(true);
+  });
+
+  it("J: a mix of differently sized leads parses without any bleed", () => {
+    const mixed = `--- LEAD 01 ---
+Email: short@example.com
+Subject: Krátký
+
+Jen jeden řádek.
+
+--- LEAD 02 ---
+Email: long@example.com
+Subject: Dlouhý
+
+Dobrý den,
+
+toto je dlouhý email s odstavci.
+
+Ještě jeden odstavec.
+
+Follow-up Subject: FU A
+
+Follow-up Body:
+
+První.
+
+Follow-up 2 Subject: FU B
+
+Follow-up 2 Body:
+
+Druhý.
+
+Follow-up 3 Subject: FU C
+
+Follow-up 3 Body:
+
+Třetí.
+
+--- LEAD 03 ---
+Email: medium@example.com
+Subject: Střední
+
+Dobrý den,
+
+středně dlouhý email.
+
+Follow-up Subject: FU D
+
+Follow-up Body:
+
+Jediný follow-up.`;
+    const { candidates } = parseBulkEmails(mixed);
+
+    expect(candidates).toHaveLength(3);
+    expect(candidates.map((c) => c.recipient)).toEqual([
+      "short@example.com",
+      "long@example.com",
+      "medium@example.com",
+    ]);
+    expect(candidates[0]!.body).toBe("Jen jeden řádek.");
+    expect(candidates[1]!.body).toBe(
+      "Dobrý den,\n\ntoto je dlouhý email s odstavci.\n\nJeště jeden odstavec.",
+    );
+    expect(candidates[2]!.body).toBe("Dobrý den,\n\nstředně dlouhý email.");
+    expect(candidates.map((c) => c.followUps.length)).toEqual([0, 3, 1]);
+    // Nothing leaks between leads: no marker, no other lead's subject text.
+    expect(candidates[0]!.body).not.toContain("Dlouhý");
+    expect(candidates[1]!.body).not.toContain("Střední");
+    expect(candidates[2]!.body).not.toContain("Dlouhý");
+    expect(candidates.every((c) => !String(c.body).includes("--- LEAD"))).toBe(true);
+  });
+
+  it("acceptance: marker count equals candidate count, pre-marker prose dropped", () => {
+    const input = `Here are the leads:
+
+--- LEAD 01 ---
+To: a@test.cz
+Subject: A
+
+Body A
+
+--- LEAD 02 ---
+To: b@test.cz
+Subject: B
+
+Body B`;
+    const markers = input.split("\n").filter((line) => line.includes("LEAD")).length;
+    const { candidates } = parseBulkEmails(input);
+
+    expect(markers).toBe(2);
+    expect(candidates).toHaveLength(markers);
+    expect(candidates[0]!.body).toBe("Body A");
+    expect(candidates[1]!.body).toBe("Body B");
+  });
+
+  it("acceptance: rules and recipient headers inside a lead never split it", () => {
+    // `---` followed by an `Email:` line is the shape that used to turn one
+    // lead into two candidates. Only the markers delimit (§3).
+    const input = `--- LEAD 01 ---
+To: a@test.cz
+Subject: A
+
+Body line
+---
+Email: someone@test.cz
+More body
+
+--- LEAD 02 ---
+To: b@test.cz
+Subject: B
+
+Body B`;
+    const { candidates } = parseBulkEmails(input);
+
+    expect(candidates).toHaveLength(2);
+    // The rule stays body content; the whole block is one lead.
+    expect(candidates[0]!.body).toBe("Body line\n---\nMore body");
+    expect(candidates[1]!.body).toBe("Body B");
+  });
+
+  it("acceptance: a separator rule typed between blocks stays out of both bodies", () => {
+    const { candidates } = parseBulkEmails(
+      "--- LEAD 01 ---\nTo: a@test.cz\nSubject: A\n\nBody A\n\n---\n\n--- LEAD 02 ---\nTo: b@test.cz\nSubject: B\n\nBody B",
+    );
+
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0]!.body).toBe("Body A");
+    expect(candidates[1]!.body).toBe("Body B");
+  });
+});

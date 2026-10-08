@@ -13,29 +13,44 @@
  *
  * ## Splitting
  *
- * Recipient headers win. A line like `To: info@firma.cz` is a boundary because it
- * is an unambiguous statement about who the next email is for, so that is the
- * primary rule — and it is why a `---` inside a body does not split anything: a
- * horizontal rule carries no address, so it is only ever treated as a boundary
- * when there are no headers to go on.
+ * Two modes, chosen by the input itself and NEVER mixed:
+ *
+ *   LEAD-BLOCK  the paste contains at least one `--- LEAD NN ---` marker. ONLY
+ *               those markers delimit leads: `To:`, `Email:`, `Subject:`,
+ *               `Follow-up Subject:`, rules and blank lines are content of the
+ *               current lead and can never open a new one. Prose typed before
+ *               the first marker belongs to no lead, and a marker ends the
+ *               previous lead's body, follow-up and block outright.
+ *
+ *   LEGACY      no marker anywhere. Recipient headers win: a line like
+ *               `To: info@firma.cz` is a boundary because it is an
+ *               unambiguous statement about who the next email is for — and it
+ *               is why a `---` inside a body does not split anything: a
+ *               horizontal rule carries no address, so it is only ever treated
+ *               as a boundary when there are no headers to go on.
  *
  * Four shapes are recognised, and the shapes are detected rather than declared
  * so the operator never has to pick:
  *
- *   A   To: info@firma.cz
+ *   A   (legacy) To: info@firma.cz
  *       Subject: Váš web
  *       Dobrý den, ...
  *       ---
  *       To: barber@firma2.cz
  *       ...
  *
- *   B   Two or more emails separated only by a rule or a blank gap — no headers.
+ *   B   (legacy) Two or more emails separated only by a rule or a blank gap —
+ *       no headers.
  *
- *   C   Copied mail-client blocks, which may carry `From:`/`Date:` chatter before
- *       the `To:` line, or quote previous replies with `>`.
- *   D   `--- LEAD NN ---` blocks — machine-generated batches (ChatGPT's
- *       structured output). Each block is one finished email plus an optional
- *       follow-up under `Follow-up Subject:` / `Follow-up Body:` labels.
+ *   C   (legacy) Copied mail-client blocks, which may carry `From:`/`Date:`
+ *       chatter before the `To:` line, or quote previous replies with `>`.
+ *
+ *   D   `--- LEAD NN ---` blocks — machine-generated batches. Each block is a
+ *       metadata header (Company / Website / Email / Phone / City / Category /
+ *       Address), the initial email (`Subject:` + body) and any number of
+ *       follow-ups (`Follow-up Subject:`, `Follow-up 2 Subject:`, ... each with
+ *       an explicit `Follow-up Body:`). Metadata and labels are fields of the
+ *       lead — never boundaries, and never body text.
  *
  * ## Identity
  *
@@ -131,9 +146,11 @@ function isRule(line: string): boolean {
  * A `--- LEAD 01 ---` marker — the explicit block delimiter of a machine-
  * generated batch.
  *
- * A bare rule is only a boundary when something that looks like an email
- * follows it; a marker says "a new lead starts here" in so many words, so it
- * is always a boundary. The decoration is drawn from the same set as
+ * The canonical rule: if the input contains ANY marker, this is LEAD-BLOCK
+ * mode and markers are the ONLY boundaries. A bare rule is only a boundary
+ * when something that looks like an email follows it (legacy mode); a marker
+ * says "a new lead starts here" in so many words, so it is always a boundary
+ * and nothing else is. The decoration is drawn from the same set as
  * `RULE_LINE`'s, so `*** LEAD 01 ***` reads the same as `--- LEAD 01 ---`.
  */
 const LEAD_MARKER = /^\s*[-*_=~#]{2,}\s*LEAD\s+\d+\s*[-*_=~#]{2,}\s*$/i;
@@ -149,17 +166,18 @@ function isLeadMarker(line: string): boolean {
 /**
  * Index of every line that opens a new email, and how those indices were found.
  *
- * Two passes, and the order is the whole design:
+ * The priority is fixed by the canonical spec and never varies:
  *
- *  1. **Recipient headers and `--- LEAD NN ---` markers.** Any line whose
- *     label is a recipient word and whose value is a valid address, plus the
- *     explicit LEAD delimiter. These are the only lines that can be trusted on
- *     their own, because they are the only ones that say something about who
- *     the email is for. Two or more of them means the paste is unambiguous, so
- *     `---` inside a body is never consulted as a boundary.
- *  2. **Rules, then blank gaps.** Only when the block carries no usable headers
- *     to go on. Shape B has no addresses to find, and splitting on structure is
- *     the only signal left.
+ *  1. **`--- LEAD NN ---` markers.** If the input contains ANY marker, this is
+ *     LEAD-BLOCK mode: the markers are the ONLY boundaries. Recipient headers
+ *     (`To:`, `Email:`), metadata, rules and blank lines inside a block are
+ *     content of the current lead — they can never open a new one (§3).
+ *  2. **Recipient headers** (legacy mode only). Any line whose label is a
+ *     recipient word and whose value is a valid address. Two or more means the
+ *     paste is unambiguous, so `---` inside a body is never consulted.
+ *  3. **Rules, then blank gaps** (legacy mode only). Only when the block has no
+ *     usable headers. Shape B has no addresses to find, and splitting on
+ *     structure is the only signal left.
  *
  * Headers alone are not quite enough, though, and the gap matters. When a
  * pasted email has a rule DIRECTLY BEFORE the next `To:`, that rule is the
@@ -191,7 +209,12 @@ function looksLikeEmailOpening(line: string): boolean {
   return line.trim().length < 64 && isValidEmail(normalizeEmail(line));
 }
 
-function findBoundaries(lines: string[]): { starts: number[]; splitBy: BulkEmailParseResult["splitBy"] } {
+function findBoundaries(lines: string[]): {
+  starts: number[];
+  splitBy: BulkEmailParseResult["splitBy"];
+  /** True when the input carried `--- LEAD NN ---` markers (LEAD-BLOCK mode). */
+  leadBlocks: boolean;
+} {
   const headers: number[] = [];
   const markers: number[] = [];
   const rules: number[] = [];
@@ -201,26 +224,26 @@ function findBoundaries(lines: string[]): { starts: number[]; splitBy: BulkEmail
     else if (isRule(lines[i]!)) rules.push(i);
   }
 
-  // A rule is a separator when what follows it opens an email — another set of
-  // headers, or a bare address. A rule followed by ordinary prose is a divider
-  // inside a letter and belongs to the body.
+  // LEAD-BLOCK mode — the markers are the ONLY boundaries (canonical §3).
+  // `Email:`, `To:`, `Subject:`, `Follow-up Subject:`, rules and blank lines
+  // inside a block are content, never boundaries: unioning anything else in
+  // here is what used to split one lead into two candidates.
+  if (markers.length >= 1) {
+    return {
+      starts: markers,
+      splitBy: markers.length > 1 ? "separator" : "single",
+      leadBlocks: true,
+    };
+  }
+
+  // Legacy mode. A rule is a separator when what follows it opens an email —
+  // another set of headers, or a bare address. A rule followed by ordinary
+  // prose is a divider inside a letter and belongs to the body.
   const separatingRules = rules.filter((rule) => {
     let next = rule + 1;
     while (next < lines.length && lines[next]!.trim() === "") next += 1;
     return next < lines.length && looksLikeEmailOpening(lines[next]!);
   });
-
-  // Shape D (LEAD markers present) takes priority. A LEAD marker is an
-  // explicit delimiter that opens a block on its own word. When markers exist,
-  // recipient headers INSIDE the blocks (e.g. "Email:" in lead metadata) are
-  // NOT separate email boundaries — they belong to the lead's data.
-  if (markers.length >= 1) {
-    const starts = new Set<number>([...markers, ...separatingRules]);
-    return {
-      starts: [...starts].sort((a, b) => a - b),
-      splitBy: starts.size > 1 ? "separator" : "single",
-    };
-  }
 
   // Shape A/C (recipient headers present, no LEAD markers).
   // Headers are trusted absolutely. Rules join only when an email
@@ -237,10 +260,11 @@ function findBoundaries(lines: string[]): { starts: number[]; splitBy: BulkEmail
         starts.size > 1
           ? "recipient_header"
           : "single",
+      leadBlocks: false,
     };
   }
 
-  if (rules.length >= 1) return { starts: rules, splitBy: "separator" };
+  if (rules.length >= 1) return { starts: rules, splitBy: "separator", leadBlocks: false };
 
   // No headers and no rules. Two or more blank lines are the last structural
   // hint; a single blank line inside a body is far more common than a separator.
@@ -248,9 +272,9 @@ function findBoundaries(lines: string[]): { starts: number[]; splitBy: BulkEmail
   for (let i = 1; i < lines.length; i += 1) {
     if (lines[i]!.trim() === "" && lines[i - 1]!.trim() === "") blanks.push(i);
   }
-  if (blanks.length >= 1) return { starts: blanks, splitBy: "blank_line" };
+  if (blanks.length >= 1) return { starts: blanks, splitBy: "blank_line", leadBlocks: false };
 
-  return { starts: [0], splitBy: "single" };
+  return { starts: [0], splitBy: "single", leadBlocks: false };
 }
 
 /**
@@ -265,9 +289,13 @@ function findBoundaries(lines: string[]): { starts: number[]; splitBy: BulkEmail
  */
 function toBlocks(
   lines: string[],
-  boundaries: { starts: number[]; splitBy: BulkEmailParseResult["splitBy"] },
+  boundaries: {
+    starts: number[];
+    splitBy: BulkEmailParseResult["splitBy"];
+    leadBlocks: boolean;
+  },
 ): string[][] {
-  const { starts, splitBy } = boundaries;
+  const { starts, splitBy, leadBlocks } = boundaries;
 
   const blocks: string[][] = [];
 
@@ -277,9 +305,11 @@ function toBlocks(
   // line, so the lines before it belong to the SAME block: they are the
   // `From:` / `Date:` a mail client copies along, and `extract()` knows to drop
   // them. Detaching them would turn one copied email into an unreadable block
-  // plus a real one.
+  // plus a real one. In LEAD-BLOCK mode there is never anything before the
+  // first marker by construction — `parseBulkEmails` drops it — so no block of
+  // prose is ever invented from it.
   const boundaryIsBetweenEmails = splitBy === "separator" || splitBy === "blank_line";
-  if (boundaryIsBetweenEmails && starts[0]! > 0) {
+  if (!leadBlocks && boundaryIsBetweenEmails && starts[0]! > 0) {
     blocks.push(lines.slice(0, starts[0]!));
   }
 
@@ -291,10 +321,27 @@ function toBlocks(
     // The boundary itself is the first line of the block; strip the
     // delimiter (a separator rule or a LEAD marker counted as a boundary).
     while (slice.length > 0 && (isRule(slice[0]!) || isLeadMarker(slice[0]!))) slice.shift();
-    blocks.push(trimTrailingRuleChatter(slice));
+    const trimmed = trimTrailingRuleChatter(slice);
+    blocks.push(leadBlocks ? popTrailingSeparators(trimmed) : trimmed);
   }
 
   return blocks.filter((block) => block.some((line) => line.trim() !== ""));
+}
+
+/**
+ * Drop the blank lines and separator rules a lead block ends with.
+ *
+ * LEAD-BLOCK mode only. A rule the operator typed just before the next
+ * `--- LEAD NN ---` marker belongs to neither lead — it is a separator, not
+ * body text — and the marker that follows it already closes the previous
+ * lead's body (canonical §10). Without this the rule would sit at the foot of
+ * a real message, or (when the next line is an `Email:` header) used to be
+ * read as a boundary that split the lead in two.
+ */
+function popTrailingSeparators(block: string[]): string[] {
+  let end = block.length;
+  while (end > 0 && (block[end - 1]!.trim() === "" || isRule(block[end - 1]!))) end -= 1;
+  return block.slice(0, end);
 }
 
 /**
@@ -372,13 +419,14 @@ const BODY_LABELS = new Set([
  * `From:` in particular, because a quoted thread puts the ORIGINAL sender's
  * address there and that is emphatically not who this email is for.
  *
- * Also includes lead metadata fields that appear in structured LEAD exports
- * (Company, Website, Phone, City, Category, etc.) so they don't pollute
- * the email body.
+ * Also includes the lead metadata fields a structured LEAD export writes
+ * (Company, Website, Phone, City, Category, Address) so they don't pollute
+ * the email body — metadata belongs to the lead and must never be read as
+ * body text (canonical §4).
  */
 const NOISE_LABELS = new Set([
   "from", "od", "date", "datum", "sent", "cc", "bcc", "reply-to",
-  "company", "website", "phone", "city", "category",
+  "company", "website", "phone", "city", "category", "address",
 ]);
 
 /**
@@ -395,29 +443,19 @@ const NOISE_LABELS = new Set([
  * by whatever generated or re-typed it, and where the follow-up starts must
  * not depend on which dash the writer used: the label is a hard field
  * boundary and must never be read as part of the primary body.
+ *
+ * Sequences (canonical §7): the unnumbered `Follow-up Subject:` is sequence 1;
+ * `Follow-up 2 Subject:` is sequence 2, and so on — the parser accepts
+ * `Follow-up 1 … Follow-up 9` explicitly as well, so a batch that numbers the
+ * first follow-up reads the same as one that does not.
  */
 const FOLLOWUP_SUBJECT_LABELS = new Set([
   "followupsubject",
-  "followup2subject",
-  "followup3subject",
-  "followup4subject",
-  "followup5subject",
-  "followup6subject",
-  "followup6subject",
-  "followup7subject",
-  "followup8subject",
-  "followup9subject",
+  ...Array.from({ length: 9 }, (_, i) => `followup${i + 1}subject`),
 ]);
 const FOLLOWUP_BODY_LABELS = new Set([
   "followupbody",
-  "followup2body",
-  "followup3body",
-  "followup4body",
-  "followup5body",
-  "followup6body",
-  "followup7body",
-  "followup8body",
-  "followup9body",
+  ...Array.from({ length: 9 }, (_, i) => `followup${i + 1}body`),
 ]);
 
 interface Extracted {
@@ -475,7 +513,14 @@ function extract(block: string[]): Extracted {
     // away — see FOLLOWUP_SUBJECT_LABELS above.
     const squished = label ? label.name.replace(/[-\s_]/g, "") : "";
 
-    if (label && RECIPIENT_LABELS.has(label.name)) {
+    // Once a follow-up section has opened, only the follow-up labels are
+    // still fields — the section ends at the next follow-up label or at the
+    // next `--- LEAD NN ---` marker (the marker cuts the block itself).
+    // A `Subject:` or `To:` quoted inside a follow-up's text is content of
+    // that follow-up, never the initial email's field (canonical §13).
+    const inFollowUp = currentFollowUpIndex >= 0;
+
+    if (!inFollowUp && label && RECIPIENT_LABELS.has(label.name)) {
       current = "recipient";
       if (!label.value.trim()) continue;
       recipientRaw = label.value.trim();
@@ -484,13 +529,13 @@ function extract(block: string[]): Extracted {
       continue;
     }
 
-    if (label && SUBJECT_LABELS.has(label.name)) {
+    if (!inFollowUp && label && SUBJECT_LABELS.has(label.name)) {
       current = "subject";
       if (label.value.trim()) subject = label.value.trim();
       continue;
     }
 
-    if (label && BODY_LABELS.has(label.name)) {
+    if (!inFollowUp && label && BODY_LABELS.has(label.name)) {
       current = "body";
       if (label.value.trim()) bodyLines.push(label.value);
       continue;
@@ -633,7 +678,16 @@ function unquote(value: string): string {
  * lead is one card and the follow-up is not part of the first email's text.
  */
 export function parseBulkEmails(text: string): BulkEmailParseResult {
-  const lines = toLines(text);
+  const rawLines = toLines(text);
+
+  // Mode selection (canonical §12): one or more `--- LEAD NN ---` markers
+  // anywhere means LEAD-BLOCK mode — never mixed with the legacy header
+  // heuristics. Everything the operator typed before the first marker ("here
+  // are the leads:") belongs to no lead and is dropped, which is also what
+  // makes the acceptance rule hold: one marker, one candidate.
+  const firstMarker = rawLines.findIndex(isLeadMarker);
+  const lines = firstMarker > 0 ? rawLines.slice(firstMarker) : rawLines;
+
   const boundaries = findBoundaries(lines);
   const blocks = toBlocks(lines, boundaries);
 

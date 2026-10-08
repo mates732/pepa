@@ -1172,3 +1172,146 @@ describe("thirty emails: 7 already contacted, 23 ready", () => {
     expect(db.leads).toHaveLength(28);
   });
 });
+
+/* -------------------------------------------------------------------------- */
+/* canonical LEAD-BLOCK batch — the production path                           */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The canonical §11 fixture, verbatim — the SAME text the unit suite runs
+ * (`bulk-emails.test.ts`, "canonical LEAD-BLOCK specification"). The spec's
+ * acceptance rule is that identical input produces identical results in the
+ * parser's unit tests and in the real bulk-import flow the UI calls, so both
+ * files keep this exact copy; change one, change both.
+ */
+const CANONICAL_LEADS = `--- LEAD 01 ---
+Company: Test Barber Praha
+Website: https://example.com
+Email: barber@example.com
+Phone: +420700000001
+City: Praha 7
+Category: Barbershop
+Address: Praha 7
+
+Subject: Nabídka pro Test Barber Praha
+
+Dobrý den,
+
+toto je hlavní email.
+
+Follow-up Subject: Re: Nabídka pro Test Barber Praha
+
+Follow-up Body:
+
+Dobrý den,
+
+toto je první follow-up.
+
+Follow-up 2 Subject: Re: Nabídka pro Test Barber Praha
+
+Follow-up 2 Body:
+
+Dobrý den,
+
+toto je druhý follow-up.
+
+
+--- LEAD 02 ---
+Company: Test Salon Praha
+Website: https://example.org
+Email: salon@example.com
+Phone: +420700000002
+City: Praha 6
+Category: Salon
+Address: Praha 6
+
+Subject: Nabídka pro Test Salon Praha
+
+Dobrý den,
+
+toto je hlavní email druhého leadu.
+
+Follow-up Subject: Re: Nabídka pro Test Salon Praha
+
+Follow-up Body:
+
+Dobrý den,
+
+toto je první follow-up druhého leadu.`;
+
+describe("canonical LEAD-BLOCK batch — preview and import through the production path", () => {
+  it("parses the fixture exactly like parseBulkEmails and imports drafts with follow-ups", async () => {
+    await authenticate();
+    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
+    const { parseBulkEmails } = await import("@/lib/import/bulk-emails");
+
+    // PARITY: the production flow reads the fixture exactly like the unit test.
+    const unit = parseBulkEmails(CANONICAL_LEADS);
+    const preview = await previewBulkEmails(CANONICAL_LEADS);
+    if (!preview.ok) throw new Error(preview.error);
+    const { plan } = preview;
+
+    expect(plan.summary.total).toBe(2); // = the two LEAD markers
+    expect(plan.splitBy).toBe(unit.splitBy);
+    expect(plan.rows).toHaveLength(unit.candidates.length);
+    expect(plan.rows.map((row) => row.recipient)).toEqual(
+      unit.candidates.map((candidate) => candidate.recipient),
+    );
+    expect(plan.rows.map((row) => row.subject)).toEqual(
+      unit.candidates.map((candidate) => candidate.subject),
+    );
+    expect(plan.rows.map((row) => row.body)).toEqual(
+      unit.candidates.map((candidate) => candidate.body),
+    );
+    expect(plan.rows.map((row) => row.followUps)).toEqual(
+      unit.candidates.map((candidate) => candidate.followUps),
+    );
+
+    // The preview table shows two ready rows, free of metadata labels.
+    for (const row of plan.rows) {
+      expect(row.status).toBe("ready");
+      for (const key of ["Company:", "Website:", "Email:", "Phone:", "City:", "Category:", "Address:"]) {
+        expect(row.body).not.toContain(key);
+      }
+      expect(String(row.body)).not.toContain("Follow-up");
+    }
+
+    // IMPORT: drafts for both leads, follow-ups carried as sequences 1..N.
+    const requests = plan.rows
+      .filter((row) => row.status === "ready")
+      .map((row) => ({
+        index: row.index,
+        recipient: row.recipient!,
+        subject: row.subject,
+        body: row.body,
+        followUps: row.followUps,
+      }));
+    const result = await importBulkEmails(requests);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.rows.every((row) => row.outcome === "created")).toBe(true);
+
+    const messagesFor = (email: string) =>
+      db.messages
+        .filter((m) => m.recipient_email === email)
+        .sort((a, b) => Number(a.sequence_number) - Number(b.sequence_number));
+
+    const barber = messagesFor("barber@example.com");
+    expect(barber.map((m) => m.sequence_number)).toEqual([0, 1, 2]);
+    expect(barber[0]!.subject).toBe("Nabídka pro Test Barber Praha");
+    expect(barber[0]!.body).toBe("Dobrý den,\n\ntoto je hlavní email.");
+    expect(barber[1]!.subject).toBe("Re: Nabídka pro Test Barber Praha");
+    expect(barber[1]!.body).toBe("Dobrý den,\n\ntoto je první follow-up.");
+    expect(barber[2]!.body).toBe("Dobrý den,\n\ntoto je druhý follow-up.");
+
+    const salon = messagesFor("salon@example.com");
+    expect(salon.map((m) => m.sequence_number)).toEqual([0, 1]);
+    expect(salon[0]!.body).toBe("Dobrý den,\n\ntoto je hlavní email druhého leadu.");
+    expect(salon[1]!.body).toBe("Dobrý den,\n\ntoto je první follow-up druhého leadu.");
+
+    // Import wrote nothing but drafts, and nothing was contacted.
+    expect(db.messages.every((m) => m.status === "draft")).toBe(true);
+    expect(db.messages.every((m) => m.sent_at === null)).toBe(true);
+    expect(db.leads.every((l) => l.last_contacted_at === null)).toBe(true);
+    expect(db.leads.every((l) => l.followup_count === 0)).toBe(true);
+  });
+});
