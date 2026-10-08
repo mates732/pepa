@@ -13,9 +13,9 @@ import type { BulkEmailCandidate } from "@/lib/import/bulk-emails";
  * element on the dashboard, pushing every workspace below the fold to make room
  * for an input that is used a handful of times a day. It is now a one-line bar;
  * the actual paste surface lives in a dialog and is only mounted when the
- * operator asks for it. Nothing about the import itself changed: the same
- * `parseOutreachInput` runs, the same validation runs, and `onParsed` still
- * reports the same shape. Only the chrome moved.
+ * operator asks for it. Nothing about the import semantics changed: it still
+ * validates recipient / subject / body and reports the same `onParsed` shape.
+ * Only the chrome moved.
  *
  * The panel state is a tiny explicit machine rather than scattered booleans, so
  * "the textarea is not in the document until the bar is opened" is a property

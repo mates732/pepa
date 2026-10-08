@@ -13,6 +13,7 @@ import {
 } from "@/lib/services/lead-service";
 import {
   createDraft,
+  listOutreachDrafts,
   listOutreachHistory,
   recordOutreachSent as recordOutreachSentService,
 } from "@/lib/services/outreach-service";
@@ -30,6 +31,7 @@ import type {
   OutreachHistoryRow,
   OutreachMessage,
 } from "@/lib/types";
+import type { OutreachDraftRow } from "@/lib/services/outreach-service";
 
 /**
  * IMPORTANT: both actions below are unauthenticated HTTP entry points. Each one
@@ -564,6 +566,10 @@ export type HistoryRowsResult =
   | { ok: true; rows: OutreachHistoryRow[] }
   | ActionFailure;
 
+export type OutreachDraftRowsResult =
+  | { ok: true; drafts: OutreachDraftRow[] }
+  | ActionFailure;
+
 /**
  * Re-read the outreach history rows, server-side.
  *
@@ -588,6 +594,22 @@ export async function loadHistoryRows(): Promise<HistoryRowsResult> {
       error instanceof Error
         ? error.message
         : "Could not read the outreach history.",
+    );
+  }
+}
+
+export async function loadOutreachDraftRows(): Promise<OutreachDraftRowsResult> {
+  await requireAuthenticatedUser();
+
+  try {
+    const result = await listOutreachDrafts();
+    if (!result.ok) {
+      return failure(result.error ?? "Could not read drafts.");
+    }
+    return { ok: true, drafts: result.data ?? [] };
+  } catch (error) {
+    return failure(
+      error instanceof Error ? error.message : "Could not read drafts.",
     );
   }
 }

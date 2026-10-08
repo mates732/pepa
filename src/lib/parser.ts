@@ -5,8 +5,8 @@
  * Pepa V1 has ONE parser: `parseBulkEmails()` in `lib/import/bulk-emails.ts`,
  * which every paste goes through (single-lead bar and bulk dialog alike). It
  * imports this module's `recipientFromHeaderLine` so boundary detection and
- * field extraction share one label table. `parseOutreachInput()` and its
- * separate grammar were removed in that migration; only the shared label
+ * field extraction share one label table. The former single-lead parser and
+ * its separate grammar were removed in that migration; only the shared label
  * reader lives here.
  */
 

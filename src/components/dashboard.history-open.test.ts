@@ -30,7 +30,10 @@ import { describe, expect, it } from "vitest";
  * the module source. The mapping itself is covered directly and without
  * indirection by `composer-values.test.ts`.
  */
-const source = readFileSync(fileURLToPath(new URL("./dashboard.tsx", import.meta.url)), "utf8");
+const source = readFileSync(
+  fileURLToPath(new URL("./dashboard.tsx", import.meta.url)),
+  "utf8",
+);
 
 /** The body of `handleOpenFromHistory`, up to the next top-level declaration. */
 function historyHandler(): string {
@@ -47,8 +50,10 @@ describe("Dashboard — opening a history row into the composer", () => {
   it("resolves the stored message server-side instead of rebuilding from the row", () => {
     // The browser names a LEAD; the database decides which row that lead's
     // initial outreach is. This is what supplies the message id.
-    expect(historyHandler()).toContain("loadInitialOutreachDetail({ leadId: row.id })");
-    expect(historyHandler()).toContain("composerValuesFromSavedMessage(result.detail)");
+    expect(historyHandler()).toContain(
+      "loadLeadOutreachPair({ leadId: row.id })",
+    );
+    expect(historyHandler()).toContain("composerValuesFromSavedMessage");
   });
 
   it("never forces a null message id on the saved path", () => {
@@ -59,20 +64,20 @@ describe("Dashboard — opening a history row into the composer", () => {
 
     expect(handler).toContain("messageId: null");
     // ...and that branch is guarded by the server's answer, not by the row.
-    expect(handler).toContain("if (!result.ok || !result.detail)");
+    expect(handler).toContain("if (!result.ok)");
     // The saved path sets the id from the stored row.
-    expect(handler).toContain("setValues(composerValuesFromSavedMessage(result.detail))");
+    expect(handler).toContain("mainMessage: result.main");
   });
 
   it("does not drop the saved body when a row is opened", () => {
-    // The old handler hard-coded `body: ""`, which would have blanked a stored
+    // The old handler hard-coded `mainBody: ""`, which would have blanked a stored
     // draft the moment the operator pressed Save. That may only survive inside
     // the no-stored-draft fallback.
     const handler = historyHandler();
-    const savedPath = handler.split("setValues(composerValuesFromSavedMessage(result.detail));")[1] ?? "";
+    const savedPath = handler.split("mainMessage: result.main")[1] ?? "";
 
-    expect(handler).toContain('body: ""');
-    expect(savedPath).not.toContain('body: ""');
+    expect(handler).toContain('mainBody: ""');
+    expect(savedPath).not.toContain('mainBody: ""');
   });
 
   it("marks the loaded content as saved, because it is the stored draft", () => {
@@ -101,12 +106,30 @@ describe("Dashboard — opening a history row into the composer", () => {
       "handleOpenDetailInGmail",
       "handleOpenActivityInGmail",
     ]) {
-      expect(source).toContain(`preopenComposeWindow()`);
-      expect(source).toContain(`navigateComposeWindow(tab, result.url)`);
       expect(source).toContain(handler);
     }
 
-    // …and none of them records a send.
-    expect(source.match(/preopenComposeWindow\(\)/g)).toHaveLength(3);
+    // …and none of those three handlers records a send.
+    for (const handler of [
+      "handleOpenInGmail",
+      "handleOpenDetailInGmail",
+      "handleOpenActivityInGmail",
+    ]) {
+      const body = source.slice(
+        source.indexOf(`async function ${handler}`),
+        source.indexOf("\n  }", source.indexOf(`async function ${handler}`)) +
+          3,
+      );
+      expect(body).not.toContain("recordOutreachSent");
+    }
+
+    // Each handler preopens a tab and navigates it with a URL from the server.
+    expect(source.match(/preopenComposeWindow\(\)/g)).toHaveLength(6);
+    expect(
+      source.match(/navigateComposeWindow\(tab, result\.mailtoUrl\)/g),
+    ).toHaveLength(3);
+    expect(
+      source.match(/navigateComposeWindow\(webTab, result\.webUrl\)/g),
+    ).toHaveLength(3);
   });
 });

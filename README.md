@@ -150,7 +150,7 @@ src/
     status-badge.tsx        status pill
   lib/
     types.ts                shared domain types
-    parser.ts               parseOutreachInput()
+    parser.ts               shared header label grammar (recipientFromHeaderLine())
     email.ts                normalizeEmail(), isValidEmail()
     format.ts               date + label helpers
     auth/

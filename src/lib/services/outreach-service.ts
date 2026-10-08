@@ -29,6 +29,16 @@ interface OutreachHistoryFilters {
   limit?: number;
 }
 
+export interface OutreachDraftRow {
+  message: OutreachMessage;
+  lead: {
+    id: string;
+    email: string;
+    company_name: string | null;
+    contact_name: string | null;
+  };
+}
+
 function fail(error: string): ServiceResult<never> {
   return { ok: false, data: null, error };
 }
@@ -524,6 +534,49 @@ async function leadOutreachEmails(
 /**
  * Rows for the dashboard table, joined with each lead's two outreach emails.
  */
+export async function listOutreachDrafts(): Promise<ServiceResult<OutreachDraftRow[]>> {
+  const supabase = getSupabaseAdmin();
+  const { data, error } = await supabase
+    .from("outreach_messages")
+    .select(
+      "id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at, sequence_number, parent_message_id, leads!inner(id, email, company_name, contact_name)",
+    )
+    .is("sent_at", null)
+    .order("created_at", { ascending: false });
+
+  if (error) return fail(error.message);
+
+  const rows = ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
+    const lead = row.leads as Record<string, unknown>;
+    const message: OutreachMessage = {
+      id: String(row.id),
+      lead_id: String(row.lead_id),
+      recipient_email: String(row.recipient_email ?? ""),
+      subject: (row.subject ?? null) as string | null,
+      body: (row.body ?? null) as string | null,
+      status: String(row.status) as Lead["status"],
+      provider: (row.provider ?? null) as OutreachMessage["provider"],
+      provider_message_id: (row.provider_message_id ?? null) as string | null,
+      sent_at: (row.sent_at ?? null) as string | null,
+      created_at: String(row.created_at),
+      sequence_number: Number(row.sequence_number ?? 0),
+      parent_message_id: (row.parent_message_id ?? null) as string | null,
+    };
+
+    return {
+      message,
+      lead: {
+        id: String(lead.id),
+        email: String(lead.email ?? ""),
+        company_name: (lead.company_name ?? null) as string | null,
+        contact_name: (lead.contact_name ?? null) as string | null,
+      },
+    } as OutreachDraftRow;
+  });
+
+  return { ok: true, data: rows, error: null };
+}
+
 export async function listOutreachHistory(
   filters: OutreachHistoryFilters = {},
 ): Promise<ServiceResult<OutreachHistoryRow[]>> {

@@ -53,7 +53,10 @@ function lead(overrides: Partial<Lead> = {}): Lead {
 
 describe("composerValuesFromSavedMessage", () => {
   it("carries the stored message id, so the Gmail button is reachable", () => {
-    const values = composerValuesFromSavedMessage({ lead: lead(), message: message() });
+    const values = composerValuesFromSavedMessage({
+      lead: lead(),
+      mainMessage: message(),
+    });
 
     // The single regression this whole fix exists for.
     expect(values.messageId).toBe("11111111-1111-4111-8111-111111111111");
@@ -61,12 +64,15 @@ describe("composerValuesFromSavedMessage", () => {
   });
 
   it("preserves the saved recipient, subject and body exactly", () => {
-    const values = composerValuesFromSavedMessage({ lead: lead(), message: message() });
+    const values = composerValuesFromSavedMessage({
+      lead: lead(),
+      mainMessage: message(),
+    });
 
     expect(values.recipient).toBe("katy@beautysalon.cz");
-    expect(values.subject).toBe("AI recepce pro Beautysalon v Průhonicích");
+    expect(values.mainSubject).toBe("AI recepce pro Beautysalon v Průhonicích");
     // Byte for byte, newlines included: the body is the message, not a summary.
-    expect(values.body).toBe(
+    expect(values.mainBody).toBe(
       "Dobrý den, paní Klimentová,\n\nDěláme AI recepci.\n\nDíky, Pavel",
     );
   });
@@ -76,14 +82,17 @@ describe("composerValuesFromSavedMessage", () => {
     // address it was actually addressed to. Gmail must get the message's.
     const values = composerValuesFromSavedMessage({
       lead: lead({ email: "old-address@example.com" }),
-      message: message({ recipient_email: "katy@beautysalon.cz" }),
+      mainMessage: message({ recipient_email: "katy@beautysalon.cz" }),
     });
 
     expect(values.recipient).toBe("katy@beautysalon.cz");
   });
 
   it("carries the lead's display context", () => {
-    const values = composerValuesFromSavedMessage({ lead: lead(), message: message() });
+    const values = composerValuesFromSavedMessage({
+      lead: lead(),
+      mainMessage: message(),
+    });
 
     expect(values.companyName).toBe("Beautysalon");
     expect(values.contactName).toBe("Kateřina Klimentová");
@@ -92,7 +101,7 @@ describe("composerValuesFromSavedMessage", () => {
   it("turns absent display names into empty strings, not the string null", () => {
     const values = composerValuesFromSavedMessage({
       lead: lead({ company_name: null, contact_name: null }),
-      message: message(),
+      mainMessage: message(),
     });
 
     expect(values.companyName).toBe("");
@@ -102,11 +111,11 @@ describe("composerValuesFromSavedMessage", () => {
   it("leaves an absent subject or body empty rather than inventing content", () => {
     const values = composerValuesFromSavedMessage({
       lead: lead(),
-      message: message({ subject: null, body: null }),
+      mainMessage: message({ subject: null, body: null }),
     });
 
-    expect(values.subject).toBe("");
-    expect(values.body).toBe("");
+    expect(values.mainSubject).toBe("");
+    expect(values.mainBody).toBe("");
     // Still a real stored row, so the Gmail control remains available.
     expect(values.messageId).not.toBeNull();
   });
@@ -114,15 +123,18 @@ describe("composerValuesFromSavedMessage", () => {
   it("follows a follow-up message rather than assuming sequence 0", () => {
     const values = composerValuesFromSavedMessage({
       lead: lead(),
-      message: message({
+      mainMessage: message({
         id: "33333333-3333-4333-8333-333333333333",
         subject: "Re: AI recepce pro Beautysalon v Průhonicích",
         sequence_number: 1,
         parent_message_id: "11111111-1111-4111-8111-111111111111",
       }),
+      followUpMessage: null,
     });
 
     expect(values.messageId).toBe("33333333-3333-4333-8333-333333333333");
-    expect(values.subject).toBe("Re: AI recepce pro Beautysalon v Průhonicích");
+    expect(values.mainSubject).toBe(
+      "Re: AI recepce pro Beautysalon v Průhonicích",
+    );
   });
 });

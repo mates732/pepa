@@ -18,6 +18,7 @@ import {
   loadLeadOutreachPair,
   loadFollowUpWorkspace,
   loadHistoryRows,
+  loadOutreachDraftRows,
   openOutreachInGmail,
   recordOutreachSent,
   saveDraft,
@@ -37,6 +38,7 @@ import { OutreachActivityDetail } from "@/components/outreach-activity-detail";
 import { OutreachHistory } from "@/components/outreach-history";
 import { OutreachStats } from "@/components/outreach-stats";
 import { OutreachStreaks } from "@/components/outreach-streaks";
+import { OutreachDrafts } from "@/components/outreach-drafts";
 import { PasteImport } from "@/components/paste-import";
 import { BulkImport } from "@/components/bulk-import";
 import { formatDate, formatDateTime } from "@/lib/format";
@@ -56,6 +58,7 @@ import type {
 } from "@/lib/services/outreach-activity-service";
 import type { GateEvaluation } from "@/lib/services/outreach-quality-gate";
 import type { DuplicateCheckResult, OutreachHistoryRow } from "@/lib/types";
+import type { OutreachDraftRow } from "@/lib/services/outreach-service";
 
 const EMPTY: ComposerValues = {
   recipient: "",
@@ -140,6 +143,11 @@ export function Dashboard({
   // from this list without a round trip through the server page.
   const [rows, setRows] = useState<OutreachHistoryRow[]>(initialRows);
   const [deletingRowId, setDeletingRowId] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<OutreachDraftRow[]>([]);
+  const [draftsLoading, setDraftsLoading] = useState(true);
+  const [draftsError, setDraftsError] = useState<string | null>(null);
+  const [openingDraftId, setOpeningDraftId] = useState<string | null>(null);
+  const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   // Activity workspace. Read-only: opening it records nothing, and it exposes no
@@ -425,6 +433,21 @@ export function Dashboard({
     }
   }
 
+  const loadDrafts = useCallback(async () => {
+    setDraftsLoading(true);
+    try {
+      const result = await loadOutreachDraftRows();
+      if (result.ok) {
+        setDrafts(result.drafts);
+        setDraftsError(null);
+      } else {
+        setDraftsError(result.error);
+      }
+    } finally {
+      setDraftsLoading(false);
+    }
+  }, []);
+
   /** Load the workspace once. Read-only: opening it records nothing. */
   const loadWorkspace = useCallback(async () => {
     setFollowUpsLoading(true);
@@ -447,6 +470,11 @@ export function Dashboard({
     const handle = setTimeout(() => void loadWorkspace(), 0);
     return () => clearTimeout(handle);
   }, [loadWorkspace]);
+
+  useEffect(() => {
+    const handle = setTimeout(() => void loadDrafts(), 0);
+    return () => clearTimeout(handle);
+  }, [loadDrafts]);
 
   /** Load the recent window of sent outreach. Read-only, like the workspace. */
   const loadActivity = useCallback(async () => {
@@ -712,6 +740,7 @@ export function Dashboard({
       setDetail(null);
       setSelectedId(null);
       await loadWorkspace();
+      await loadDrafts();
       await loadActivity();
       await loadStats();
       await loadStreaks();
@@ -744,6 +773,7 @@ export function Dashboard({
       }
 
       await loadWorkspace();
+      await loadDrafts();
       // Open the row the server actually wrote, so the operator continues from
       // the stored sequence rather than from anything the browser predicted.
       await handleSelectFollowUp(result.messageId);
@@ -1092,6 +1122,95 @@ export function Dashboard({
     }
   }
 
+  async function handleOpenDraft(messageId: string) {
+    setOpeningDraftId(messageId);
+    setNotice(null);
+    try {
+      const draft = drafts.find((entry) => entry.message.id === messageId);
+      if (!draft) {
+        setNotice({ kind: "error", text: "That draft could not be identified." });
+        return;
+      }
+
+      const result = await loadLeadOutreachPair({ leadId: draft.lead.id });
+      if (!result.ok) {
+        setNotice({ kind: "error", text: result.error });
+        return;
+      }
+
+      setValues(
+        composerValuesFromSavedMessage({
+          lead: result.lead,
+          mainMessage: result.main,
+          followUpMessage: result.followUp,
+        }),
+      );
+      setHasContent(true);
+      setSaved(true);
+      setNotice({ kind: "info", text: "Loaded the saved draft." });
+      void runDuplicateCheck(result.lead.email);
+      window.scrollTo({ top: 0 });
+    } finally {
+      setOpeningDraftId(null);
+    }
+  }
+
+  async function handleOpenDraftInGmail(messageId: string) {
+    setOpeningGmail(true);
+    setNotice(null);
+    const tab = preopenComposeWindow();
+    try {
+      const result = await openOutreachInGmail(messageId);
+      if (!result.ok) {
+        closeComposeWindow(tab);
+        setNotice({ kind: "error", text: result.error });
+        return;
+      }
+
+      const mailtoOpened =
+        tab && !tab.closed && navigateComposeWindow(tab, result.mailtoUrl);
+      const webTab = preopenComposeWindow();
+      const webOpened =
+        webTab && !webTab.closed && navigateComposeWindow(webTab, result.webUrl);
+
+      if (!mailtoOpened && !webOpened) {
+        setNotice({
+          kind: "error",
+          text: `Your browser blocked the new tab. Open manually: ${result.webUrl}`,
+        });
+        return;
+      }
+
+      setNotice({
+        kind: "info",
+        text: mailtoOpened
+          ? "Opened default mail client (Gmail if set as default). Also opened Gmail web as fallback."
+          : "Opened Gmail web compose. Set Gmail as default mail handler to use mailto: links.",
+      });
+    } finally {
+      setOpeningGmail(false);
+    }
+  }
+
+  async function handleDeleteDraft(messageId: string) {
+    setDeletingDraftId(messageId);
+    setNotice(null);
+    try {
+      const result = await deleteOutreachMessage({ messageId });
+      if (!result.ok) {
+        setNotice({ kind: "error", text: result.error });
+        return;
+      }
+      setDrafts((current) => current.filter((draft) => draft.message.id !== messageId));
+      setNotice({ kind: "info", text: "Draft deleted." });
+      const refreshedRows = await loadHistoryRows();
+      if (refreshedRows.ok) setRows(refreshedRows.rows);
+      await loadWorkspace();
+    } finally {
+      setDeletingDraftId(null);
+    }
+  }
+
   // Global shortcuts: ⌘S save draft, ⌘K clear, ⌘/ focus the paste box.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -1149,6 +1268,11 @@ export function Dashboard({
               `${existing > 0 ? `, ${existing} already existed` : ""}` +
               `${skipped > 0 ? `, ${skipped} skipped` : ""}. Open each one to send it yourself — nothing was sent.`,
           });
+          void loadDrafts();
+          void loadWorkspace();
+          void loadHistoryRows().then((refreshed) => {
+            if (refreshed.ok) setRows(refreshed.rows);
+          });
         }}
       />
 
@@ -1177,6 +1301,17 @@ export function Dashboard({
           openingGmail={openingGmail}
         />
       ) : null}
+
+      <OutreachDrafts
+        drafts={drafts}
+        loading={draftsLoading}
+        error={draftsError}
+        openingId={openingDraftId}
+        deletingId={deletingDraftId}
+        onOpen={(id) => void handleOpenDraft(id)}
+        onGmail={(id) => void handleOpenDraftInGmail(id)}
+        onDelete={(id) => void handleDeleteDraft(id)}
+      />
 
       <OutreachHistory
         rows={rows}

@@ -14,14 +14,16 @@ import { EmailComposer, type ComposerValues } from "./email-composer";
  * operator from believing PEPA delivered their mail.
  */
 function render(
-  overrides: Partial<Omit<React.ComponentProps<typeof EmailComposer>, "values">> & {
+  overrides: Partial<
+    Omit<React.ComponentProps<typeof EmailComposer>, "values">
+  > & {
     values?: Partial<ComposerValues>;
   } = {},
 ) {
   const values: ComposerValues = {
     recipient: "info@example.com",
-    subject: "Test subject",
-    body: "Test body",
+    mainSubject: "Test subject",
+    mainBody: "Test body",
     companyName: "",
     contactName: "",
     messageId: null,
@@ -68,7 +70,9 @@ describe("EmailComposer — the Open in Gmail safety rule", () => {
   it("is disabled while the draft is unsaved, and says why", () => {
     const markup = render({ values: { messageId: null } });
 
-    const gmailButton = buttonsOf(markup).find((b) => b.includes("Open in Gmail"));
+    const gmailButton = buttonsOf(markup).find((b) =>
+      b.includes("Open MAIN in Gmail"),
+    );
     expect(gmailButton).toBeDefined();
     expect(gmailButton).toContain("disabled");
     expect(markup).toContain("Save the draft to open in Gmail");
@@ -78,7 +82,9 @@ describe("EmailComposer — the Open in Gmail safety rule", () => {
     const markup = render({ values: { messageId: null } });
 
     // Two places, because the label alone was not enough to stop the click.
-    expect(markup).toContain("Save the draft first. Gmail is filled from the saved message");
+    expect(markup).toContain(
+      "Save the draft first. Gmail is filled from the saved message",
+    );
   });
 
   it("is enabled once the draft is saved, and drops the explanation", () => {
@@ -86,7 +92,9 @@ describe("EmailComposer — the Open in Gmail safety rule", () => {
       values: { messageId: "99999999-9999-4999-8999-999999999999" },
     });
 
-    const gmailButton = buttonsOf(markup).find((b) => b.includes("Open in Gmail"));
+    const gmailButton = buttonsOf(markup).find((b) =>
+      b.includes("Open MAIN in Gmail"),
+    );
     expect(gmailButton).toBeDefined();
     expect(gmailButton).not.toContain("disabled");
     expect(markup).not.toContain("Save the draft to open in Gmail");
@@ -98,13 +106,15 @@ describe("EmailComposer — the Open in Gmail safety rule", () => {
     const markup = render({
       values: {
         messageId: "99999999-9999-4999-8999-999999999999",
-        subject: "",
-        body: "",
+        mainSubject: "",
+        mainBody: "",
         leadId: null,
       },
     });
 
-    const gmailButton = buttonsOf(markup).find((b) => b.includes("Open in Gmail"));
+    const gmailButton = buttonsOf(markup).find((b) =>
+      b.includes("Open MAIN in Gmail"),
+    );
     expect(gmailButton).toBeDefined();
     expect(gmailButton).not.toContain("disabled");
   });
@@ -114,14 +124,18 @@ describe("EmailComposer — the Open in Gmail safety rule", () => {
       values: { messageId: "99999999-9999-4999-8999-999999999999" },
     });
 
-    expect(markup).toContain("does not send anything and does not mark it as sent");
+    expect(markup).toContain(
+      "does not send anything and does not mark it as sent",
+    );
   });
 });
 
 describe("EmailComposer send button", () => {
   it("is rendered and enabled when the draft is saved", () => {
     const markup = render();
-    const sendButton = buttonsOf(markup).find((button) => button.includes("Mark as sent"));
+    const sendButton = buttonsOf(markup).find((button) =>
+      button.includes("Mark as sent"),
+    );
 
     expect(sendButton).toBeDefined();
     expect(sendButton).not.toContain("disabled");
