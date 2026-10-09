@@ -8,7 +8,6 @@ import { updateDraft } from "@/app/update-draft-action";
 import { buildComposeUrls } from "@/lib/outreach/gmail-compose-client";
 import { deleteOutreachMessage, loadOutreachDraftRows as loadOutreachDraftRowsAction } from "@/app/actions";
 import type { OutreachDraftRow } from "@/lib/services/outreach-service";
-import { preopenComposeWindow, navigateComposeWindow, closeComposeWindow } from "@/lib/outreach/open-compose-window";
 
 interface Notice {
   kind: "info" | "error";
@@ -52,6 +51,11 @@ export function Inbox() {
   const [editLoading, setEditLoading] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+
+  // View modal state
+  const [viewingId, setViewingId] = useState<string | null>(null);
+  const [viewDraft, setViewDraft] = useState<OutreachDraftRow | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
 
   const loadDrafts = useCallback(async () => {
     setDraftsLoading(true);
@@ -130,41 +134,32 @@ export function Inbox() {
       body: draft.message.body,
     });
 
-    // Open window synchronously during user gesture
-    const tab = preopenComposeWindow();
+    // Open Gmail compose URL directly in the click handler
+    // This maintains the user gesture chain and works in Safari
+    // We do NOT use "noopener" because it makes window.open return null even on success
+    // (per open-compose-window.ts documentation). We accept that Gmail can access
+    // window.opener (low risk for trusted site) in exchange for reliable popup detection.
+    const tab = window.open(urls.web, "_blank", "noreferrer");
+    
     if (!tab) {
+      // Popup was genuinely blocked - show manual URL
       setNotice({
         kind: "error",
         text: `Your browser blocked the new tab. Open manually: ${urls.web}`,
       });
-      setOpeningGmailId(null);
-      return;
-    }
-
-    try {
-      // Navigate immediately - no await, URL is already known
-      const navigated = navigateComposeWindow(tab, urls.web);
-      if (!navigated) {
-        closeComposeWindow(tab);
-        setNotice({
-          kind: "error",
-          text: `Your browser blocked the new tab. Open manually: ${urls.web}`,
-        });
-      } else {
-        setNotice({
-          kind: "info",
-          text: "Opened Gmail compose with the draft.",
-        });
-      }
-    } catch {
-      closeComposeWindow(tab);
+    } else {
+      // Popup opened successfully. We can't verify navigation to Gmail (cross-origin),
+      // but we have a valid window reference so the browser allowed the popup.
+      // The tab will navigate to Gmail on its own.
       setNotice({
-        kind: "error",
-        text: `Failed to open Gmail. Open manually: ${urls.web}`,
+        kind: "info",
+        text: `Opened Gmail compose. If it didn't open, use: ${urls.web}`,
       });
-    } finally {
-      setOpeningGmailId(null);
+      // Close our reference to avoid memory leak - the tab manages itself now
+      try { tab.opener = null; } catch {}
     }
+    
+    setOpeningGmailId(null);
   }
 
   async function handleDelete(messageId: string) {
@@ -215,6 +210,31 @@ export function Inbox() {
     setEditSubject("");
     setEditBody("");
     setEditError(null);
+  }
+
+  function closeViewModal() {
+    setViewingId(null);
+    setViewDraft(null);
+  }
+
+  async function handleViewDraft(messageId: string) {
+    setViewLoading(true);
+    try {
+      const result = await loadDraftById(messageId);
+      if (!result.ok) {
+        setNotice({ kind: "error", text: result.error });
+        return;
+      }
+      setViewingId(messageId);
+      setViewDraft({
+        message: result.message,
+        lead: result.lead,
+      });
+    } catch (error) {
+      setNotice({ kind: "error", text: error instanceof Error ? error.message : "Failed to load draft." });
+    } finally {
+      setViewLoading(false);
+    }
   }
 
   async function handleSaveEdit() {
@@ -389,6 +409,7 @@ Petr`;
               const isOpeningGmail = openingGmailId === draft.message.id;
               const isDeleting = deletingId === draft.message.id;
               const isEditing = editingId === draft.message.id;
+              const isViewing = viewingId === draft.message.id;
 
               return (
                 <li key={draft.message.id} className="px-5 py-4">
@@ -403,10 +424,18 @@ Petr`;
                     <button
                       type="button"
                       className="btn"
+                      onClick={() => handleViewDraft(draft.message.id)}
+                      disabled={isOpening || isDeleting || isOpeningGmail || isEditing || isViewing}
+                    >
+                      {isViewing ? "Viewing…" : "View"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
                       onClick={() => handleOpenDraft(draft.message.id)}
                       disabled={isOpening || isDeleting || isOpeningGmail || isEditing}
                     >
-                      {isOpening ? "Opening…" : isEditing ? "Editing…" : "Open / Edit"}
+                      {isOpening ? "Opening…" : isEditing ? "Editing…" : "Edit"}
                     </button>
                     <button
                       type="button"
@@ -530,6 +559,107 @@ Petr`;
                     </button>
                     <button type="button" onClick={closeEditor} className="btn" disabled={editSaving}>
                       Cancel
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {/* View Modal */}
+      {viewingId && viewDraft && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-midnight/40 px-4 py-8">
+          <div className="absolute inset-0" onClick={closeViewModal} aria-hidden />
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-label="View draft"
+            className="sticker relative w-full max-w-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="flex items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
+              <h3 className="heading-sticker text-base text-midnight">
+                Draft Details
+              </h3>
+              <button
+                type="button"
+                onClick={closeViewModal}
+                className="btn btn-sm"
+                aria-label="Close"
+              >
+                Close
+              </button>
+            </header>
+
+            <div className="p-5">
+              {viewLoading ? (
+                <p className="text-center text-midnight-soft py-8">Loading draft…</p>
+              ) : (
+                <>
+                  <div className="mb-4">
+                    <label className="field-label block mb-1">Recipient</label>
+                    <p className="field font-mono text-[13px] bg-midnight-faint/30 px-3 py-2 rounded">
+                      {viewDraft.message.recipient_email}
+                    </p>
+                  </div>
+
+                  <div className="mb-4">
+                    <label className="field-label block mb-1">Subject</label>
+                    <p className="field font-mono text-[13px] bg-midnight-faint/30 px-3 py-2 rounded">
+                      {viewDraft.message.subject || "(No subject)"}
+                    </p>
+                  </div>
+
+                  <div className="mb-4">
+                    <label className="field-label block mb-1">Type</label>
+                    <p className="field font-mono text-[13px] bg-midnight-faint/30 px-3 py-2 rounded">
+                      {sequenceLabel(viewDraft.message.sequence_number)}
+                    </p>
+                  </div>
+
+                  <div className="mb-4">
+                    <label className="field-label block mb-1">Status</label>
+                    <p className="field font-mono text-[13px] bg-midnight-faint/30 px-3 py-2 rounded">
+                      {viewDraft.message.status}
+                    </p>
+                  </div>
+
+                  <div className="mb-4">
+                    <label className="field-label block mb-1">Lead</label>
+                    <p className="field font-mono text-[13px] bg-midnight-faint/30 px-3 py-2 rounded">
+                      {draftTitle(viewDraft)}
+                    </p>
+                  </div>
+
+                  <div className="mb-4">
+                    <label className="field-label block mb-1">Body</label>
+                    <pre className="field font-mono text-[13px] leading-relaxed bg-midnight-faint/30 px-3 py-2 rounded max-h-60 overflow-auto whitespace-pre-wrap">
+                      {viewDraft.message.body || "(No body)"}
+                    </pre>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        closeViewModal();
+                        handleOpenDraft(viewDraft.message.id);
+                      }}
+                      className="btn btn-primary"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenInGmail(viewDraft.message.id, viewDraft)}
+                      className="btn"
+                    >
+                      Open in Gmail
+                    </button>
+                    <button type="button" onClick={closeViewModal} className="btn">
+                      Close
                     </button>
                   </div>
                 </>

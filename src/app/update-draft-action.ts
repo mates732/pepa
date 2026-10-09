@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 
 import { requireAuthenticatedUser } from "@/lib/auth/dal";
 import { isValidEmail, normalizeEmail } from "@/lib/email";
-import { createDraft } from "@/lib/services/outreach-service";
+import { updateMessage } from "@/lib/services/outreach-service";
 
 export interface UpdateDraftInput {
   messageId: string;
@@ -37,7 +37,8 @@ function failure(error: string): UpdateDraftFailure {
 
 /**
  * Update an existing draft by its message ID.
- * Uses the same createDraft service which handles upserts.
+ * Uses updateMessage to update the message directly by ID, preserving
+ * message ID, lead_id, sequence_number, and parent_message_id.
  */
 export async function updateDraft(input: UpdateDraftInput): Promise<UpdateDraftResponse> {
   await requireAuthenticatedUser();
@@ -58,14 +59,11 @@ export async function updateDraft(input: UpdateDraftInput): Promise<UpdateDraftR
   if (!mainBody) return failure("A body is required.");
 
   try {
-    // Use the existing createDraft service which handles updates when messageId is provided
-    // The messageId needs to be prefixed with "main_" to indicate it's a main draft update
-    const result = await createDraft({
+    const result = await updateMessage({
+      messageId,
       recipientEmail: recipient,
-      mainSubject,
-      mainBody,
-      followUps: [], // Don't modify follow-ups when editing a single draft
-      messageId: `main_${messageId}`,
+      subject: mainSubject,
+      body: mainBody,
     });
 
     if (!result.ok || !result.data) {
@@ -77,11 +75,11 @@ export async function updateDraft(input: UpdateDraftInput): Promise<UpdateDraftR
     return {
       ok: true,
       message: {
-        id: result.data.main.id,
-        recipient_email: result.data.main.recipient_email,
-        subject: result.data.main.subject,
-        body: result.data.main.body,
-        sequence_number: result.data.main.sequence_number,
+        id: result.data.id,
+        recipient_email: result.data.recipient_email,
+        subject: result.data.subject,
+        body: result.data.body,
+        sequence_number: result.data.sequence_number,
       },
     };
   } catch (error) {

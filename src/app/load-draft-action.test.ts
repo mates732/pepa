@@ -12,7 +12,17 @@ vi.mock("@/lib/supabase/server", () => ({
     from: vi.fn(() => ({
       select: vi.fn(() => ({
         eq: vi.fn(() => ({
+          neq: vi.fn(() => ({
+            maybeSingle: vi.fn(),
+          })),
           maybeSingle: vi.fn(),
+        })),
+      })),
+      update: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          select: vi.fn(() => ({
+            maybeSingle: vi.fn(),
+          })),
         })),
       })),
     })),
@@ -25,11 +35,16 @@ vi.mock("@/lib/email", () => ({
 }));
 
 vi.mock("@/lib/services/outreach-service", () => ({
+  updateMessage: vi.fn(),
   createDraft: vi.fn(),
 }));
 
+vi.mock("next/cache", () => ({
+  revalidatePath: vi.fn(),
+}));
+
 import { normalizeEmail, isValidEmail } from "@/lib/email";
-import { createDraft } from "@/lib/services/outreach-service";
+import { updateMessage, createDraft } from "@/lib/services/outreach-service";
 
 describe("loadDraftById — server action", () => {
   beforeEach(() => {
@@ -54,15 +69,23 @@ describe("loadDraftById — server action", () => {
 describe("updateDraft — server action", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(createDraft).mockResolvedValue({
+    vi.mocked(updateMessage).mockResolvedValue({
       ok: true,
       data: {
-        lead: { id: "lead-1", email: "info@test.cz", company_name: null, contact_name: null, status: "draft", created_at: "", updated_at: "", last_contacted_at: null, next_followup_at: null, followup_count: 0 },
-        main: { id: "msg-1", lead_id: "lead-1", recipient_email: "info@test.cz", subject: "Updated", body: "Updated body", status: "draft", provider: null, provider_message_id: null, sent_at: null, created_at: "", sequence_number: 0, parent_message_id: null },
-        followUp: null,
-        followUps: [],
-        created: false,
+        id: "msg-1",
+        lead_id: "lead-1",
+        recipient_email: "info@test.cz",
+        subject: "Updated",
+        body: "Updated body",
+        status: "draft",
+        provider: null,
+        provider_message_id: null,
+        sent_at: null,
+        created_at: "",
+        sequence_number: 0,
+        parent_message_id: null,
       },
+      error: null,
     });
     vi.mocked(normalizeEmail).mockImplementation((e: string) => e.toLowerCase().trim());
     vi.mocked(isValidEmail).mockReturnValue(true);
@@ -97,7 +120,7 @@ describe("updateDraft — server action", () => {
     expect(result.error).toContain("body is required");
   });
 
-  it("calls createDraft with correct parameters", async () => {
+  it("calls updateMessage with correct parameters", async () => {
     vi.mocked(isValidEmail).mockReturnValue(true);
     vi.mocked(normalizeEmail).mockReturnValue("info@test.cz");
 
@@ -108,27 +131,36 @@ describe("updateDraft — server action", () => {
       body: "Updated body",
     });
 
-    expect(createDraft).toHaveBeenCalledWith({
+    expect(updateMessage).toHaveBeenCalledWith({
+      messageId: "msg-1",
       recipientEmail: "info@test.cz",
-      mainSubject: "Updated Subject",
-      mainBody: "Updated body",
-      followUps: [],
-      messageId: "main_msg-1",
+      subject: "Updated Subject",
+      body: "Updated body",
     });
+    expect(createDraft).not.toHaveBeenCalled();
   });
 
   it("returns updated message on success", async () => {
     vi.mocked(isValidEmail).mockReturnValue(true);
     vi.mocked(normalizeEmail).mockReturnValue("info@test.cz");
-    vi.mocked(createDraft).mockResolvedValue({
+    vi.mocked(updateMessage).mockReset();
+    vi.mocked(updateMessage).mockResolvedValue({
       ok: true,
       data: {
-        lead: { id: "lead-1", email: "info@test.cz", company_name: null, contact_name: null, status: "draft", created_at: "", updated_at: "", last_contacted_at: null, next_followup_at: null, followup_count: 0 },
-        main: { id: "msg-1", lead_id: "lead-1", recipient_email: "info@test.cz", subject: "Updated", body: "Updated body", status: "draft", provider: null, provider_message_id: null, sent_at: null, created_at: "", sequence_number: 0, parent_message_id: null },
-        followUp: null,
-        followUps: [],
-        created: false,
+        id: "msg-1",
+        lead_id: "lead-1",
+        recipient_email: "info@test.cz",
+        subject: "Updated",
+        body: "Updated body",
+        status: "draft",
+        provider: null,
+        provider_message_id: null,
+        sent_at: null,
+        created_at: "",
+        sequence_number: 0,
+        parent_message_id: null,
       },
+      error: null,
     });
 
     const result = await updateDraft({
@@ -143,5 +175,183 @@ describe("updateDraft — server action", () => {
     expect(result.message.recipient_email).toBe("info@test.cz");
     expect(result.message.subject).toBe("Updated");
     expect(result.message.body).toBe("Updated body");
+  });
+
+  it("returns error when updateMessage fails", async () => {
+    vi.mocked(isValidEmail).mockReturnValue(true);
+    vi.mocked(normalizeEmail).mockReturnValue("info@test.cz");
+    vi.mocked(updateMessage).mockResolvedValue({
+      ok: false,
+      error: "Draft not found.",
+      data: null,
+    });
+
+    const result = await updateDraft({
+      messageId: "msg-1",
+      recipientEmail: "info@test.cz",
+      subject: "Updated Subject",
+      body: "Updated body",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("Draft not found.");
+  });
+
+  it("editing only subject preserves recipient and body", async () => {
+    vi.mocked(isValidEmail).mockReturnValue(true);
+    vi.mocked(normalizeEmail).mockReturnValue("info@test.cz");
+    vi.mocked(updateMessage).mockResolvedValue({
+      ok: true,
+      data: {
+        id: "msg-1",
+        lead_id: "lead-1",
+        recipient_email: "info@test.cz",
+        subject: "New Subject Only",
+        body: "Original body",
+        status: "draft",
+        provider: null,
+        provider_message_id: null,
+        sent_at: null,
+        created_at: "",
+        sequence_number: 0,
+        parent_message_id: null,
+      },
+      error: null,
+    });
+
+    const result = await updateDraft({
+      messageId: "msg-1",
+      recipientEmail: "info@test.cz",
+      subject: "New Subject Only",
+      body: "Original body",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.message.subject).toBe("New Subject Only");
+    expect(result.message.body).toBe("Original body");
+    expect(result.message.recipient_email).toBe("info@test.cz");
+  });
+
+  it("editing only body preserves recipient and subject", async () => {
+    vi.mocked(isValidEmail).mockReturnValue(true);
+    vi.mocked(normalizeEmail).mockReturnValue("info@test.cz");
+    vi.mocked(updateMessage).mockResolvedValue({
+      ok: true,
+      data: {
+        id: "msg-1",
+        lead_id: "lead-1",
+        recipient_email: "info@test.cz",
+        subject: "Original subject",
+        body: "New body only",
+        status: "draft",
+        provider: null,
+        provider_message_id: null,
+        sent_at: null,
+        created_at: "",
+        sequence_number: 0,
+        parent_message_id: null,
+      },
+      error: null,
+    });
+
+    const result = await updateDraft({
+      messageId: "msg-1",
+      recipientEmail: "info@test.cz",
+      subject: "Original subject",
+      body: "New body only",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.message.body).toBe("New body only");
+    expect(result.message.subject).toBe("Original subject");
+    expect(result.message.recipient_email).toBe("info@test.cz");
+  });
+
+  it("editing recipient changes recipient but preserves other fields", async () => {
+    vi.mocked(isValidEmail).mockReturnValue(true);
+    vi.mocked(normalizeEmail).mockReturnValue("new@test.cz");
+    vi.mocked(updateMessage).mockResolvedValue({
+      ok: true,
+      data: {
+        id: "msg-1",
+        lead_id: "lead-1",
+        recipient_email: "new@test.cz",
+        subject: "Original subject",
+        body: "Original body",
+        status: "draft",
+        provider: null,
+        provider_message_id: null,
+        sent_at: null,
+        created_at: "",
+        sequence_number: 0,
+        parent_message_id: null,
+      },
+      error: null,
+    });
+
+    const result = await updateDraft({
+      messageId: "msg-1",
+      recipientEmail: "new@test.cz",
+      subject: "Original subject",
+      body: "Original body",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.message.recipient_email).toBe("new@test.cz");
+    expect(result.message.subject).toBe("Original subject");
+    expect(result.message.body).toBe("Original body");
+  });
+
+  it("original message ID remains unchanged after edit", async () => {
+    vi.mocked(isValidEmail).mockReturnValue(true);
+    vi.mocked(normalizeEmail).mockReturnValue("info@test.cz");
+    vi.mocked(updateMessage).mockResolvedValue({
+      ok: true,
+      data: {
+        id: "msg-1",
+        lead_id: "lead-1",
+        recipient_email: "info@test.cz",
+        subject: "Updated",
+        body: "Updated body",
+        status: "draft",
+        provider: null,
+        provider_message_id: null,
+        sent_at: null,
+        created_at: "",
+        sequence_number: 0,
+        parent_message_id: null,
+      },
+      error: null,
+    });
+
+    const result = await updateDraft({
+      messageId: "msg-1",
+      recipientEmail: "info@test.cz",
+      subject: "Updated",
+      body: "Updated body",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.message.id).toBe("msg-1");
+  });
+
+  it("returns conflict error when recipient conflicts with existing draft", async () => {
+    vi.mocked(isValidEmail).mockReturnValue(true);
+    vi.mocked(normalizeEmail).mockReturnValue("conflict@test.cz");
+    vi.mocked(updateMessage).mockResolvedValue({
+      ok: false,
+      error: "A draft for this recipient already exists at sequence 0.",
+      data: null,
+    });
+
+    const result = await updateDraft({
+      messageId: "msg-1",
+      recipientEmail: "conflict@test.cz",
+      subject: "Subject",
+      body: "Body",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("already exists");
   });
 });

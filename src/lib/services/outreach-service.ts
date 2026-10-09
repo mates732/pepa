@@ -247,6 +247,77 @@ export async function createDraft(
   };
 }
 
+/**
+ * Update an existing message by its ID.
+ * This is used for editing drafts where we want to preserve the exact message ID,
+ * lead_id, sequence_number, and parent_message_id.
+ */
+export async function updateMessage(input: {
+  messageId: string;
+  recipientEmail: string;
+  subject: string | null;
+  body: string | null;
+}): Promise<ServiceResult<OutreachMessage>> {
+  const recipient = normalizeEmail(input.recipientEmail);
+  if (!recipient) return fail("A recipient email is required.");
+
+  const subject = input.subject?.trim() || null;
+  const body = input.body?.trim() || null;
+
+  const supabase = getSupabaseAdmin();
+
+  // First, load the existing message to get its lead_id and sequence_number
+  const { data: existingMessage, error: loadError } = await supabase
+    .from("outreach_messages")
+    .select("id, lead_id, sequence_number, parent_message_id, recipient_email")
+    .eq("id", input.messageId)
+    .maybeSingle();
+
+  if (loadError) return fail(loadError.message);
+  if (!existingMessage) return fail("Draft not found.");
+
+  const existing = existingMessage as OutreachMessage;
+  const leadId = existing.lead_id;
+  const sequenceNumber = existing.sequence_number ?? 0;
+
+  // Check for conflicts: another message with same lead_id, recipient_normalized, sequence_number
+  // but different ID
+  const { data: conflict, error: conflictError } = await supabase
+    .from("outreach_messages")
+    .select("id")
+    .eq("lead_id", leadId)
+    .eq("recipient_normalized", recipient)
+    .eq("sequence_number", sequenceNumber)
+    .neq("id", input.messageId)
+    .maybeSingle();
+
+  if (conflictError) return fail(conflictError.message);
+  if (conflict) {
+    return fail(
+      `A draft for this recipient already exists at sequence ${sequenceNumber}.`,
+    );
+  }
+
+  // Update the message
+  const updatePayload = {
+    recipient_email: recipient,
+    subject,
+    body,
+  };
+
+  const { data: updated, error: updateError } = await supabase
+    .from("outreach_messages")
+    .update(updatePayload)
+    .eq("id", input.messageId)
+    .select(MESSAGE_COLUMNS)
+    .maybeSingle();
+
+  if (updateError) return fail(updateError.message);
+  if (!updated) return fail("Draft not found after update.");
+
+  return { ok: true, error: null, data: updated as OutreachMessage };
+}
+
 async function leadIdForMessage(messageId: string): Promise<string> {
   const supabase = getSupabaseAdmin();
   const { data, error } = await supabase
