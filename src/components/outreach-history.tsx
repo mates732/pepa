@@ -253,8 +253,9 @@ export function OutreachHistory({
                               className="btn btn-sm"
                               aria-haspopup="true"
                               aria-expanded={openMenuRowId === row.id}
+                              aria-label="More actions"
                             >
-                              \u22EE
+                              ⋮
                             </button>
                             {openMenuRowId === row.id && (
                               <div className="absolute right-0 top-full mt-1 z-20 sticker min-w-[140px] py-1 shadow-lg border-2 border-midnight">

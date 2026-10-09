@@ -783,3 +783,88 @@ export async function bulkMarkOutreachSent(input: {
     );
   }
 }
+
+/**
+ * Load all follow-ups for the current user.
+ * Simplified read-only action for the Follow-ups page.
+ */
+export async function loadFollowUps() {
+  await requireAuthenticatedUser();
+
+  try {
+    const result = await listFollowUps();
+    if (!result.ok || !result.data) {
+      return failure(result.error ?? "Follow-ups could not be loaded.");
+    }
+    return { ok: true, followUps: result.data, error: null };
+  } catch {
+    return failure("Follow-ups could not be loaded.");
+  }
+}
+
+export interface FollowUpsResult {
+  ok: true;
+  followUps: Array<{
+    id: string;
+    lead_id: string;
+    lead_email: string;
+    lead_company_name: string | null;
+    lead_contact_name: string | null;
+    subject: string | null;
+    body: string | null;
+    status: string;
+    sequence_number: number;
+    created_at: string;
+    sent_at: string | null;
+    parent_message_id: string | null;
+  }>;
+  error: string | null;
+}
+
+export type FollowUpsResponse = FollowUpsResult | ActionFailure;
+
+/**
+ * Load outreach history for the current user.
+ * Simplified read-only action for the Outreach page.
+ */
+export async function loadOutreachHistory() {
+  await requireAuthenticatedUser();
+
+  try {
+    const result = await listOutreachHistory();
+    if (!result.ok || !result.data) {
+      return failure(result.error ?? "Outreach history could not be loaded.");
+    }
+    return { ok: true, leads: result.data, error: null };
+  } catch {
+    return failure("Outreach history could not be loaded.");
+  }
+}
+
+export interface OutreachHistoryResult {
+  ok: true;
+  leads: Array<{
+    id: string;
+    email: string;
+    company_name: string | null;
+    contact_name: string | null;
+    status: string;
+    created_at: string;
+    updated_at: string;
+    last_contacted_at: string | null;
+    next_followup_at: string | null;
+    followup_count: number;
+    newest_message: {
+      id: string;
+      subject: string | null;
+      status: string;
+      sequence_number: number;
+      created_at: string;
+      sent_at: string | null;
+    } | null;
+    unsent: boolean;
+  }>;
+  error: string | null;
+}
+
+export type OutreachHistoryResponse = OutreachHistoryResult | ActionFailure;
