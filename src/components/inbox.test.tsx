@@ -1,10 +1,9 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { describe, expect, it, vi, beforeEach, afterAll } from "vitest";
 
 import { Inbox } from "@/components/inbox";
 import { parseBulkEmails } from "@/lib/import/bulk-emails";
-import { buildComposeUrls } from "@/lib/outreach/gmail-compose-client";
-import { preopenComposeWindow, navigateComposeWindow, closeComposeWindow } from "@/lib/outreach/open-compose-window";
+import { openGmailCompose } from "@/lib/outreach/open-gmail-compose";
 
 import type { SaveDraftsResult } from "@/app/save-drafts-action";
 import type { LoadDraftResponse } from "@/app/load-draft-action";
@@ -32,7 +31,7 @@ vi.mock("@/app/actions", () => ({
 
 // Don't mock the client-side utilities - test the real implementations
 vi.unmock("@/lib/outreach/gmail-compose-client");
-vi.unmock("@/lib/outreach/open-compose-window");
+vi.unmock("@/lib/outreach/open-gmail-compose");
 
 import { saveDraftsFromPaste } from "@/app/save-drafts-action";
 import { loadDraftById } from "@/app/load-draft-action";
@@ -168,123 +167,164 @@ Body: Body B only`;
   });
 });
 
-describe("buildComposeUrls — Gmail URL building (client-side)", () => {
-  it("builds correct mailto and web URLs", () => {
-    const urls = buildComposeUrls({
+describe("openGmailCompose — shared Gmail compose helper", () => {
+  const originalWindowOpen = typeof window !== "undefined" ? window.open : undefined;
+  const mockWindowOpen = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // @ts-expect-error - mock window for tests
+    global.window = { open: mockWindowOpen };
+  });
+
+  afterAll(() => {
+    if (originalWindowOpen !== undefined) {
+      // @ts-expect-error - restore window for tests
+      global.window = { open: originalWindowOpen };
+    }
+  });
+
+  it("opens Gmail compose with correct URL and returns success", () => {
+    const mockTab = { opener: null, location: { href: "" }, closed: false, close: vi.fn() };
+    mockWindowOpen.mockReturnValue(mockTab);
+
+    const result = openGmailCompose({
       to: "info@test.cz",
       subject: "Test Subject",
       body: "Test body",
     });
 
-    expect(urls.mailto).toContain("mailto:?to=info%40test.cz");
-    expect(urls.mailto).toContain("subject=Test+Subject");
-    expect(urls.mailto).toContain("body=Test+body");
-    expect(urls.web).toContain("https://mail.google.com/mail/");
-    expect(urls.web).toContain("to=info%40test.cz");
-    expect(urls.web).toContain("su=Test+Subject");
-    expect(urls.web).toContain("body=Test+body");
+    expect(mockWindowOpen).toHaveBeenCalledWith(
+      expect.stringContaining("https://mail.google.com/mail/"),
+      "_blank",
+      "noreferrer"
+    );
+    expect(result.opened).toBe(true);
+    expect(result.url).toContain("https://mail.google.com/mail/");
+    expect(result.message).toContain("Opened Gmail compose");
   });
 
-  it("handles special characters correctly", () => {
-    const urls = buildComposeUrls({
-      to: "test+tag@example.com",
-      subject: "Test & confirm",
-      body: "Line 1\nLine 2",
-    });
+  it("handles popup blocked (window.open returns null)", () => {
+    mockWindowOpen.mockReturnValue(null);
 
-    expect(urls.web).toContain("to=test%2Btag%40example.com");
-    expect(urls.web).toContain("su=Test+%26+confirm");
-    expect(urls.web).toContain("body=Line+1%0ALine+2");
-  });
-
-  it("omits empty subject and body", () => {
-    const urls = buildComposeUrls({
+    const result = openGmailCompose({
       to: "info@test.cz",
-      subject: "",
-      body: "",
+      subject: "Test Subject",
+      body: "Test body",
     });
 
-    expect(urls.mailto).toBe("mailto:?to=info%40test.cz");
-    expect(urls.web).toContain("to=info%40test.cz");
-    expect(urls.web).not.toContain("su=");
-    expect(urls.web).not.toContain("body=");
+    expect(result.opened).toBe(false);
+    expect(result.message).toContain("blocked");
+    expect(result.message).toContain("Open this link manually");
+    expect(result.url).toContain("https://mail.google.com/mail/");
+  });
+
+  it("handles popup blocked (window.open throws)", () => {
+    mockWindowOpen.mockImplementation(() => {
+      throw new Error("Popup blocked");
+    });
+
+    const result = openGmailCompose({
+      to: "info@test.cz",
+      subject: "Test Subject",
+      body: "Test body",
+    });
+
+    expect(result.opened).toBe(false);
+    expect(result.message).toContain("blocked");
   });
 
   it("correctly encodes Czech diacritics in subject", () => {
-    const urls = buildComposeUrls({
+    const mockTab = { opener: null, location: { href: "" }, closed: false, close: vi.fn() };
+    mockWindowOpen.mockReturnValue(mockTab);
+
+    const result = openGmailCompose({
       to: "info@test.cz",
       subject: "Příjemné odpoledne — nabídka",
       body: "Dobrý den,\n\nnabídka.",
     });
 
-    expect(urls.web).toContain("su=P%C5%99%C3%ADjemn%C3%A9+odpoledne+%E2%80%94+nab%C3%ADdka");
-    expect(urls.web).toContain("body=Dobr%C3%BD+den%2C%0A%0Anab%C3%ADdka.");
+    expect(mockWindowOpen).toHaveBeenCalledWith(
+      expect.stringContaining("su=P%C5%99%C3%ADjemn%C3%A9+odpoledne+%E2%80%94+nab%C3%ADdka"),
+      "_blank",
+      "noreferrer"
+    );
+    expect(result.opened).toBe(true);
   });
 
   it("correctly encodes plus address in recipient", () => {
-    const urls = buildComposeUrls({
+    const mockTab = { opener: null, location: { href: "" }, closed: false, close: vi.fn() };
+    mockWindowOpen.mockReturnValue(mockTab);
+
+    const result = openGmailCompose({
       to: "user+tag@example.com",
       subject: "Test",
       body: "Body",
     });
 
-    expect(urls.web).toContain("to=user%2Btag%40example.com");
+    expect(mockWindowOpen).toHaveBeenCalledWith(
+      expect.stringContaining("to=user%2Btag%40example.com"),
+      "_blank",
+      "noreferrer"
+    );
+    expect(result.opened).toBe(true);
   });
-});
 
-describe("preopenComposeWindow / navigateComposeWindow / closeComposeWindow — popup handling", () => {
-  function createMockHandle() {
-    return {
+  it("handles empty subject and body by omitting them", () => {
+    const mockTab = { opener: null, location: { href: "" }, closed: false, close: vi.fn() };
+    mockWindowOpen.mockReturnValue(mockTab);
+
+    const result = openGmailCompose({
+      to: "info@test.cz",
+      subject: "",
+      body: "",
+    });
+
+    expect(mockWindowOpen).toHaveBeenCalledWith(
+      expect.stringMatching(/^https:\/\/mail\.google\.com\/mail\/\?view=cm&fs=1&to=info%40test\.cz$/),
+      "_blank",
+      "noreferrer"
+    );
+    expect(result.opened).toBe(true);
+  });
+
+  it("allows custom opener function for testing", () => {
+    const customOpener = vi.fn().mockReturnValue({
+      opener: null,
       location: { href: "" },
       closed: false,
-      close: vi.fn(function (this: { closed: boolean }) { this.closed = true; }),
-      opener: { name: "pepa" },
-    };
-  }
+      close: vi.fn(),
+    });
 
-  it("exports the expected functions", () => {
-    expect(typeof preopenComposeWindow).toBe("function");
-    expect(typeof navigateComposeWindow).toBe("function");
-    expect(typeof closeComposeWindow).toBe("function");
+    const result = openGmailCompose(
+      { to: "info@test.cz", subject: "Test", body: "Body" },
+      { opener: customOpener },
+    );
+
+    expect(customOpener).toHaveBeenCalledWith(
+      expect.stringContaining("https://mail.google.com/mail/"),
+      "_blank",
+      "noreferrer"
+    );
+    expect(result.opened).toBe(true);
   });
 
-  it("preopenComposeWindow opens about:blank and returns a handle", () => {
-    const handle = preopenComposeWindow(() => createMockHandle());
-    expect(handle).not.toBeNull();
-    expect(handle?.location.href).toBe("");
-  });
+  it("allows custom success and blocked messages", () => {
+    const mockTab = { opener: null, location: { href: "" }, closed: false, close: vi.fn() };
+    mockWindowOpen.mockReturnValue(mockTab);
 
-  it("navigateComposeWindow sets location.href", () => {
-    const handle = createMockHandle();
-    const url = "https://mail.google.com/mail/?view=cm&to=test%40example.com";
+    const successResult = openGmailCompose(
+      { to: "info@test.cz" },
+      { successMessage: "Custom success" },
+    );
+    expect(successResult.message).toContain("Custom success");
 
-    const result = navigateComposeWindow(handle, url);
-
-    expect(result).toBe(true);
-    expect(handle.location.href).toBe(url);
-  });
-
-  it("navigateComposeWindow returns false for null handle", () => {
-    const result = navigateComposeWindow(null, "https://example.com");
-    expect(result).toBe(false);
-  });
-
-  it("navigateComposeWindow returns false for closed handle", () => {
-    const handle = createMockHandle();
-    handle.closed = true;
-
-    const result = navigateComposeWindow(handle, "https://example.com");
-    expect(result).toBe(false);
-  });
-
-  it("closeComposeWindow closes the handle", () => {
-    const handle = createMockHandle();
-    closeComposeWindow(handle);
-    expect(handle.closed).toBe(true);
-  });
-
-  it("closeComposeWindow is safe for null handle", () => {
-    expect(() => closeComposeWindow(null)).not.toThrow();
+    mockWindowOpen.mockReturnValue(null);
+    const blockedResult = openGmailCompose(
+      { to: "info@test.cz" },
+      { blockedMessage: "Custom blocked" },
+    );
+    expect(blockedResult.message).toContain("Custom blocked");
   });
 });
 

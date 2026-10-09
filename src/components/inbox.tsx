@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { saveDraftsFromPaste } from "@/app/save-drafts-action";
 import { loadDraftById } from "@/app/load-draft-action";
 import { updateDraft } from "@/app/update-draft-action";
-import { buildComposeUrls } from "@/lib/outreach/gmail-compose-client";
+import { openGmailCompose } from "@/lib/outreach/open-gmail-compose";
 import { deleteOutreachMessage, loadOutreachDraftRows as loadOutreachDraftRowsAction } from "@/app/actions";
 import type { OutreachDraftRow } from "@/lib/services/outreach-service";
 
@@ -127,38 +127,20 @@ export function Inbox() {
     setOpeningGmailId(messageId);
     setNotice(null);
 
-    // Build URL client-side from draft data we already have - no async wait needed
-    const urls = buildComposeUrls({
+    // Build URL client-side from draft data we already have — no async wait
+    // needed, no about:blank intermediate tab. The shared helper handles the
+    // popup-blocking fallback and never claims success when the tab is blocked.
+    const result = openGmailCompose({
       to: draft.message.recipient_email,
       subject: draft.message.subject,
       body: draft.message.body,
     });
 
-    // Open Gmail compose URL directly in the click handler
-    // This maintains the user gesture chain and works in Safari
-    // We do NOT use "noopener" because it makes window.open return null even on success
-    // (per open-compose-window.ts documentation). We accept that Gmail can access
-    // window.opener (low risk for trusted site) in exchange for reliable popup detection.
-    const tab = window.open(urls.web, "_blank", "noreferrer");
-    
-    if (!tab) {
-      // Popup was genuinely blocked - show manual URL
-      setNotice({
-        kind: "error",
-        text: `Your browser blocked the new tab. Open manually: ${urls.web}`,
-      });
-    } else {
-      // Popup opened successfully. We can't verify navigation to Gmail (cross-origin),
-      // but we have a valid window reference so the browser allowed the popup.
-      // The tab will navigate to Gmail on its own.
-      setNotice({
-        kind: "info",
-        text: `Opened Gmail compose. If it didn't open, use: ${urls.web}`,
-      });
-      // Close our reference to avoid memory leak - the tab manages itself now
-      try { tab.opener = null; } catch {}
-    }
-    
+    setNotice({
+      kind: result.opened ? "info" : "error",
+      text: result.message,
+    });
+
     setOpeningGmailId(null);
   }
 

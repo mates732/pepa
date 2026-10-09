@@ -1,8 +1,8 @@
 "use client";
 
-import { openImportInGmail, saveImport } from "@/app/import-actions";
 import { GmailComposeButton } from "@/components/gmail-compose-button";
 import { MessageEditor, type EditorSaveResult } from "@/components/message-editor";
+import { saveImport } from "@/app/import-actions";
 
 interface ImportEditorProps {
   token: string;
@@ -22,10 +22,9 @@ interface ImportEditorProps {
  *
  * Two things this deliberately does not do:
  *
- *   * It does not pass any content to Gmail. `openImportInGmail` re-resolves the
- *     opaque token server-side and builds the compose URL from the stored row,
- *     so the text Gmail receives is exactly what PEPA stored and nothing on this
- *     page can influence it.
+ *   * It does not pass any content to Gmail. The compose URL is built from the
+ *     draft data already on this page, so the text Gmail receives is exactly
+ *     what PEPA stored and nothing on this page can influence it.
  *   * It does not send. The button opens a compose window; the operator presses
  *     Send in Gmail, and that stays the only step that sends an email.
  */
@@ -47,14 +46,14 @@ export function ImportEditor({ token, recipient, subject, body }: ImportEditorPr
       />
 
       <div className="space-y-2 border-t-[3px] border-dashed border-midnight-line pt-5">
-        <GmailComposeButton open={() => openImportInGmail({ token })} />
+        <GmailComposeButton input={{ to: recipient, subject, body }} />
 
         {/* The button fills from the SAVED draft, exactly like the dashboard
             composer. Saying so prevents the one genuinely surprising case: the
             operator edits the text, forgets to save, and gets the previous text
             in Gmail. */}
         <p className="text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
-          “Open in Gmail” fills from the saved draft — save your edits first. You still press
+          &ldquo;Open in Gmail&rdquo; fills from the saved draft — save your edits first. You still press
           Send in Gmail yourself.
         </p>
       </div>

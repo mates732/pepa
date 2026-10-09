@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 
-import { buildComposeUrls } from "@/lib/outreach/gmail-compose-client";
+import { openGmailCompose } from "@/lib/outreach/open-gmail-compose";
 import { updateDraft } from "@/app/update-draft-action";
 import { loadDraftById } from "@/app/load-draft-action";
 import { deleteOutreachMessage } from "@/app/actions";
@@ -118,26 +118,16 @@ export function DraftDetailClient({ initialDraft }: Props) {
     setOpeningGmail(true);
     setNotice(null);
 
-    const urls = buildComposeUrls({
+    const result = openGmailCompose({
       to: draft.message.recipient_email,
       subject: draft.message.subject,
       body: draft.message.body,
     });
 
-    const tab = window.open(urls.web, "_blank", "noreferrer");
-
-    if (!tab) {
-      setNotice({
-        kind: "error",
-        text: `Your browser blocked the new tab. Open manually: ${urls.web}`,
-      });
-    } else {
-      setNotice({
-        kind: "info",
-        text: `Opened Gmail compose. If it didn't open, use: ${urls.web}`,
-      });
-      try { tab.opener = null; } catch {}
-    }
+    setNotice({
+      kind: result.opened ? "info" : "error",
+      text: result.message,
+    });
 
     setOpeningGmail(false);
   }

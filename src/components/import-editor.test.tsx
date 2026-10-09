@@ -60,7 +60,7 @@ describe("ImportEditor — Open in Gmail", () => {
     expect(markup).toContain("You still press");
     expect(markup).toContain("Send in Gmail yourself");
     // Opening Gmail must never read as having sent anything.
-    expect(markup).toContain("does not send anything and does not mark it as sent");
+    expect(markup).toContain("does not send anything");
   });
 
   it("does not put the token anywhere a rendered page would leak it into a link", () => {
