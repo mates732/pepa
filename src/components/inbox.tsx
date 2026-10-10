@@ -5,7 +5,8 @@ import { useCallback, useEffect, useState } from "react";
 import { saveDraftsFromPaste } from "@/app/save-drafts-action";
 import { loadDraftById } from "@/app/load-draft-action";
 import { updateDraft } from "@/app/update-draft-action";
-import { openGmailCompose } from "@/lib/outreach/open-gmail-compose";
+import { openGmailCompose, isIOS } from "@/lib/outreach/open-gmail-compose";
+import { buildGmailAppUrl } from "@/lib/outreach/gmail-compose";
 import { deleteOutreachMessage, loadOutreachDraftRows as loadOutreachDraftRowsAction } from "@/app/actions";
 import type { OutreachDraftRow } from "@/lib/services/outreach-service";
 
@@ -139,6 +140,20 @@ export function Inbox() {
     // Navigation happens synchronously in openGmailCompose via window.location.assign().
     // No notice needed — the browser navigates away.
   }
+
+  function handleTryGmailApp(messageId: string, draft: OutreachDraftRow) {
+    // On iOS, mailto: may open the Gmail app if configured as default.
+    // This is not guaranteed — it depends on iOS settings.
+    if (typeof window !== "undefined") {
+      window.location.assign(buildGmailAppUrl({
+        to: draft.message.recipient_email,
+        subject: draft.message.subject,
+        body: draft.message.body,
+      }));
+    }
+  }
+
+  const showGmailAppOption = isIOS();
 
   async function handleDelete(messageId: string) {
     if (!window.confirm("Delete this draft? This cannot be undone.")) return;
@@ -417,12 +432,22 @@ Petr`;
                     </button>
                     <button
                       type="button"
-                      className="btn"
+                      className="btn btn-primary"
                       onClick={() => handleOpenInGmail(draft.message.id, draft)}
                       disabled={isOpeningGmail || isDeleting || isOpening || isEditing}
                     >
                       {isOpeningGmail ? "Opening…" : "Open in Gmail"}
                     </button>
+                    {showGmailAppOption && (
+                      <button
+                        type="button"
+                        className="btn btn-sm text-midnight-soft"
+                        onClick={() => handleTryGmailApp(draft.message.id, draft)}
+                        disabled={isOpeningGmail || isDeleting || isOpening || isEditing}
+                      >
+                        Try Gmail app
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="btn"

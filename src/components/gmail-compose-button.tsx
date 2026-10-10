@@ -1,15 +1,18 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 
 import type { GmailComposeInput } from "@/lib/outreach/gmail-compose-client";
-import { openGmailCompose, buildGmailAppUrl, isIOS } from "@/lib/outreach/open-gmail-compose";
+import { openGmailCompose, isIOS, isAndroid } from "@/lib/outreach/open-gmail-compose";
+import { buildGmailAppUrl } from "@/lib/outreach/gmail-compose";
 
 /**
  * "Open in Gmail" button — provides browser compose and optional Gmail app option.
  *
  * On desktop: opens Gmail compose in the same tab.
- * On iOS: opens Gmail compose in the same tab, with an optional link to try the Gmail app.
+ * On iOS/Android: offers two options:
+ *   - "Otevřít v aplikaci Gmail" — tries googlegmail:// to open the Gmail app
+ *   - "Otevřít Gmail na webu" — opens browser compose (reliable fallback)
  *
  * The caller supplies the draft data (recipient, subject, body) — never
  * a URL, never a server action — and this component handles the navigation.
@@ -22,17 +25,13 @@ import { openGmailCompose, buildGmailAppUrl, isIOS } from "@/lib/outreach/open-g
  */
 export function GmailComposeButton({
   input,
-  label = "Open in Gmail ↗",
   disabled = false,
-  title = "Opens a Gmail draft with this saved text. This does not send anything.",
+  title = "Otevřít v Gmailu — kompozice s předvyplněným obsahem. Neposílá automaticky.",
 }: {
   input: GmailComposeInput;
-  label?: string;
   disabled?: boolean;
   title?: string;
 }) {
-  const [showAppOption, setShowAppOption] = useState(false);
-
   const handleBrowserCompose = useCallback(() => {
     // Synchronous, inside the click: the user gesture is still live here.
     // Uses same-tab navigation to avoid popup blocking on mobile browsers.
@@ -40,41 +39,52 @@ export function GmailComposeButton({
   }, [input]);
 
   const handleTryGmailApp = useCallback(() => {
-    // On iOS, mailto: URLs may open the Gmail app if configured as default.
-    // This is not guaranteed — it depends on iOS settings.
+    // Try to open Gmail app via googlegmail:// scheme.
+    // This is best-effort — may not work on all Gmail versions or iOS configs.
     if (typeof window !== "undefined") {
       window.location.assign(buildGmailAppUrl(input));
     }
   }, [input]);
 
-  const isIOSDevice = isIOS();
+  const isMobile = isIOS() || isAndroid();
 
   return (
     <div className="space-y-2">
-      <button
-        type="button"
-        onClick={handleBrowserCompose}
-        disabled={disabled}
-        className="btn"
-        title={title}
-      >
-        {label}
-      </button>
-
-      {isIOSDevice && !disabled && (
-        <p className="text-xs text-midnight-soft">
+      {isMobile ? (
+        <>
           <button
             type="button"
             onClick={handleTryGmailApp}
-            className="underline hover:text-midnight font-medium"
+            disabled={disabled}
+            className="btn btn-primary"
+            title={" Pokus o otevření aplikace Gmail. Nemusí fungovat na všech zařízeních."}
           >
-            Try opening in Gmail app ←
+            Otevřít v aplikaci Gmail
           </button>
-          <span className="block text-[10px] mt-1">
-            If the Gmail app is set as your default mail client on iOS, this may open it.
-            Otherwise it opens in Mail or your browser.
-          </span>
-        </p>
+          <p className="text-[11px] text-midnight-soft">
+            Pokud aplikace Gmail není nainstalována nebo iOS/Android odmítne otevřít,
+            použijte níže uvedenou možnost.
+          </p>
+          <button
+            type="button"
+            onClick={handleBrowserCompose}
+            disabled={disabled}
+            className="btn"
+            title={title}
+          >
+            Otevřít Gmail na webu
+          </button>
+        </>
+      ) : (
+        <button
+          type="button"
+          onClick={handleBrowserCompose}
+          disabled={disabled}
+          className="btn btn-primary"
+          title={title}
+        >
+          Open in Gmail ↗
+        </button>
       )}
     </div>
   );

@@ -3,7 +3,8 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 
-import { openGmailCompose } from "@/lib/outreach/open-gmail-compose";
+import { openGmailCompose, isIOS } from "@/lib/outreach/open-gmail-compose";
+import { buildGmailAppUrl } from "@/lib/outreach/gmail-compose";
 import { loadOutreachHistory } from "@/app/actions";
 import { formatDate, formatDateTime, sequenceLabel, leadTitle } from "@/lib/utils/date";
 
@@ -83,6 +84,8 @@ export function OutreachHistoryClient({ initialHistory, initialError }: Props) {
     // No notice needed — the browser navigates away.
   }
 
+  const showGmailAppOption = isIOS();
+
   return (
     <div className="flex flex-col gap-6">
       <header>
@@ -106,72 +109,91 @@ export function OutreachHistoryClient({ initialHistory, initialError }: Props) {
           <a href="/parser" className="btn btn-primary">Paste Emails</a>
         </div>
       ) : (
-        <section className="sticker overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="border-b-[3px] border-midnight text-left text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
-                <th className="px-4 py-3">Lead</th>
-                <th className="px-4 py-3">Email</th>
-                <th className="px-4 py-3 max-w-[300px]">Latest Subject</th>
-                <th className="px-4 py-3 whitespace-nowrap">Status</th>
-                <th className="px-4 py-3 whitespace-nowrap">Follow-ups</th>
-                <th className="px-4 py-3 whitespace-nowrap">Last Contacted</th>
-                <th className="px-4 py-3 whitespace-nowrap">Created</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-midnight-line/40">
-              {history.map((lead) => (
-                <tr key={lead.id} className="hover:bg-midnight-faint/50">
-                  <td className="px-4 py-3 font-semibold text-midnight-ink">{leadTitle(lead)}</td>
-                  <td className="px-4 py-3 font-mono text-xs text-midnight-soft">{lead.email}</td>
-                  <td className="px-4 py-3 max-w-[300px] truncate text-midnight-ink">
-                    {lead.latestSubject || "—"}
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap">
-                    <span className={`inline-flex items-center rounded-full border-2 px-2.5 py-0.5 text-[11px] uppercase tracking-wider ${
-                      lead.latestMessageStatus === "sent"
-                        ? "bg-emerald-faint text-emerald border-emerald"
-                        : lead.latestMessageStatus === "draft"
-                        ? "bg-midnight-faint text-midnight border-midnight"
-                        : "bg-amber-faint text-amber border-amber"
-                    }`}>
-                      {lead.latestMessageStatus || "—"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 whitespace-nowrap text-sm text-midnight-soft">{lead.followup_count}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-xs text-midnight-soft">{formatDateTime(lead.latestMessageAt)}</td>
-                  <td className="px-4 py-3 whitespace-nowrap text-xs text-midnight-soft">{formatDate(lead.created_at)}</td>
-                  <td className="px-4 py-3 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      {lead.mainEmail && (
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={() => handleOpenInGmail(
-                            lead.mainEmail!.message.id,
-                            lead.email,
-                            lead.mainEmail!.message.subject,
-                            ""
-                          )}
-                          disabled={openingGmailId === lead.mainEmail!.message.id}
-                        >
-                          {openingGmailId === lead.mainEmail!.message.id ? "Opening…" : "Gmail"}
-                        </button>
-                      )}
-                      <Link
-                        href={`/drafts/${lead.mainEmail?.message.id}`}
-                        className="btn btn-sm"
-                      >
-                        View
-                      </Link>
-                    </div>
-                  </td>
+        <div className="sticker">
+          <div className="overflow-x-auto -mx-5 px-5">
+            <table className="w-full border-collapse text-sm min-w-[720px]">
+              <thead>
+                <tr className="border-b-[3px] border-midnight text-left text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
+                  <th className="px-4 py-3">Lead</th>
+                  <th className="px-4 py-3">Email</th>
+                  <th className="px-4 py-3">Subject</th>
+                  <th className="px-4 py-3 whitespace-nowrap">Status</th>
+                  <th className="px-4 py-3 whitespace-nowrap">Follow-ups</th>
+                  <th className="px-4 py-3 whitespace-nowrap">Created</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
+              </thead>
+              <tbody className="divide-y divide-midnight-line/40">
+                {history.map((lead) => (
+                  <tr key={lead.id} className="hover:bg-midnight-faint/50">
+                    <td className="px-4 py-3 font-semibold text-midnight-ink">{leadTitle(lead)}</td>
+                    <td className="px-4 py-3 font-mono text-xs text-midnight-soft">{lead.email}</td>
+                    <td className="px-4 py-3 truncate text-midnight-ink">
+                      {lead.latestSubject || "—"}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className={`inline-flex items-center rounded-full border-2 px-2 py-0.5 text-[11px] uppercase tracking-wider ${
+                        lead.latestMessageStatus === "sent"
+                          ? "bg-emerald-faint text-emerald border-emerald"
+                          : lead.latestMessageStatus === "draft"
+                          ? "bg-midnight-faint text-midnight border-midnight"
+                          : "bg-amber-faint text-amber border-amber"
+                      }`}>
+                        {lead.latestMessageStatus || "—"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-midnight-soft">{lead.followup_count}</td>
+                    <td className="px-4 py-3 whitespace-nowrap text-xs text-midnight-soft">{formatDate(lead.created_at)}</td>                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        {lead.mainEmail && (
+                          <>
+                            <button
+                              type="button"
+                              className="btn btn-xs"
+                              onClick={() => handleOpenInGmail(
+                                lead.mainEmail!.message.id,
+                                lead.email,
+                                lead.mainEmail!.message.subject,
+                                ""
+                              )}
+                              disabled={openingGmailId === lead.mainEmail!.message.id}
+                            >
+                              {openingGmailId === lead.mainEmail!.message.id ? "…" : "Gmail"}
+                            </button>
+                            {showGmailAppOption && (
+                              <button
+                                type="button"
+                                className="btn btn-xs text-midnight-soft"
+                                onClick={() => {
+                                  if (typeof window !== "undefined") {
+                                    window.location.assign(buildGmailAppUrl({
+                                      to: lead.email,
+                                      subject: lead.mainEmail!.message.subject,
+                                      body: "",
+                                    }));
+                                  }
+                                }}
+                                disabled={openingGmailId === lead.mainEmail!.message.id}
+                              >
+                                App
+                              </button>
+                            )}
+                          </>
+                        )}
+                        <Link
+                          href={`/drafts/${lead.mainEmail?.message.id}`}
+                          className="btn btn-xs"
+                        >
+                          View
+                        </Link>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
       {notice && (

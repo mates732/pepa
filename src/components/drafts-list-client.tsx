@@ -104,74 +104,76 @@ export function DraftsListClient({ initialDrafts, initialError }: Props) {
           <a href="/parser" className="btn btn-primary">Paste Emails</a>
         </div>
       ) : (
-        <section className="sticker overflow-x-auto">
-          <table className="w-full border-collapse text-sm">
-            <thead>
-              <tr className="border-b-[3px] border-midnight text-left text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
-                <th className="px-4 py-3">Lead</th>
-                <th className="px-4 py-3">Recipient</th>
-                <th className="px-4 py-3 max-w-[300px]">Subject</th>
-                <th className="px-4 py-3 whitespace-nowrap">Type</th>
-                <th className="px-4 py-3 whitespace-nowrap">Status</th>
-                <th className="px-4 py-3 whitespace-nowrap">Created</th>
-                <th className="px-4 py-3 text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-midnight-line/40">
-              {drafts.map((draft) => {
-                const isOpeningGmail = openingGmailId === draft.message.id;
-                const isDeleting = deletingId === draft.message.id;
+        <div className="sticker">
+          <div className="overflow-x-auto -mx-5 px-5">
+            <table className="w-full border-collapse text-sm min-w-[640px]">
+              <thead>
+                <tr className="border-b-[3px] border-midnight text-left text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
+                  <th className="px-4 py-3">Lead</th>
+                  <th className="px-4 py-3">Recipient</th>
+                  <th className="px-4 py-3">Subject</th>
+                  <th className="px-4 py-3 whitespace-nowrap">Type</th>
+                  <th className="px-4 py-3 whitespace-nowrap">Status</th>
+                  <th className="px-4 py-3 whitespace-nowrap">Created</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-midnight-line/40">
+                {drafts.map((draft) => {
+                  const isOpeningGmail = openingGmailId === draft.message.id;
+                  const isDeleting = deletingId === draft.message.id;
 
-                return (
-                  <tr key={draft.message.id} className="hover:bg-midnight-faint/50">
-                    <td className="px-4 py-3 font-semibold text-midnight-ink">{draftTitle(draft)}</td>
-                    <td className="px-4 py-3 font-mono text-xs text-midnight-soft">{draft.message.recipient_email}</td>
-                    <td className="px-4 py-3 max-w-[300px] truncate text-midnight-ink">{draft.message.subject || "(No subject)"}</td>
-                    <td className="px-4 py-3 whitespace-nowrap text-xs font-semibold text-midnight-soft">{sequenceLabel(draft.message.sequence_number)}</td>
-                    <td className="px-4 py-3 whitespace-nowrap">
-                      <span className={`inline-flex items-center rounded-full border-2 px-2.5 py-0.5 text-[11px] uppercase tracking-wider ${
-                        draft.message.status === "draft"
-                          ? "bg-midnight-faint text-midnight border-midnight"
-                          : draft.message.status === "ready"
-                          ? "bg-emerald-faint text-emerald border-emerald"
-                          : "bg-amber-faint text-amber border-amber"
-                      }`}>
-                        {draft.message.status}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-xs text-midnight-soft">{formatDate(draft.message.created_at)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-2">
-                        <Link
-                          href={`/drafts/${draft.message.id}`}
-                          className="btn btn-sm"
-                        >
-                          View
-                        </Link>
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={() => handleOpenInGmail(draft.message.id, draft)}
-                          disabled={isOpeningGmail || isDeleting}
-                        >
-                          {isOpeningGmail ? "Opening…" : "Gmail"}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-sm"
-                          onClick={() => handleDelete(draft.message.id)}
-                          disabled={isDeleting || isOpeningGmail}
-                        >
-                          {isDeleting ? "Deleting…" : "Delete"}
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </section>
+                  return (
+                    <tr key={draft.message.id} className="hover:bg-midnight-faint/50">
+                      <td className="px-4 py-3 font-semibold text-midnight-ink">{draftTitle(draft)}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-midnight-soft">{draft.message.recipient_email}</td>
+                      <td className="px-4 py-3 truncate text-midnight-ink">{draft.message.subject || "(No subject)"}</td>
+                      <td className="px-4 py-3 whitespace-nowrap text-xs font-semibold text-midnight-soft">{sequenceLabel(draft.message.sequence_number)}</td>
+                      <td className="px-4 py-3 whitespace-nowrap">
+                        <span className={`inline-flex items-center rounded-full border-2 px-2 py-0.5 text-[11px] uppercase tracking-wider ${
+                          draft.message.status === "draft"
+                            ? "bg-midnight-faint text-midnight border-midnight"
+                            : draft.message.status === "ready"
+                            ? "bg-emerald-faint text-emerald border-emerald"
+                            : "bg-amber-faint text-amber border-amber"
+                        }`}>
+                          {draft.message.status}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-xs text-midnight-soft">{formatDate(draft.message.created_at)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          <Link
+                            href={`/drafts/${draft.message.id}`}
+                            className="btn btn-xs"
+                          >
+                            View
+                          </Link>
+                          <button
+                            type="button"
+                            className="btn btn-xs"
+                            onClick={() => handleOpenInGmail(draft.message.id, draft)}
+                            disabled={isOpeningGmail || isDeleting}
+                          >
+                            {isOpeningGmail ? "…" : "Gmail"}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-xs text-red"
+                            onClick={() => handleDelete(draft.message.id)}
+                            disabled={isDeleting || isOpeningGmail}
+                          >
+                            {isDeleting ? "…" : "Del"}
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
 
       {notice && (

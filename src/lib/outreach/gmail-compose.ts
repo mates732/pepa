@@ -87,16 +87,59 @@ export function buildMailtoUrl(input: GmailComposeInput): string {
 }
 
 /**
+ * Build a Gmail app deep link URL for iOS/Android.
+ *
+ * Uses the `googlegmail://` custom URL scheme which may open the Gmail app
+ * directly. This is NOT guaranteed to work:
+ *   - The Gmail app must be installed
+ *   - iOS may show a dialog asking which app to use
+ *   - Some Gmail versions may not support compose via this scheme
+ *   - The scheme format may change between Gmail versions
+ *
+ * URL format: googlegmail://co?to=&subject=&body=
+ * Parameters are URL-encoded using URLSearchParams.
+ */
+export function buildGmailAppUrl(input: GmailComposeInput): string {
+  const params = new URLSearchParams();
+  const to = (input.to ?? "").trim();
+  if (to) params.set("to", to);
+
+  const subject = (input.subject ?? "").trim();
+  if (subject) params.set("subject", subject);
+
+  const body = input.body ?? "";
+  if (body.trim()) {
+    // Body in googlegmail:// uses URL encoding, newlines as %0A
+    params.set("body", body.replace(/\r\n/g, "\n").replace(/\n/g, "%0A"));
+  }
+
+  return `googlegmail://co?${params.toString()}`;
+}
+
+/**
+ * Check if the current device is iOS.
+ */
+export function isIOS(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const userAgent = navigator.userAgent || navigator.vendor || "";
+  return /iPhone|iPad|iPod/.test(userAgent);
+}
+
+/**
  * Build both URLs for a compose action.
  *
- * Returns both `mailto:` (for default mail client) and `web` (Gmail web compose).
- * The caller should try `mailto:` first, then fall back to `web`.
+ * Returns:
+ *   - gmailApp: googlegmail:// URL for trying to open the Gmail app (best-effort)
+ *   - mailto: mailto: URL as another fallback
+ *   - web: Gmail web compose URL as reliable fallback
  */
 export function buildComposeUrls(input: GmailComposeInput): {
+  gmailApp: string;
   mailto: string;
   web: string;
 } {
   return {
+    gmailApp: buildGmailAppUrl(input),
     mailto: buildMailtoUrl(input),
     web: buildGmailComposeUrl(input),
   };
