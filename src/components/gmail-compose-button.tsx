@@ -1,15 +1,15 @@
 "use client";
 
-import { useCallback } from "react";
+import { useCallback, useState } from "react";
 
 import type { GmailComposeInput } from "@/lib/outreach/gmail-compose-client";
-import { openGmailCompose } from "@/lib/outreach/open-gmail-compose";
+import { openGmailCompose, buildGmailAppUrl, isIOS } from "@/lib/outreach/open-gmail-compose";
 
 /**
- * "Open in Gmail" button — the single shared implementation.
+ * "Open in Gmail" button — provides browser compose and optional Gmail app option.
  *
- * Opens Gmail compose in the same tab using window.location.assign(),
- * which avoids popup blocking on iOS Safari and other mobile browsers.
+ * On desktop: opens Gmail compose in the same tab.
+ * On iOS: opens Gmail compose in the same tab, with an optional link to try the Gmail app.
  *
  * The caller supplies the draft data (recipient, subject, body) — never
  * a URL, never a server action — and this component handles the navigation.
@@ -31,21 +31,51 @@ export function GmailComposeButton({
   disabled?: boolean;
   title?: string;
 }) {
-  const handleClick = useCallback(() => {
+  const [showAppOption, setShowAppOption] = useState(false);
+
+  const handleBrowserCompose = useCallback(() => {
     // Synchronous, inside the click: the user gesture is still live here.
     // Uses same-tab navigation to avoid popup blocking on mobile browsers.
     openGmailCompose(input);
   }, [input]);
 
+  const handleTryGmailApp = useCallback(() => {
+    // On iOS, mailto: URLs may open the Gmail app if configured as default.
+    // This is not guaranteed — it depends on iOS settings.
+    if (typeof window !== "undefined") {
+      window.location.assign(buildGmailAppUrl(input));
+    }
+  }, [input]);
+
+  const isIOSDevice = isIOS();
+
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      disabled={disabled}
-      className="btn"
-      title={title}
-    >
-      {label}
-    </button>
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={handleBrowserCompose}
+        disabled={disabled}
+        className="btn"
+        title={title}
+      >
+        {label}
+      </button>
+
+      {isIOSDevice && !disabled && (
+        <p className="text-xs text-midnight-soft">
+          <button
+            type="button"
+            onClick={handleTryGmailApp}
+            className="underline hover:text-midnight font-medium"
+          >
+            Try opening in Gmail app ←
+          </button>
+          <span className="block text-[10px] mt-1">
+            If the Gmail app is set as your default mail client on iOS, this may open it.
+            Otherwise it opens in Mail or your browser.
+          </span>
+        </p>
+      )}
+    </div>
   );
 }

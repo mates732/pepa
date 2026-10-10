@@ -1,54 +1,49 @@
 /**
  * Shared client-side Gmail compose opener.
  *
- * This is the single entry point every active UI component uses to open Gmail.
- * It exists so the six Gmail entry points cannot drift apart: the URL builder
- * and the "never claim success" rule live here and nowhere else.
+ * Provides two ways to open Gmail compose:
+ *   1. Browser compose (default): navigates to https://mail.google.com/mail/?view=cm&fs=1...
+ *      in the same tab. Works on all browsers including iOS Safari.
+ *   2. Gmail app (optional): uses a mailto: URL that iOS can handle with the Gmail app
+ *      if the user has configured Gmail as their default mail client.
  *
  * WHAT THIS DOES
- *   1. Build the Gmail compose URL from draft data the caller already has — no
- *      server round trip.
- *   2. Navigate to the Gmail compose URL in the same tab using window.location.assign().
- *      This avoids popup blocking on iOS Safari and other mobile browsers.
- *   3. The user explicitly clicks the button, so the navigation is a trusted action.
+ *   - Build the Gmail compose URL from draft data the caller already has — no
+ *     server round trip.
+ *   - For browser compose: navigate using window.location.assign() to avoid popup blocking.
+ *   - For Gmail app: return a mailto: URL that the user can choose to open.
  *
  * WHAT THIS DOES NOT DO
  *   - It never sends. The operator presses Send in Gmail; that is the only step
  *     that sends an email.
- *   - It never reads the destination. Cross-origin access to the opened tab is
- *     refused, so the tab's actual state is unknown — that is fine, because
- *     PEPA does not need to know whether the operator sent.
- *   - It does not promise that the Gmail app will open. That depends on iOS/browser
- *     configuration. We use the standard https://mail.google.com/mail/?view=cm&fs=1...
- *     URL which works in Safari and can be handled by the Gmail app if configured.
- *
- * Note: On iOS Safari, window.open() is blocked by default. Using window.location.assign()
- * performs a same-tab navigation which is not subject to popup blocking. The user sees
- * Gmail open in the same tab and can use the back button to return to PEPA.
+ *   - It does not guarantee the Gmail app will open. mailto: URLs are handled by
+ *     the OS default mail client, which may or may not be the Gmail app.
+ *   - It does not promise that iOS will launch the native app. That depends on
+ *     iOS/browser configuration.
  */
 
-import { buildComposeUrls, type GmailComposeInput } from "./gmail-compose";
+import { buildComposeUrls, buildMailtoUrl, type GmailComposeInput } from "./gmail-compose";
 
 export interface OpenGmailComposeResult {
-  /** Whether navigation was attempted (always true for same-tab navigation). */
+  /** Whether browser navigation was attempted (always true for same-tab navigation). */
   navigated: boolean;
+  /** The browser compose URL that was navigated to (or would be). */
   url: string;
+  /** The mailto: URL that can open the Gmail app on iOS if configured. */
+  mailtoUrl: string;
 }
 
 export interface OpenGmailComposeOptions {
-  /** Custom success message shown before navigation. */
-  successMessage?: string;
+  /** Whether to attempt Gmail app opening via mailto: (iOS only). */
+  tryGmailApp?: boolean;
 }
 
 /**
- * Navigate to a Gmail compose URL with the given draft data.
+ * Open Gmail compose with the given draft data.
  *
- * The URL is built synchronously from the caller's data. This function is
- * safe to call directly from an onClick handler — it is not async and does
- * not perform any network I/O.
- *
- * Uses window.location.assign() for same-tab navigation, which avoids popup
- * blocking on iOS Safari and other mobile browsers.
+ * By default, navigates to the browser compose URL in the same tab.
+ * On iOS, if tryGmailApp is true, also provides a mailto: URL that may
+ * open the Gmail app if configured as the default mail client.
  */
 export function openGmailCompose(
   input: GmailComposeInput,
@@ -56,9 +51,9 @@ export function openGmailCompose(
 ): OpenGmailComposeResult {
   const urls = buildComposeUrls(input);
   const url = urls.web;
+  const mailtoUrl = urls.mailto;
 
-  // Use same-tab navigation to avoid popup blocking on mobile browsers.
-  // window.location.assign() is not subject to popup blocking rules.
+  // Browser compose: navigate in same tab to avoid popup blocking.
   if (typeof window !== "undefined") {
     window.location.assign(url);
   }
@@ -66,5 +61,26 @@ export function openGmailCompose(
   return {
     navigated: true,
     url,
+    mailtoUrl,
   };
+}
+
+/**
+ * Build a mailto: URL that may open the Gmail app on iOS.
+ *
+ * On iOS, if the user has configured Gmail as their default mail client,
+ * tapping a mailto: link may open the Gmail app with the compose window
+ * pre-filled. This is not guaranteed — it depends on iOS settings.
+ */
+export function buildGmailAppUrl(input: GmailComposeInput): string {
+  return buildMailtoUrl(input);
+}
+
+/**
+ * Check if the current device is iOS.
+ */
+export function isIOS(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const userAgent = navigator.userAgent || navigator.vendor || "";
+  return /iPad|iPhone|iPod/.test(userAgent) && !/(tablet|pad)/i.test(userAgent);
 }
