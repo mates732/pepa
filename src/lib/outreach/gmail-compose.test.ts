@@ -219,3 +219,43 @@ describe("readComposeParam — edge cases", () => {
     expect(readComposeParam("https://mail.google.com/mail/", "to")).toBeNull();
   });
 });
+
+// Regression test — matches the spec in AGENTS.md
+describe("buildGmailComposeUrl — regression (fake data from spec)", () => {
+  const input = {
+    to: "test@example.com",
+    subject: "Testovací předmět",
+    body: "Ahoj,\n=toto je test.\nMatyáš",
+  };
+
+  const url = buildGmailComposeUrl(input);
+  const params = new URLSearchParams(url.slice(url.indexOf("?") + 1));
+
+  it("contains view=cm", () => {
+    expect(params.get("view")).toBe("cm");
+  });
+
+  it("contains fs=1", () => {
+    expect(params.get("fs")).toBe("1");
+  });
+
+  it("contains the recipient in to", () => {
+    expect(params.get("to")).toBe("test@example.com");
+  });
+
+  it("contains the subject in su", () => {
+    expect(params.get("su")).toBe("Testovací předmět");
+  });
+
+  it("contains the body and round-trips the exact content", () => {
+    expect(params.get("body")).toBe(input.body);
+  });
+
+  it("preserves Czech diacritics in subject", () => {
+    expect(decodeURIComponent(params.get("su")!)).toBe("Testovací předmět");
+  });
+
+  it("preserves Czech diacritics in body", () => {
+    expect(decodeURIComponent(params.get("body")!)).toBe(input.body);
+  });
+});

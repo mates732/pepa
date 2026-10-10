@@ -135,4 +135,29 @@ describe("openGmailCompose — shared Gmail compose helper", () => {
     expect(mockWindowOpen).not.toHaveBeenCalled();
     expect(mockLocationAssign).toHaveBeenCalledTimes(1);
   });
+
+  // Regression test — verifies the button handler builds the correct URL from draft data
+  it("navigates with full draft data including body", () => {
+    openGmailCompose({
+      to: "test@example.com",
+      subject: "Testovací předmět",
+      body: "Ahoj,\n=toto je test.\nMatyáš",
+    });
+
+    expect(mockLocationAssign).toHaveBeenCalledTimes(1);
+    const calledUrl = mockLocationAssign.mock.calls[0][0];
+
+    // Verify all required parameters are present
+    expect(calledUrl).toContain("view=cm");
+    expect(calledUrl).toContain("fs=1");
+    expect(calledUrl).toContain("to=test%40example.com");
+    expect(calledUrl).toContain("su=");
+    expect(calledUrl).toContain("body=");
+
+    // Verify round-trip: decode and check exact values
+    const url = new URL(calledUrl);
+    expect(url.searchParams.get("to")).toBe("test@example.com");
+    expect(url.searchParams.get("su")).toBe("Testovací předmět");
+    expect(url.searchParams.get("body")).toBe("Ahoj,\n=toto je test.\nMatyáš");
+  });
 });

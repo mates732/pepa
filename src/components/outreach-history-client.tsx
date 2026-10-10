@@ -31,8 +31,8 @@ interface HistoryLead {
   lastFollowupNotifiedNumber: number | null;
   lastFollowupNotifiedAt: string | null;
   unsent: boolean;
-  mainEmail?: { message: { id: string; subject: string | null; status: string; sequence_number: number; created_at: string; sent_at: string | null }; kind: string } | null;
-  followUpEmail?: { message: { id: string; subject: string | null; status: string; sequence_number: number; created_at: string; sent_at: string | null }; kind: string } | null;
+  mainEmail?: { message: { id: string; subject: string | null; status: string; sequence_number: number; created_at: string; sent_at: string | null; body: string | null; recipient_email: string }; kind: string } | null;
+  followUpEmail?: { message: { id: string; subject: string | null; status: string; sequence_number: number; created_at: string; sent_at: string | null; body: string | null; recipient_email: string }; kind: string } | null;
 }
 
 interface Props {
@@ -154,7 +154,7 @@ export function OutreachHistoryClient({ initialHistory, initialError }: Props) {
                                 lead.mainEmail!.message.id,
                                 lead.email,
                                 lead.mainEmail!.message.subject,
-                                ""
+                                lead.mainEmail!.message.body
                               )}
                               disabled={openingGmailId === lead.mainEmail!.message.id}
                             >
