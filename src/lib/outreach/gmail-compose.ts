@@ -97,7 +97,8 @@ export function buildMailtoUrl(input: GmailComposeInput): string {
  *   - The scheme format may change between Gmail versions
  *
  * URL format: googlegmail://co?to=&subject=&body=
- * Parameters are URL-encoded using URLSearchParams.
+ * Parameters are URL-encoded using URLSearchParams. Newlines are preserved
+ * as actual newline characters; URLSearchParams will encode them as %0A.
  */
 export function buildGmailAppUrl(input: GmailComposeInput): string {
   const params = new URLSearchParams();
@@ -109,8 +110,8 @@ export function buildGmailAppUrl(input: GmailComposeInput): string {
 
   const body = input.body ?? "";
   if (body.trim()) {
-    // Body in googlegmail:// uses URL encoding, newlines as %0A
-    params.set("body", body.replace(/\r\n/g, "\n").replace(/\n/g, "%0A"));
+    // Use the body as-is; URLSearchParams will encode newlines as %0A
+    params.set("body", body.replace(/\r\n/g, "\n"));
   }
 
   return `googlegmail://co?${params.toString()}`;
