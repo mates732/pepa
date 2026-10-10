@@ -20,6 +20,8 @@ export interface AuthEnvStatus {
   missing: string[];
   /** Set when a variable is present but too weak to be safe. */
   weak: string[];
+  /** True when password-based login can run, even if other capabilities are missing. */
+  authEnabled: boolean;
 }
 
 export function getAuthEnvStatus(): AuthEnvStatus {
@@ -34,7 +36,17 @@ export function getAuthEnvStatus(): AuthEnvStatus {
   if (!secret) missing.push("PEPA_SESSION_SECRET");
   else if (secret.length < MIN_SECRET_LENGTH) weak.push("PEPA_SESSION_SECRET");
 
-  return { configured: missing.length === 0 && weak.length === 0, missing, weak };
+  // Auth-only check: the login page only needs password verification to run.
+  // Session signing is validated directly in token.ts when a cookie is created,
+  // so a missing/bad session secret must not disable the login screen itself.
+  const authEnabled = !missing.includes("PEPA_PASSWORD") && weak.length === 0;
+
+  return {
+    configured: missing.length === 0 && weak.length === 0,
+    missing,
+    weak,
+    authEnabled,
+  };
 }
 
 /** Only used on the server when a genuinely valid password is presented. */

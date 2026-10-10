@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback } from "react";
 
 import type { GmailComposeInput } from "@/lib/outreach/gmail-compose-client";
 import { openGmailCompose } from "@/lib/outreach/open-gmail-compose";
@@ -8,17 +8,11 @@ import { openGmailCompose } from "@/lib/outreach/open-gmail-compose";
 /**
  * "Open in Gmail" button — the single shared implementation.
  *
- * WHY THIS COMPONENT EXISTS. Every active UI entry point that opens Gmail
- * used to have its own four-step ceremony: build the URL, call window.open,
- * handle the null return, and surface a manual fallback. Those copies drifted:
- * some reserved a blank tab synchronously, some opened the URL directly, some
- * awaited a server action first, and none agreed on what to report when the
- * browser blocked the tab.
+ * Opens Gmail compose in the same tab using window.location.assign(),
+ * which avoids popup blocking on iOS Safari and other mobile browsers.
  *
- * This button owns the behaviour instead. The caller supplies the draft data
- * (recipient, subject, body) — never a URL, never a server action — and this
- * component does the opening. That keeps the URL builder, the popup-blocking
- * fallback and the "never claim success" rule in one place, tested once.
+ * The caller supplies the draft data (recipient, subject, body) — never
+ * a URL, never a server action — and this component handles the navigation.
  *
  * SECURITY. The caller supplies raw draft data, which is already rendered on
  * this page and comes from the database. No value typed into this component
@@ -29,48 +23,29 @@ import { openGmailCompose } from "@/lib/outreach/open-gmail-compose";
 export function GmailComposeButton({
   input,
   label = "Open in Gmail ↗",
-  pendingLabel = "Opening…",
-  successText = "Opened Gmail compose with the saved draft. Press Send in Gmail yourself.",
-  blockedText = "Your browser blocked the new tab.",
+  disabled = false,
+  title = "Opens a Gmail draft with this saved text. This does not send anything.",
 }: {
   input: GmailComposeInput;
   label?: string;
-  pendingLabel?: string;
-  successText?: string;
-  blockedText?: string;
+  disabled?: boolean;
+  title?: string;
 }) {
-  const [pending, setPending] = useState(false);
-  const [notice, setNotice] = useState<{ kind: "info" | "error"; text: string } | null>(null);
-
-  function handleClick() {
-    setPending(true);
-    setNotice(null);
-
-    // Synchronous, inside the click: the user gesture is still live here,
-    // which is the entire reason window.open succeeds when called directly.
-    const result = openGmailCompose(input, { successMessage: successText, blockedMessage: blockedText });
-
-    setNotice({ kind: result.opened ? "info" : "error", text: result.message });
-    setPending(false);
-  }
+  const handleClick = useCallback(() => {
+    // Synchronous, inside the click: the user gesture is still live here.
+    // Uses same-tab navigation to avoid popup blocking on mobile browsers.
+    openGmailCompose(input);
+  }, [input]);
 
   return (
-    <div className="space-y-2">
-      <button
-        type="button"
-        onClick={handleClick}
-        disabled={pending}
-        className="btn"
-        title="Opens a Gmail draft with this saved text. This does not send anything."
-      >
-        {pending ? pendingLabel : label}
-      </button>
-
-      {notice ? (
-        <p role="status" className={notice.kind === "error" ? "notice notice-alarm" : "notice"}>
-          {notice.text}
-        </p>
-      ) : null}
-    </div>
+    <button
+      type="button"
+      onClick={handleClick}
+      disabled={disabled}
+      className="btn"
+      title={title}
+    >
+      {label}
+    </button>
   );
 }

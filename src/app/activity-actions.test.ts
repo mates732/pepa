@@ -233,9 +233,9 @@ describe("activity — Gmail hand-off", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(readComposeParam(result.url, "to")).toBe("info@thearchive.cz");
-    expect(readComposeParam(result.url, "su")).toBe("Navazuji na příspěvek");
-    expect(readComposeParam(result.url, "body")).toBe("Dobrý den,\n\ntext.\n\nS pozdravem");
+    expect(readComposeParam(result.webUrl, "to")).toBe("info@thearchive.cz");
+    expect(readComposeParam(result.webUrl, "su")).toBe("Navazuji na příspěvek");
+    expect(readComposeParam(result.webUrl, "body")).toBe("Dobrý den,\n\ntext.\n\nS pozdravem");
     expect(result.sequenceNumber).toBe(1);
 
     // Opening Gmail is not sending: no status, sent_at, counter or schedule moved.

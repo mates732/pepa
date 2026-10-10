@@ -41,6 +41,7 @@ vi.mock("@/lib/auth/dal", () => ({
     verifySessionCalls.count += 1;
     return { id: "owner", since: 0 };
   },
+  requireAuthenticatedUser: async () => ({ id: "owner", since: 0 }),
 }));
 
 vi.mock("@/lib/config/env", () => ({

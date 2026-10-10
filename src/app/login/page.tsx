@@ -2,6 +2,7 @@ import { connection } from "next/server";
 
 import { LoginForm } from "@/components/login-form";
 import { getAuthEnvStatus } from "@/lib/auth/env";
+import type { AuthEnvStatus } from "@/lib/auth/env";
 import { safeRedirectPath } from "@/lib/auth/redirect";
 
 export const metadata = {
@@ -20,6 +21,7 @@ export default async function LoginPage({
   await connection();
 
   const status = getAuthEnvStatus();
+  const loginEnabled = (status as AuthEnvStatus).authEnabled;
   const params = await searchParams;
   const requested = Array.isArray(params.next) ? params.next[0] : params.next;
 
@@ -43,7 +45,8 @@ export default async function LoginPage({
             Internal Outreach System
           </p>
 
-          <LoginForm next={safeRedirectPath(requested)} disabled={!status.configured} />
+
+          <LoginForm next={safeRedirectPath(requested)} disabled={!loginEnabled} />
 
           {status.configured ? null : (
             <p className="notice notice-alarm mt-5">

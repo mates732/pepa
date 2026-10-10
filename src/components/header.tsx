@@ -17,9 +17,8 @@ export function Header() {
   const toggleNav = () => setNavOpen(!navOpen);
 
   return (
-    <>
-      <aside className={`hidden lg:flex lg:flex-col lg:w-56 lg:border-r lg:border-midnight-line lg:bg-cream/50 lg:min-h-screen ${navOpen ? "fixed top-0 left-0 h-full z-50" : ""}`}>
-        <nav className="flex flex-col p-4 gap-1">
+    <>      <aside className={`${navOpen ? "fixed top-0 left-0 h-full z-50 flex flex-col w-56 border-r border-midnight-line bg-cream min-h-screen overflow-y-auto" : "hidden lg:flex lg:flex-col lg:w-56 lg:border-r lg:border-midnight-line lg:bg-cream lg:min-h-screen"}`}>
+        <nav className="flex flex-col p-4 gap-2">
           <div className="flex items-center gap-2 px-3 py-4 border-b border-midnight-line">
             <div className="tilt grid h-10 w-10 shrink-0 place-items-center rounded-[1rem] border-[2px] border-midnight bg-midnight text-base font-black text-cream">
               P
@@ -31,10 +30,11 @@ export function Header() {
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-midnight-soft hover:bg-midnight-faint hover:text-midnight rounded-[0.75rem] transition-colors"
+                  className="flex items-center gap-3 px-3 py-3 text-base font-medium text-midnight-soft hover:bg-midnight-faint hover:text-midnight rounded-[0.75rem] transition-colors touch-manipulation"
                   onClick={() => setNavOpen(false)}
+                  style={{ minHeight: "44px" }}
                 >
-                  <span aria-hidden="true">{item.icon}</span>
+                  <span aria-hidden="true" className="text-lg">{item.icon}</span>
                   {item.label}
                 </Link>
               </li>
@@ -42,16 +42,18 @@ export function Header() {
           </ul>
           <div className="border-t border-midnight-line pt-4">
             <form action="/api/auth/signout" method="post">
-              <button type="submit" className="flex items-center gap-2 w-full px-3 py-2 text-sm font-medium text-midnight-soft hover:bg-midnight-faint hover:text-midnight rounded-[0.75rem] transition-colors">
+              <button type="submit" className="flex items-center gap-2 w-full px-3 py-3 text-sm font-medium text-midnight-soft hover:bg-midnight-faint hover:text-midnight rounded-[0.75rem] transition-colors touch-manipulation"
+                style={{ minHeight: "44px" }}
+              >
                 <span aria-hidden="true">🚪</span>
                 Sign out
               </button>
             </form>
           </div>
-        </nav>
+        </nav >
       </aside>
 
-      <header className="lg:hidden sticky top-0 z-10 flex items-center justify-between gap-2 border-b border-midnight-line bg-cream px-4 py-3">
+      <header className="lg:hidden sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-midnight-line bg-cream px-4 py-3">
         <div className="flex items-center gap-2">
           <div className="tilt grid h-10 w-10 shrink-0 place-items-center rounded-[1rem] border-[2px] border-midnight bg-midnight text-base font-black text-cream">
             P
@@ -59,14 +61,18 @@ export function Header() {
           <span className="font-bold text-midnight">PEPA</span>
         </div>
         <button
+          type="button"
           className="btn btn-sm"
           onClick={() => setNavOpen(!navOpen)}
           aria-label="Toggle navigation"
           aria-expanded={navOpen}
+          aria-controls="mobile-nav"
+          style={{ minHeight: "44px", minWidth: "44px" }}
         >
-          ☰
+          {navOpen ? "×" : "☰"}
         </button>
       </header>
+      {navOpen && <div className="fixed inset-0 bg-midnight/30 z-10 lg:hidden" onClick={() => setNavOpen(false)} aria-hidden="true" />}
     </>
   );
 }

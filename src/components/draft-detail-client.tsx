@@ -114,22 +114,18 @@ export function DraftDetailClient({ initialDraft }: Props) {
     }
   }
 
-  async function handleOpenInGmail() {
+  function handleOpenInGmail() {
     setOpeningGmail(true);
     setNotice(null);
 
-    const result = openGmailCompose({
+    openGmailCompose({
       to: draft.message.recipient_email,
       subject: draft.message.subject,
       body: draft.message.body,
     });
 
-    setNotice({
-      kind: result.opened ? "info" : "error",
-      text: result.message,
-    });
-
-    setOpeningGmail(false);
+    // Navigation happens synchronously in openGmailCompose via window.location.assign().
+    // No notice needed — the browser navigates away.
   }
 
   async function handleDelete() {

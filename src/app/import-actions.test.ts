@@ -189,9 +189,9 @@ describe("openImportInGmail — the exact stored draft", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
 
-    expect(param(result.url, "to")).toBe("katy@beautysalon.cz");
-    expect(param(result.url, "su")).toBe("AI recepce pro Beautysalon v Průhonicích");
-    expect(param(result.url, "body")).toBe(
+    expect(param(result.webUrl, "to")).toBe("katy@beautysalon.cz");
+    expect(param(result.webUrl, "su")).toBe("AI recepce pro Beautysalon v Průhonicích");
+    expect(param(result.webUrl, "body")).toBe(
       "Dobrý den, paní Klimentová,\n\nDěláme AI recepci.\n\nDíky, Pavel",
     );
   });
@@ -200,9 +200,9 @@ describe("openImportInGmail — the exact stored draft", () => {
     const result = await open();
     if (!result.ok) throw new Error("expected success");
 
-    expect(result.url.startsWith("https://mail.google.com/mail/?")).toBe(true);
-    expect(param(result.url, "view")).toBe("cm");
-    expect(param(result.url, "fs")).toBe("1");
+    expect(result.webUrl.startsWith("https://mail.google.com/mail/?")).toBe(true);
+    expect(param(result.webUrl, "view")).toBe("cm");
+    expect(param(result.webUrl, "fs")).toBe("1");
   });
 
   it("carries no draft content in anything but the query it is meant to", async () => {
@@ -211,7 +211,7 @@ describe("openImportInGmail — the exact stored draft", () => {
 
     // The message id is never exposed to the browser, so a token cannot be
     // swapped for a message reference. Only the two facts the UI needs remain.
-    expect(result.url).not.toContain("11111111-1111-4111-8111-111111111111");
+    expect(result.webUrl).not.toContain("11111111-1111-4111-8111-111111111111");
     expect(result.sequenceNumber).toBe(0);
     expect(result.isFollowUp).toBe(false);
   });
@@ -231,7 +231,7 @@ describe("openImportInGmail — the exact stored draft", () => {
 
     const result = await open();
     if (!result.ok) throw new Error("expected success");
-    expect(param(result.url, "su")).toBeNull();
+    expect(param(result.webUrl, "su")).toBeNull();
   });
 });
 

@@ -69,22 +69,18 @@ export function OutreachHistoryClient({ initialHistory, initialError }: Props) {
     }
   }, [initialHistory, initialError, loadHistory]);
 
-  async function handleOpenInGmail(messageId: string, recipient: string, subject: string | null, body: string | null) {
+  function handleOpenInGmail(messageId: string, recipient: string, subject: string | null, body: string | null) {
     setOpeningGmailId(messageId);
     setNotice(null);
 
-    const result = openGmailCompose({
+    openGmailCompose({
       to: recipient,
       subject,
       body,
     });
 
-    setNotice({
-      kind: result.opened ? "info" : "error",
-      text: result.message,
-    });
-
-    setOpeningGmailId(null);
+    // Navigation happens synchronously in openGmailCompose via window.location.assign().
+    // No notice needed — the browser navigates away.
   }
 
   return (

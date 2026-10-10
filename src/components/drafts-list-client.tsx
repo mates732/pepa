@@ -49,22 +49,18 @@ export function DraftsListClient({ initialDrafts, initialError }: Props) {
     }
   }, [initialDrafts, initialError, loadDrafts]);
 
-  async function handleOpenInGmail(messageId: string, draft: OutreachDraftRow) {
+  function handleOpenInGmail(messageId: string, draft: OutreachDraftRow) {
     setOpeningGmailId(messageId);
     setNotice(null);
 
-    const result = openGmailCompose({
+    openGmailCompose({
       to: draft.message.recipient_email,
       subject: draft.message.subject,
       body: draft.message.body,
     });
 
-    setNotice({
-      kind: result.opened ? "info" : "error",
-      text: result.message,
-    });
-
-    setOpeningGmailId(null);
+    // Navigation happens synchronously in openGmailCompose via window.location.assign().
+    // No notice needed — the browser navigates away.
   }
 
   async function handleDelete(messageId: string) {

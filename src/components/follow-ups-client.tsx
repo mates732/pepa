@@ -69,22 +69,18 @@ export function FollowUpsClient({ initialFollowUps, initialError }: Props) {
     }
   }, [initialFollowUps, initialError, loadFollowUpsData]);
 
-  async function handleOpenInGmail(item: FollowUpItem) {
+  function handleOpenInGmail(item: FollowUpItem) {
     setOpeningGmailId(item.message.id);
     setNotice(null);
 
-    const result = openGmailCompose({
+    openGmailCompose({
       to: item.lead.email,
       subject: item.message.subject,
       body: item.message.body,
     });
 
-    setNotice({
-      kind: result.opened ? "info" : "error",
-      text: result.message,
-    });
-
-    setOpeningGmailId(null);
+    // Navigation happens synchronously in openGmailCompose via window.location.assign().
+    // No notice needed — the browser navigates away.
   }
 
   const draftFollowUps = followUps.filter((f) => f.message.status === "draft");

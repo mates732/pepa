@@ -311,12 +311,17 @@ describe("outreach sequence — legacy rows", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(db.messages).toHaveLength(1);
-    expect(db.messages[0]).toMatchObject({
-      sequence_number: 0,
-      parent_message_id: null,
-      status: "draft",
-    });
+    // createOutreachImport creates both main (seq 0) and follow-up (seq 1).
+    expect(db.messages).toHaveLength(2);
+    const mainMsg = db.messages.find((m) => (m.sequence_number as number) === 0);
+    expect(mainMsg).toBeDefined();
+    if (mainMsg) {
+      expect(mainMsg).toMatchObject({
+        sequence_number: 0,
+        parent_message_id: null,
+        status: "draft",
+      });
+    }
   });
 
   it("does not convert followup_count into fabricated message rows", () => {

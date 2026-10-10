@@ -287,13 +287,17 @@ describe("createOutreachImport — persistence", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
 
-    expect(db.messages).toHaveLength(1);
-    const [message] = db.messages;
-    expect(message.status).toBe("draft");
-    expect(message.sent_at).toBeNull();
-    expect(message.provider).toBeNull();
-    expect(message.subject).toBe(validPayload.subject);
-    expect(message.body).toBe(validPayload.body);
+    // createOutreachImport creates both main (seq 0) and follow-up (seq 1).
+    expect(db.messages).toHaveLength(2);
+    const mainMsg = db.messages.find((m) => (m.sequence_number as number) === 0);
+    expect(mainMsg).toBeDefined();
+    if (mainMsg) {
+      expect(mainMsg.status).toBe("draft");
+      expect(mainMsg.sent_at).toBeNull();
+      expect(mainMsg.provider).toBeNull();
+      expect(mainMsg.subject).toBe(validPayload.subject);
+      expect(mainMsg.body).toBe(validPayload.body);
+    }
   });
 
   it("normalizes the recipient before storing", async () => {
@@ -400,9 +404,15 @@ describe("createOutreachImport — dedupe", () => {
     expect(outcome.ok).toBe(true);
     if (!outcome.ok) return;
     expect(outcome.created).toBe(false);
-    expect(db.messages).toHaveLength(1);
-    expect(db.messages[0].subject).toBe("Refreshed subject");
-    expect(db.messages[0].status).toBe("draft");
+    // createOutreachImport creates both main (seq 0) and follow-up (seq 1).
+    // The main message is upserted (reusing existing), follow-up is new.
+    expect(db.messages).toHaveLength(2);
+    const mainMsg = db.messages.find((m) => (m.sequence_number as number) === 0);
+    expect(mainMsg).toBeDefined();
+    if (mainMsg) {
+      expect(mainMsg.subject).toBe("Refreshed subject");
+      expect(mainMsg.status).toBe("draft");
+    }
   });
 
   it("reuses the existing lead rather than creating a duplicate", async () => {
@@ -422,6 +432,7 @@ describe("createOutreachImport — dedupe", () => {
     expect(outcome.reason).toBe("already_contacted");
     expect(outcome.error).toMatch(/already contacted/i);
 
+    expect(db.messages).toHaveLength(1);
     expect(db.messages[0].subject).toBe("Previous subject");
     expect(db.tokens).toHaveLength(0);
   });
@@ -433,6 +444,7 @@ describe("createOutreachImport — dedupe", () => {
 
       const outcome = await createOutreachImport(validPayload);
       expect(outcome.ok).toBe(false);
+      expect(db.messages).toHaveLength(1);
       expect(db.messages[0].status).toBe(status);
       expect(db.tokens).toHaveLength(0);
     },
@@ -442,7 +454,9 @@ describe("createOutreachImport — dedupe", () => {
     await createOutreachImport(validPayload);
     await createOutreachImport(validPayload);
 
-    expect(db.messages).toHaveLength(1);
+    // Each import creates main + follow-up, but main is upserted (same row),
+    // and follow-up is also upserted (same row). So 2 messages total.
+    expect(db.messages).toHaveLength(2);
     expect(db.leads).toHaveLength(1);
     // Each import gets its own short-lived link; neither duplicates the message.
     expect(db.tokens).toHaveLength(2);
