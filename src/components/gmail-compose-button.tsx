@@ -3,16 +3,15 @@
 import { useCallback } from "react";
 
 import type { GmailComposeInput } from "@/lib/outreach/gmail-compose-client";
-import { openGmailCompose, isIOS, isAndroid } from "@/lib/outreach/open-gmail-compose";
-import { buildGmailAppUrl } from "@/lib/outreach/gmail-compose";
+import { buildGmailComposeUrl, buildGmailAppUrl } from "@/lib/outreach/gmail-compose";
+import { isIOS, isAndroid } from "@/lib/outreach/open-gmail-compose";
 
 /**
- * "Open in Gmail" button — provides browser compose and optional Gmail app option.
+ * "Open in Gmail" button — provides two options on mobile:
+ *   1. Try Gmail app via googlegmail:// (best-effort)
+ *   2. Open browser compose (reliable fallback)
  *
- * On desktop: opens Gmail compose in the same tab.
- * On iOS/Android: offers two options:
- *   - "Otevřít v aplikaci Gmail" — tries googlegmail:// to open the Gmail app
- *   - "Otevřít Gmail na webu" — opens browser compose (reliable fallback)
+ * On desktop: opens browser compose directly.
  *
  * The caller supplies the draft data (recipient, subject, body) — never
  * a URL, never a server action — and this component handles the navigation.
@@ -32,24 +31,26 @@ export function GmailComposeButton({
   disabled?: boolean;
   title?: string;
 }) {
-  const handleBrowserCompose = useCallback(() => {
-    // Synchronous, inside the click: the user gesture is still live here.
-    // Uses same-tab navigation to avoid popup blocking on mobile browsers.
-    openGmailCompose(input);
-  }, [input]);
-
   const handleTryGmailApp = useCallback(() => {
     // Try to open Gmail app via googlegmail:// scheme.
     // This is best-effort — may not work on all Gmail versions or iOS configs.
+    // If it fails, user can use the browser compose button below.
     if (typeof window !== "undefined") {
       window.location.assign(buildGmailAppUrl(input));
+    }
+  }, [input]);
+
+  const handleBrowserCompose = useCallback(() => {
+    // Reliable fallback: open browser compose directly.
+    if (typeof window !== "undefined") {
+      window.location.assign(buildGmailComposeUrl(input));
     }
   }, [input]);
 
   const isMobile = isIOS() || isAndroid();
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       {isMobile ? (
         <>
           <button
@@ -57,11 +58,10 @@ export function GmailComposeButton({
             onClick={handleTryGmailApp}
             disabled={disabled}
             className="btn btn-primary"
-            title={" Pokus o otevření aplikace Gmail. Nemusí fungovat na všech zařízeních."}
           >
             Otevřít v aplikaci Gmail
           </button>
-          <p className="text-[11px] text-midnight-soft">
+          <p className="text-[12px] text-midnight-soft">
             Pokud aplikace Gmail není nainstalována nebo iOS/Android odmítne otevřít,
             použijte níže uvedenou možnost.
           </p>
@@ -70,9 +70,8 @@ export function GmailComposeButton({
             onClick={handleBrowserCompose}
             disabled={disabled}
             className="btn"
-            title={title}
           >
-            Otevřít Gmail na webu
+            Otevřít Gmail na webu (vždy funguje)
           </button>
         </>
       ) : (
