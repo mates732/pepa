@@ -1,17 +1,20 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import GmailPage from "./page";
+import {
+  GMAIL_APP_LINK_CONSTANTS,
+  GmailAppLink,
+} from "./gmail-app-link";
 
 /**
- * The /gmail page is an isolated baseline whose only job is to navigate to
- * Gmail via two plain static anchors. These tests pin exactly that:
+ * The /gmail page is an isolated app-launching test bench. These tests pin:
  *
- *   1. the primary href is the exact user-verified iPhone URL that opens
- *      Gmail directly — no added parameters, no helper-built URL;
- *   2. the diagnostic href is the literal bare compose URL with fake data;
- *   3. the page is a server component with no client-side behavior: no
- *      onClick, no window.open, no server action form.
+ *   1. all three actions use exactly the intended literal URLs (app scheme,
+ *      user-verified web URL, standard compose URL) — no helper-built URLs;
+ *   2. the app-scheme link keeps its plain anchor behavior and adds only a
+ *      not-installed fallback to the verified web URL;
+ *   3. nothing here sends email or requests mailbox access.
  */
 
 vi.mock("server-only", () => ({}));
@@ -24,44 +27,94 @@ async function renderGmailPage() {
   return renderToStaticMarkup(await GmailPage({} as never));
 }
 
-describe("/gmail — isolated Gmail compose baseline", () => {
-  it("renders the primary link with the exact user-verified iPhone URL", async () => {
+function googleHrefList(markup: string) {
+  return [...markup.matchAll(/href="([^"]*)"/g)]
+    .map((m) => m[1].replaceAll("&amp;", "&"))
+    .filter((href) => href.includes("mail.google.com") || href.startsWith("googlegmail:"));
+}
+
+describe("/gmail — app-launching test bench", () => {
+  it("renders exactly the three intended action URLs, in order", async () => {
     const markup = await renderGmailPage();
 
-    const hrefs = [...markup.matchAll(/href="(https:\/\/mail\.google\.com[^"]*)"/g)]
-      .map((m) => m[1].replaceAll("&amp;", "&"));
-
-    // The verified URL appears verbatim, exactly once, with no added
-    // parameters — and it is the first (primary) link on the page.
-    expect(hrefs).toEqual([
+    expect(googleHrefList(markup)).toEqual([
+      GMAIL_APP_LINK_CONSTANTS.APP_SCHEME,
       "https://mail.google.com/mail/mu/mp/399/#",
       "https://mail.google.com/mail/?view=cm&fs=1&to=test@example.com&su=PEPA%20GMAIL%20TEST&body=Test%20message",
     ]);
   });
 
-  it("renders the diagnostic link with the exact fake-data URL", async () => {
+  it("labels all three actions", async () => {
     const markup = await renderGmailPage();
 
-    expect(markup).toContain(
-      'href="https://mail.google.com/mail/?view=cm&amp;fs=1&amp;to=test@example.com&amp;su=PEPA%20GMAIL%20TEST&amp;body=Test%20message"',
-    );
-    expect(markup).toContain("Testovací e-mail");
+    expect(markup).toContain("Otevřít aplikaci Gmail");
+    expect(markup).toContain("Otevřít Gmail na webu");
+    expect(markup).toContain("Otevřít Gmail compose na webu");
   });
 
-  it("has no client-side behavior", async () => {
+  it("explains what each action tests", async () => {
     const markup = await renderGmailPage();
 
-    expect(markup).not.toContain("onClick");
-    expect(markup).not.toContain("window.open");
-    expect(markup).not.toContain("<form");
+    expect(markup).toContain("Testuje:");
+    expect(markup).toContain("googlegmail://");
+    expect(markup).toContain("view=cm");
+  });
+
+  it("has no sending, OAuth, or mailbox behavior", async () => {
+    const markup = await renderGmailPage();
+
     expect(markup).not.toContain("mailto:");
-    expect(markup).not.toContain("googlegmail://");
+    expect(markup).not.toContain("<form");
+    expect(markup).not.toContain("accounts.google.com");
+    expect(markup).not.toContain("oauth");
   });
 
-  it("shows the heading and explanation", async () => {
-    const markup = await renderGmailPage();
+  it("keeps the app link a plain anchor with the literal scheme", () => {
+    const markup = renderToStaticMarkup(<GmailAppLink />);
 
-    expect(markup).toContain("Gmail");
-    expect(markup).toContain("Otevřít Gmail");
+    expect(markup).toContain('href="googlegmail://"');
+    expect(markup).toContain("Otevřít aplikaci Gmail");
+  });
+});
+
+describe("GmailAppLink — not-installed fallback", () => {
+  function setup({ hidden }: { hidden: boolean }) {
+    const assign = vi.fn();
+    const timers: Array<{ fn: () => void; ms: number }> = [];
+    vi.stubGlobal("window", {
+      location: { assign },
+      setTimeout: (fn: () => void, ms: number) => {
+        timers.push({ fn, ms });
+      },
+    });
+    vi.stubGlobal("document", { hidden });
+    return { assign, timers };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("falls back to the verified web URL when the app did not open", () => {
+    const { assign, timers } = setup({ hidden: false });
+
+    // jsdom-free: invoke the click handler directly on the rendered element.
+    const link = GmailAppLink();
+    (link.props.onClick as () => void)();
+
+    expect(timers).toHaveLength(1);
+    expect(timers[0]!.ms).toBe(GMAIL_APP_LINK_CONSTANTS.FALLBACK_DELAY_MS);
+    timers[0]!.fn();
+    expect(assign).toHaveBeenCalledWith(GMAIL_APP_LINK_CONSTANTS.FALLBACK_WEB_URL);
+  });
+
+  it("does not navigate away when the app took over (page hidden)", () => {
+    const { assign, timers } = setup({ hidden: true });
+
+    const link = GmailAppLink();
+    (link.props.onClick as () => void)();
+    timers[0]!.fn();
+
+    expect(assign).not.toHaveBeenCalled();
   });
 });
