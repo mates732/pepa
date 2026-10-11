@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi, beforeEach, afterAll } from "vitest";
+import { describe, expect, it, vi, beforeEach } from "vitest";
 
 import { Inbox } from "@/components/inbox";
 import { parseBulkEmails } from "@/lib/import/bulk-emails";
