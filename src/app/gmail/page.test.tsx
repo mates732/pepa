@@ -6,6 +6,7 @@ import {
   GMAIL_APP_LINK_CONSTANTS,
   GmailAppLink,
 } from "./gmail-app-link";
+import { buildGmailAppComposeUrl } from "./gmail-app-compose-url";
 
 /**
  * The /gmail page is an isolated app-launching test bench. These tests pin:
@@ -34,20 +35,22 @@ function googleHrefList(markup: string) {
 }
 
 describe("/gmail — app-launching test bench", () => {
-  it("renders exactly the three intended action URLs, in order", async () => {
+  it("renders exactly the four intended action URLs, in order", async () => {
     const markup = await renderGmailPage();
 
     expect(googleHrefList(markup)).toEqual([
       GMAIL_APP_LINK_CONSTANTS.APP_SCHEME,
+      "googlegmail:///co?to=test%40example.com&subject=PEPA+TEST&body=Test+message",
       "https://mail.google.com/mail/mu/mp/399/#",
       "https://mail.google.com/mail/?view=cm&fs=1&to=test@example.com&su=PEPA%20GMAIL%20TEST&body=Test%20message",
     ]);
   });
 
-  it("labels all three actions", async () => {
+  it("labels all four actions", async () => {
     const markup = await renderGmailPage();
 
     expect(markup).toContain("Otevřít aplikaci Gmail");
+    expect(markup).toContain("Otevřít testovací e-mail v aplikaci Gmail");
     expect(markup).toContain("Otevřít Gmail na webu");
     expect(markup).toContain("Otevřít Gmail compose na webu");
   });
@@ -74,6 +77,68 @@ describe("/gmail — app-launching test bench", () => {
 
     expect(markup).toContain('href="googlegmail://"');
     expect(markup).toContain("Otevřít aplikaci Gmail");
+  });
+});
+
+describe("buildGmailAppComposeUrl — app compose scheme encoding", () => {
+  it("builds the exact test URL from recipient, subject and body", () => {
+    expect(
+      buildGmailAppComposeUrl({
+        to: "test@example.com",
+        subject: "PEPA TEST",
+        body: "Test message",
+      }),
+    ).toBe(
+      "googlegmail:///co?to=test%40example.com&subject=PEPA+TEST&body=Test+message",
+    );
+  });
+
+  it("preserves Czech diacritics through round-trip decoding", () => {
+    const url = buildGmailAppComposeUrl({
+      to: "info@test.cz",
+      subject: "Příjemné odpoledne — nabídka",
+      body: "Dobrý den, zdraví Matyáš.",
+    });
+
+    expect(url).toContain("subject=P%C5%99%C3%ADjemn%C3%A9+odpoledne+%E2%80%94+nab%C3%ADdka");
+    const params = new URL(url);
+    expect(params.searchParams.get("subject")).toBe("Příjemné odpoledne — nabídka");
+    expect(params.searchParams.get("body")).toBe("Dobrý den, zdraví Matyáš.");
+  });
+
+  it("does not let ampersands or plus signs escape their fields", () => {
+    const url = buildGmailAppComposeUrl({
+      to: "a+b@example.com",
+      subject: "Test & confirm",
+      body: "A & B = C",
+    });
+
+    const params = new URL(url);
+    expect(params.searchParams.get("to")).toBe("a+b@example.com");
+    expect(params.searchParams.get("subject")).toBe("Test & confirm");
+    expect(params.searchParams.get("body")).toBe("A & B = C");
+  });
+
+  it("preserves multiline content and trims the recipient", () => {
+    const url = buildGmailAppComposeUrl({
+      to: "  info@test.cz  ",
+      subject: "Test",
+      body: "Řádek 1\n\nŘádek 3 — konec.",
+    });
+
+    expect(url).toContain("to=info%40test.cz&");
+    const params = new URL(url);
+    expect(params.searchParams.get("body")).toBe("Řádek 1\n\nŘádek 3 — konec.");
+  });
+
+  it("always emits to, subject and body in that order", () => {
+    const url = buildGmailAppComposeUrl({
+      to: "x@y.cz",
+      subject: "S",
+      body: "B",
+    });
+
+    expect(url).toBe("googlegmail:///co?to=x%40y.cz&subject=S&body=B");
   });
 });
 

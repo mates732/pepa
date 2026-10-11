@@ -2,6 +2,7 @@ import { connection } from "next/server";
 
 import { verifySession } from "@/lib/auth/dal";
 import { GmailAppLink } from "./gmail-app-link";
+import { buildGmailAppComposeUrl } from "./gmail-app-compose-url";
 
 export const metadata = {
   title: "PEPA · Gmail",
@@ -11,9 +12,16 @@ export const metadata = {
  * Isolated Gmail app-launching test page.
  *
  * Independent of the outreach Gmail helpers, server actions, and draft data.
- * Three separate actions, each a plain literal href, each explained. Nothing
- * on this page sends email, requests OAuth, or touches a mailbox.
+ * Each action is a plain anchor with a URL built or written literally, and
+ * explained. Nothing on this page sends email, requests OAuth, or touches a
+ * mailbox.
  */
+
+const TEST_COMPOSE_URL = buildGmailAppComposeUrl({
+  to: "test@example.com",
+  subject: "PEPA TEST",
+  body: "Test message",
+});
 
 export default async function GmailPage() {
   await connection();
@@ -37,6 +45,21 @@ export default async function GmailPage() {
             komunitně popsaná, Google ji oficiálně nedokumentuje). Pokud
             aplikace není nainstalovaná, stránka se za okamžik přesměruje na
             ověřený webový odkaz níže.
+          </p>
+        </div>
+
+        {/* 1b) App compose scheme — same app, prefilled fake data. */}
+        <div className="mt-6 border-t border-midnight-line pt-6">
+          <a
+            href={TEST_COMPOSE_URL}
+            className="inline-flex w-full items-center justify-center rounded-[0.75rem] border-[2px] border-midnight px-6 py-4 text-base font-bold text-midnight transition-colors hover:bg-midnight-faint"
+          >
+            Otevřít testovací e-mail v aplikaci Gmail
+          </a>
+          <p className="mt-2 text-xs text-midnight-soft">
+            Testuje: zda aplikace Gmail otevře novou zprávu s předvyplněným
+            příjemcem, předmětem a textem (fiktivní data). Úspěch je jen
+            vyplněný compose — samotná schránka není úspěch.
           </p>
         </div>
 
