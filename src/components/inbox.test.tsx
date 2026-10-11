@@ -168,163 +168,83 @@ Body: Body B only`;
 });
 
 describe("openGmailCompose — shared Gmail compose helper", () => {
-  const originalWindowOpen = typeof window !== "undefined" ? window.open : undefined;
-  const mockWindowOpen = vi.fn();
+  const mockLocationAssign = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
     // @ts-expect-error - mock window for tests
-    global.window = { open: mockWindowOpen };
+    global.window = {
+      location: {
+        assign: mockLocationAssign,
+        href: "https://pepa.example.com",
+      },
+    };
   });
 
-  afterAll(() => {
-    if (originalWindowOpen !== undefined) {
-      // @ts-expect-error - restore window for tests
-      global.window = { open: originalWindowOpen };
-    }
-  });
-
-  it("opens Gmail compose with correct URL and returns success", () => {
-    const mockTab = { opener: null, location: { href: "" }, closed: false, close: vi.fn() };
-    mockWindowOpen.mockReturnValue(mockTab);
-
+  it("opens Gmail compose via same-tab navigation (no popup)", () => {
     const result = openGmailCompose({
       to: "info@test.cz",
       subject: "Test Subject",
       body: "Test body",
     });
 
-    expect(mockWindowOpen).toHaveBeenCalledWith(
+    expect(mockLocationAssign).toHaveBeenCalledTimes(1);
+    expect(mockLocationAssign).toHaveBeenCalledWith(
       expect.stringContaining("https://mail.google.com/mail/"),
-      "_blank",
-      "noreferrer"
     );
-    expect(result.opened).toBe(true);
-    expect(result.url).toContain("https://mail.google.com/mail/");
-    expect(result.message).toContain("Opened Gmail compose");
-  });
-
-  it("handles popup blocked (window.open returns null)", () => {
-    mockWindowOpen.mockReturnValue(null);
-
-    const result = openGmailCompose({
-      to: "info@test.cz",
-      subject: "Test Subject",
-      body: "Test body",
-    });
-
-    expect(result.opened).toBe(false);
-    expect(result.message).toContain("blocked");
-    expect(result.message).toContain("Open this link manually");
+    expect(result.navigated).toBe(true);
     expect(result.url).toContain("https://mail.google.com/mail/");
   });
 
-  it("handles popup blocked (window.open throws)", () => {
-    mockWindowOpen.mockImplementation(() => {
-      throw new Error("Popup blocked");
-    });
+  it("never uses window.open (no popup, no popup-blocker path)", () => {
+    const mockWindowOpen = vi.fn();
+    // @ts-expect-error - add open to window mock
+    global.window.open = mockWindowOpen;
 
-    const result = openGmailCompose({
+    openGmailCompose({
       to: "info@test.cz",
-      subject: "Test Subject",
-      body: "Test body",
+      subject: "Test",
+      body: "Body",
     });
 
-    expect(result.opened).toBe(false);
-    expect(result.message).toContain("blocked");
+    expect(mockWindowOpen).not.toHaveBeenCalled();
+    expect(mockLocationAssign).toHaveBeenCalledTimes(1);
   });
 
   it("correctly encodes Czech diacritics in subject", () => {
-    const mockTab = { opener: null, location: { href: "" }, closed: false, close: vi.fn() };
-    mockWindowOpen.mockReturnValue(mockTab);
-
-    const result = openGmailCompose({
+    openGmailCompose({
       to: "info@test.cz",
       subject: "Příjemné odpoledne — nabídka",
       body: "Dobrý den,\n\nnabídka.",
     });
 
-    expect(mockWindowOpen).toHaveBeenCalledWith(
+    expect(mockLocationAssign).toHaveBeenCalledWith(
       expect.stringContaining("su=P%C5%99%C3%ADjemn%C3%A9+odpoledne+%E2%80%94+nab%C3%ADdka"),
-      "_blank",
-      "noreferrer"
     );
-    expect(result.opened).toBe(true);
   });
 
   it("correctly encodes plus address in recipient", () => {
-    const mockTab = { opener: null, location: { href: "" }, closed: false, close: vi.fn() };
-    mockWindowOpen.mockReturnValue(mockTab);
-
-    const result = openGmailCompose({
+    openGmailCompose({
       to: "user+tag@example.com",
       subject: "Test",
       body: "Body",
     });
 
-    expect(mockWindowOpen).toHaveBeenCalledWith(
+    expect(mockLocationAssign).toHaveBeenCalledWith(
       expect.stringContaining("to=user%2Btag%40example.com"),
-      "_blank",
-      "noreferrer"
     );
-    expect(result.opened).toBe(true);
   });
 
   it("handles empty subject and body by omitting them", () => {
-    const mockTab = { opener: null, location: { href: "" }, closed: false, close: vi.fn() };
-    mockWindowOpen.mockReturnValue(mockTab);
-
-    const result = openGmailCompose({
+    openGmailCompose({
       to: "info@test.cz",
       subject: "",
       body: "",
     });
 
-    expect(mockWindowOpen).toHaveBeenCalledWith(
+    expect(mockLocationAssign).toHaveBeenCalledWith(
       expect.stringMatching(/^https:\/\/mail\.google\.com\/mail\/\?view=cm&fs=1&to=info%40test\.cz$/),
-      "_blank",
-      "noreferrer"
     );
-    expect(result.opened).toBe(true);
-  });
-
-  it("allows custom opener function for testing", () => {
-    const customOpener = vi.fn().mockReturnValue({
-      opener: null,
-      location: { href: "" },
-      closed: false,
-      close: vi.fn(),
-    });
-
-    const result = openGmailCompose(
-      { to: "info@test.cz", subject: "Test", body: "Body" },
-      { opener: customOpener },
-    );
-
-    expect(customOpener).toHaveBeenCalledWith(
-      expect.stringContaining("https://mail.google.com/mail/"),
-      "_blank",
-      "noreferrer"
-    );
-    expect(result.opened).toBe(true);
-  });
-
-  it("allows custom success and blocked messages", () => {
-    const mockTab = { opener: null, location: { href: "" }, closed: false, close: vi.fn() };
-    mockWindowOpen.mockReturnValue(mockTab);
-
-    const successResult = openGmailCompose(
-      { to: "info@test.cz" },
-      { successMessage: "Custom success" },
-    );
-    expect(successResult.message).toContain("Custom success");
-
-    mockWindowOpen.mockReturnValue(null);
-    const blockedResult = openGmailCompose(
-      { to: "info@test.cz" },
-      { blockedMessage: "Custom blocked" },
-    );
-    expect(blockedResult.message).toContain("Custom blocked");
   });
 });
 

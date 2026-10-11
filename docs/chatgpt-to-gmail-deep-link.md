@@ -89,9 +89,10 @@ no value rendered on the page can influence them. A crafted request can at most
 ask PEPA to re-read a draft it already had.
 
 The Gmail URL is built the same gesture-safe way as everywhere else:
-`openGmailCompose()` calls `window.open` directly with the compose URL
-**synchronously inside the click** — so the popup blocker accepts it.
-This is the fix from `d0bc696`, reused rather than reimplemented.
+`openGmailCompose()` navigates the **same tab** with
+`window.location.assign()` to the centralized web compose URL — no popup,
+no `window.open`, so no popup blocker is involved.
+This is the shared helper from `d0bc696`, reused rather than reimplemented.
 
 ## Nothing here sends email
 

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -52,6 +55,19 @@ describe("GmailComposeButton — same-tab Gmail navigation", () => {
     });
 
     expect(markup).toContain('title="Custom tooltip"');
+  });
+
+  it("routes web compose through the centralized openGmailCompose helper", () => {
+    // Regression guard for entry-point centralization: the component must
+    // navigate via openGmailCompose() — never by building/assigning its own
+    // Gmail compose URL. (Tests run in a node environment without a DOM, so
+    // we assert on the component source, which is the contract under test.)
+    const source = readFileSync(join(__dirname, "gmail-compose-button.tsx"), "utf8");
+
+    expect(source).toContain("openGmailCompose(input)");
+    expect(source).not.toMatch(/window\.location\.assign\(buildGmailComposeUrl/);
+    expect(source).not.toContain("buildGmailComposeUrl");
+    expect(source).not.toMatch(/window\.open\(/);
   });
 
   it("has structure for iOS app option button", () => {

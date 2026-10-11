@@ -3,8 +3,8 @@
 import { useCallback } from "react";
 
 import type { GmailComposeInput } from "@/lib/outreach/gmail-compose-client";
-import { buildGmailComposeUrl, buildGmailAppUrl } from "@/lib/outreach/gmail-compose";
-import { isIOS, isAndroid } from "@/lib/outreach/open-gmail-compose";
+import { buildGmailAppUrl } from "@/lib/outreach/gmail-compose";
+import { isIOS, isAndroid, openGmailCompose } from "@/lib/outreach/open-gmail-compose";
 
 /**
  * "Open in Gmail" button — provides two options on mobile:
@@ -41,10 +41,9 @@ export function GmailComposeButton({
   }, [input]);
 
   const handleBrowserCompose = useCallback(() => {
-    // Reliable fallback: open browser compose directly.
-    if (typeof window !== "undefined") {
-      window.location.assign(buildGmailComposeUrl(input));
-    }
+    // Reliable fallback: open browser compose via the centralized helper
+    // (same-tab navigation to the shared web compose URL).
+    openGmailCompose(input);
   }, [input]);
 
   const isMobile = isIOS() || isAndroid();
