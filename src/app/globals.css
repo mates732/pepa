@@ -24,6 +24,18 @@
   --font-sans: var(--font-geist-sans), ui-rounded, "SF Pro Rounded",
     ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* ----------------------------------------------------------------------
+     Responsive contract (device classes):
+       mobile  < 768px  — base styles
+       tablet  768–1199px — md: (default 48rem, unchanged)
+       desktop >= 1200px — lg: (redefined from 64rem/1024px to 75rem/1200px)
+     The stock lg=1024px made tablet look like desktop (sidebar appeared at
+     1024px) and made "desktop" and "tablet" nearly identical. No xl: rules
+     exist in the codebase, so redefining lg is a safe single source for the
+     desktop boundary.
+     ---------------------------------------------------------------------- */
+  --breakpoint-lg: 75rem; /* 1200px */
 }
 
 html {
@@ -295,5 +307,37 @@ kbd {
   .btn:hover:not(:disabled),
   .btn:active:not(:disabled) {
     transform: none;
+  }
+}
+
+/* --------------------------------------------------------------------------
+   Touch ergonomics (mobile & tablet, <768px)
+
+   On phones every interactive control must reach 44×44pt (Apple HIG /
+   WCAG 2.5.5). Desktop keeps the compact paddings — the same rule everywhere
+   would bloat dense desktop tables.
+   -------------------------------------------------------------------------- */
+
+@media (max-width: 767.98px) {
+  .btn,
+  .btn-sm,
+  .btn-xs {
+    min-height: 44px;
+  }
+
+  .field {
+    /* 48px input height: comfortably above the 44px floor and iOS' own
+       ~16px minimum font size (which prevents zoom-on-focus). */
+    min-height: 48px;
+    font-size: 16px;
+  }
+
+  /* Nav rows and header controls: keep the 44px floor even if a future
+     utility class shrinks them. */
+  header a,
+  header button,
+  aside a,
+  aside button {
+    min-height: 44px;
   }
 }

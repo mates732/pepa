@@ -77,7 +77,7 @@ export default async function FollowUpPage({ params }: PageProps<"/followup/[tok
   const deepLink = await buildDeepLink(token);
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 pb-16 pt-10">
+    <div className="mx-auto w-full max-w-3xl px-4 pb-16 pt-10">
       <header className="mb-6">
         <h1 className="heading-sticker text-center text-xl text-midnight">
           PEPA the Outman
@@ -134,7 +134,7 @@ export default async function FollowUpPage({ params }: PageProps<"/followup/[tok
           </div>
         </div>
       </section>
-    </main>
+    </div>
   );
 }
 

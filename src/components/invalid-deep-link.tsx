@@ -10,7 +10,7 @@ interface InvalidDeepLinkProps {
  */
 export function InvalidDeepLink({ message }: InvalidDeepLinkProps) {
   return (
-    <main className="mx-auto w-full max-w-md px-4 py-20">
+    <div className="mx-auto w-full max-w-md px-4 py-20">
       <h1 className="heading-sticker text-center text-xl text-midnight">
         PEPA the Outman
       </h1>
@@ -25,6 +25,6 @@ export function InvalidDeepLink({ message }: InvalidDeepLinkProps) {
           Go to the dashboard
         </Link>
       </p>
-    </main>
+    </div>
   );
 }

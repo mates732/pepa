@@ -26,7 +26,7 @@ export default async function LoginPage({
   const requested = Array.isArray(params.next) ? params.next[0] : params.next;
 
   return (
-    <main className="flex min-h-full items-center justify-center px-4 py-16">
+    <div className="flex min-h-full items-center justify-center px-4 py-16">
       <div className="w-full max-w-sm">
         <div className="tilt mb-3 flex justify-center">
           <div
@@ -58,6 +58,6 @@ export default async function LoginPage({
           )}
         </div>
       </div>
-    </main>
+    </div>
   );
 }

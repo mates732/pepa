@@ -8,7 +8,7 @@ export function SetupNotice({
   hint?: string;
 }) {
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 py-16">
+    <div className="mx-auto w-full max-w-3xl px-4 py-16">
       <h1 className="text-xl font-semibold tracking-tight text-midnight">
         Outreach Tool
       </h1>
@@ -53,6 +53,6 @@ export function SetupNotice({
         The paste/import and composer still work once Supabase is configured. No
         Gmail, Apple Mail or Telegram integration exists yet — those land in V2.
       </p>
-    </main>
+    </div>
   );
 }

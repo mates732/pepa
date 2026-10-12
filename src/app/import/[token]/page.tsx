@@ -34,7 +34,7 @@ export default async function ImportPage({ params }: PageProps<"/import/[token]"
   const { lead, message, expiresAt } = resolved.data;
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 pb-16 pt-10">
+    <div className="mx-auto w-full max-w-3xl px-4 pb-16 pt-10">
       <header className="mb-6">
         <h1 className="heading-sticker text-center text-xl text-midnight">
           PEPA the Outman
@@ -75,7 +75,7 @@ export default async function ImportPage({ params }: PageProps<"/import/[token]"
           </div>
         </div>
       </section>
-    </main>
+    </div>
   );
 }
 

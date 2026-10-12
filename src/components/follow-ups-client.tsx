@@ -140,7 +140,9 @@ export function FollowUpsClient({ initialFollowUps, initialError }: Props) {
           </div>
 
           <section className="sticker overflow-x-auto">
-            <table className="w-full border-collapse text-sm">
+            {/* Deliberate mobile strategy (same as Drafts/Outreach): scroll
+                horizontally instead of crushing five columns. */}
+            <table className="w-full min-w-[640px] border-collapse text-sm">
               <thead>
                 <tr className="border-b-[3px] border-midnight text-left text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
                   <th className="px-4 py-3">Lead</th>

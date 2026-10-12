@@ -41,7 +41,7 @@ export default async function DashboardPage() {
         <p className="mt-1 text-sm text-midnight-soft">Overview of your outreach pipeline</p>
       </header>
 
-      <section aria-labelledby="stats-heading" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <section aria-labelledby="stats-heading" className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <StatCard label="Saved Drafts" value={stats.drafts} icon="📄" />
         <StatCard label="Leads" value={stats.leads} icon="🏢" />
         <StatCard label="Sent Messages" value={stats.sent} icon="📤" />
@@ -52,7 +52,7 @@ export default async function DashboardPage() {
         <h2 id="quick-links-heading" className="heading-sticker text-lg text-midnight mb-4">
           Quick Links
         </h2>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
           {quickLinks.map((link) => (
             <a
               key={link.href}
