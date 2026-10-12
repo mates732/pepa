@@ -5,14 +5,22 @@
  *
  * The `googlegmail://` URL scheme is community-reported only (no official
  * Google documentation; see report). The href stays a real anchor with the
- * literal scheme, and the only JS is a not-installed guard: on click we
- * remember the verified working web URL, then after a short delay — if this
- * page is still visible, meaning iOS did not hand off to the app — we send
- * the browser there instead. When the app does open, the page is hidden and
- * the fallback never fires.
+ * literal scheme — the click is what iOS intercepts and hands to the app —
+ * and the page itself is never navigated: no window.location assignment, no
+ * automatic redirect.
  *
- * This only navigates. Nothing here sends email.
+ * The not-installed guard shares the production helper: if the page was
+ * never backgrounded (the app did not open), a MANUAL banner offers the
+ * verified web URL; the operator clicks it deliberately. A page that WAS
+ * backgrounded — the normal case when the app opens — suppresses the
+ * fallback permanently, so returning from Gmail can never replace this page
+ * with mail.google.com (timers are suspended, not cancelled, while
+ * backgrounded; that flaw is why the old auto-assign version is gone).
+ *
+ * This only navigates the Gmail app. Nothing here sends email.
  */
+
+import { armManualWebFallback } from "@/lib/outreach/open-gmail-compose";
 
 const APP_SCHEME = "googlegmail://";
 const APP_COMPOSE_SCHEME = "googlegmail:///co?";
@@ -21,16 +29,7 @@ const FALLBACK_DELAY_MS = 1500;
 
 export function GmailAppLink() {
   const handleClick = () => {
-    if (typeof window === "undefined") return;
-
-    window.setTimeout(() => {
-      // The page is still in the foreground: the app was not installed (or
-      // refused the scheme), so send the user to the web UI that is known to
-      // work on iPhone instead of leaving a dead end.
-      if (typeof document !== "undefined" && !document.hidden) {
-        window.location.assign(FALLBACK_WEB_URL);
-      }
-    }, FALLBACK_DELAY_MS);
+    armManualWebFallback(FALLBACK_WEB_URL);
   };
 
   return (

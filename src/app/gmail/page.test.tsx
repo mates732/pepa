@@ -7,6 +7,7 @@ import {
   GmailAppLink,
 } from "./gmail-app-link";
 import { buildGmailAppComposeUrl } from "./gmail-app-compose-url";
+import { GMAIL_FALLBACK_BANNER_ID } from "@/lib/outreach/open-gmail-compose";
 
 /**
  * The /gmail page is an isolated app-launching test bench. These tests pin:
@@ -14,7 +15,8 @@ import { buildGmailAppComposeUrl } from "./gmail-app-compose-url";
  *   1. all three actions use exactly the intended literal URLs (app scheme,
  *      user-verified web URL, standard compose URL) — no helper-built URLs;
  *   2. the app-scheme link keeps its plain anchor behavior and adds only a
- *      not-installed fallback to the verified web URL;
+ *      MANUAL not-installed fallback to the verified web URL — the page
+ *      itself is never navigated or redirected;
  *   3. nothing here sends email or requests mailbox access.
  */
 
@@ -142,26 +144,80 @@ describe("buildGmailAppComposeUrl — app compose scheme encoding", () => {
   });
 });
 
-describe("GmailAppLink — not-installed fallback", () => {
-  function setup({ hidden }: { hidden: boolean }) {
+describe("GmailAppLink — manual not-installed fallback", () => {
+  interface FakeLink {
+    tag: string;
+    id: string;
+    href: string;
+    textContent: string;
+    children: FakeLink[];
+    style: Record<string, string>;
+    setAttribute: () => void;
+    addEventListener: () => void;
+    remove: () => void;
+    appendChild(child: FakeLink): FakeLink;
+  }
+
+  function setup({ hidden = false }: { hidden?: boolean } = {}) {
     const assign = vi.fn();
     const timers: Array<{ fn: () => void; ms: number }> = [];
+    const created: FakeLink[] = [];
+    const docListeners = new Map<string, () => void>();
+
+    const make = (tag: string): FakeLink => {
+      const el: FakeLink = {
+        tag,
+        id: "",
+        href: "",
+        textContent: "",
+        children: [],
+        style: {},
+        setAttribute: () => {},
+        addEventListener: () => {},
+        remove: () => {},
+        appendChild(child) {
+          el.children.push(child);
+          return child;
+        },
+      };
+      created.push(el);
+      return el;
+    };
+
+    const documentStub = {
+      hidden,
+      addEventListener: (type: string, fn: () => void) => {
+        docListeners.set(type, fn);
+      },
+      removeEventListener: (type: string) => {
+        docListeners.delete(type);
+      },
+      getElementById: (id: string) => created.find((el) => el.id === id) ?? null,
+      createElement: make,
+      body: { appendChild: vi.fn() },
+    };
+
     vi.stubGlobal("window", {
       location: { assign },
       setTimeout: (fn: () => void, ms: number) => {
         timers.push({ fn, ms });
       },
     });
-    vi.stubGlobal("document", { hidden });
-    return { assign, timers };
+    vi.stubGlobal("document", documentStub);
+
+    return { assign, timers, created, docListeners, documentStub };
   }
 
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("falls back to the verified web URL when the app did not open", () => {
-    const { assign, timers } = setup({ hidden: false });
+  function bannerOf(created: FakeLink[]) {
+    return created.find((el) => el.tag === "div" && el.id === GMAIL_FALLBACK_BANNER_ID);
+  }
+
+  it("offers the verified web URL as a MANUAL banner instead of navigating the page", () => {
+    const { assign, timers, created } = setup();
 
     // jsdom-free: invoke the click handler directly on the rendered element.
     const link = GmailAppLink();
@@ -169,17 +225,38 @@ describe("GmailAppLink — not-installed fallback", () => {
 
     expect(timers).toHaveLength(1);
     expect(timers[0]!.ms).toBe(GMAIL_APP_LINK_CONSTANTS.FALLBACK_DELAY_MS);
+    expect(bannerOf(created)).toBeUndefined();
+
+    // Never backgrounded → the app did not open → the banner appears…
     timers[0]!.fn();
-    expect(assign).toHaveBeenCalledWith(GMAIL_APP_LINK_CONSTANTS.FALLBACK_WEB_URL);
+
+    // …and the page is NEVER navigated automatically: the verified web URL
+    // is only offered, following it is an explicit operator click.
+    expect(assign).not.toHaveBeenCalled();
+    const banner = bannerOf(created)!;
+    expect(banner).toBeDefined();
+    const webLink = banner.children
+      .flatMap((c) => c.children)
+      .find((c) => c.tag === "a");
+    expect(webLink?.href).toBe(GMAIL_APP_LINK_CONSTANTS.FALLBACK_WEB_URL);
   });
 
-  it("does not navigate away when the app took over (page hidden)", () => {
-    const { assign, timers } = setup({ hidden: true });
+  it("never replaces the page after the app took over (background latch)", () => {
+    const { assign, timers, created, docListeners, documentStub } = setup();
 
     const link = GmailAppLink();
     (link.props.onClick as () => void)();
+
+    // iOS hands off to Gmail: the page goes to background…
+    documentStub.hidden = true;
+    docListeners.get("visibilitychange")!();
+
+    // …and when the operator returns, the suspended timer resumes. It must
+    // do nothing: no banner, and above all no navigation to mail.google.com.
+    documentStub.hidden = false;
     timers[0]!.fn();
 
     expect(assign).not.toHaveBeenCalled();
+    expect(bannerOf(created)).toBeUndefined();
   });
 });

@@ -140,12 +140,18 @@ describe("manual Gmail-app retry buttons", () => {
 /**
  * What actually lands in the Gmail compose URL on an iPhone for each entry
  * point's exact field mapping. Uses the real helper with a stubbed browser.
+ *
+ * The deep link must arrive via the temporary hidden anchor — window.location
+ * is never touched, so the Pepa tab keeps its page, scroll position and
+ * unsaved state across the round trip to Gmail.
  */
 describe("entry-point payloads — what Gmail receives on iPhone", () => {
   const assign = vi.fn();
+  let anchors: Array<{ href: string; clicks: number }> = [];
 
   beforeEach(() => {
     vi.clearAllMocks();
+    anchors = [];
     vi.stubGlobal("navigator", {
       userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
     });
@@ -154,7 +160,36 @@ describe("entry-point payloads — what Gmail receives on iPhone", () => {
       setTimeout: vi.fn(), // fallback armed but never fired in these tests
     });
     // Page hidden: iOS handed off to the Gmail app.
-    vi.stubGlobal("document", { hidden: true });
+    vi.stubGlobal("document", {
+      hidden: true,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      getElementById: () => null,
+      createElement: (tag: string) => {
+        const el = {
+          tag,
+          style: {} as Record<string, string>,
+          href: "",
+          textContent: "",
+          id: "",
+          rel: "",
+          clicks: 0,
+          removed: false,
+          setAttribute: vi.fn(),
+          addEventListener: vi.fn(),
+          click() {
+            el.clicks += 1;
+          },
+          remove() {
+            el.removed = true;
+          },
+          appendChild: vi.fn(),
+        };
+        if (tag === "a") anchors.push(el);
+        return el;
+      },
+      body: { appendChild: vi.fn() },
+    });
   });
 
   afterEach(() => {
@@ -162,8 +197,13 @@ describe("entry-point payloads — what Gmail receives on iPhone", () => {
   });
 
   function lastComposeParams() {
-    const url = assign.mock.calls.at(-1)![0] as string;
+    expect(anchors.length).toBeGreaterThan(0);
+    const url = anchors.at(-1)!.href;
     expect(url.startsWith("googlegmail:///co?")).toBe(true);
+    // The deep link was clicked…
+    expect(anchors.at(-1)!.clicks).toBe(1);
+    // …and the Pepa tab itself was never navigated anywhere.
+    expect(assign).not.toHaveBeenCalled();
     return { url, params: new URL(url).searchParams };
   }
 

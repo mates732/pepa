@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 import {
   GMAIL_APP_FALLBACK_DELAY_MS,
+  GMAIL_FALLBACK_BANNER_ID,
   openGmailAppCompose,
   openGmailCompose,
   openGmailComposeSmart,
@@ -168,29 +169,115 @@ describe("openGmailCompose — shared Gmail compose helper", () => {
 });
 
 /**
- * jsdom-free browser stub: a window whose navigation and timers are recorded
- * instead of performed, plus a document visibility flag.
+ * jsdom-free browser stub: window navigation/timers are recorded instead of
+ * performed, and the document gets a minimal DOM (createElement / body /
+ * visibility listeners) so the deep-link anchor and the manual fallback
+ * banner can be inspected.
  */
+interface FakeElement {
+  tag: string;
+  style: Record<string, string>;
+  children: FakeElement[];
+  href: string;
+  textContent: string;
+  id: string;
+  type: string;
+  rel: string;
+  attrs: Record<string, string>;
+  clicks: number;
+  removed: boolean;
+  setAttribute(name: string, value: string): void;
+  addEventListener(type: string, fn: () => void): void;
+  click(): void;
+  remove(): void;
+  appendChild(child: FakeElement): FakeElement;
+}
+
+function fakeElement(tag: string): FakeElement {
+  const el: FakeElement = {
+    tag,
+    style: {},
+    children: [],
+    href: "",
+    textContent: "",
+    id: "",
+    type: "",
+    rel: "",
+    attrs: {},
+    clicks: 0,
+    removed: false,
+    setAttribute(name, value) {
+      el.attrs[name] = value;
+    },
+    addEventListener() {},
+    click() {
+      el.clicks += 1;
+    },
+    remove() {
+      el.removed = true;
+    },
+    appendChild(child) {
+      el.children.push(child);
+      return child;
+    },
+  };
+  return el;
+}
+
 function stubBrowser({ hidden = false }: { hidden?: boolean } = {}) {
   const assign = vi.fn();
   const timers: Array<{ fn: () => void; ms: number }> = [];
+  const created: FakeElement[] = [];
+  const docListeners = new Map<string, () => void>();
+  const body = { appendChild: vi.fn((el: FakeElement) => el) };
+
+  const documentStub = {
+    hidden,
+    body,
+    addEventListener: (type: string, fn: () => void) => {
+      docListeners.set(type, fn);
+    },
+    removeEventListener: (type: string) => {
+      docListeners.delete(type);
+    },
+    getElementById: (id: string) => created.find((el) => el.id === id) ?? null,
+    createElement: (tag: string) => {
+      const el = fakeElement(tag);
+      created.push(el);
+      return el;
+    },
+  };
+
   vi.stubGlobal("window", {
     location: { assign, href: "https://pepa.example.com" },
     setTimeout: (fn: () => void, ms: number) => {
       timers.push({ fn, ms });
     },
   });
-  vi.stubGlobal("document", { hidden });
-  return { assign, timers };
+  vi.stubGlobal("document", documentStub);
+
+  return { assign, timers, created, docListeners, body, documentStub };
 }
 
-describe("openGmailAppCompose — iPhone-verified native app deep link", () => {
+/** The temporary hidden anchor carrying the app deep link. */
+function deepLinkAnchor(created: FakeElement[]): FakeElement {
+  const anchor = created.find((el) => el.tag === "a" && el.href.startsWith("googlegmail:"));
+  if (!anchor) throw new Error("no googlegmail deep-link anchor was created");
+  return anchor;
+}
+
+/** The manual fallback banner (the div carrying the banner id). */
+function fallbackBanner(created: FakeElement[]): FakeElement | undefined {
+  return created.find((el) => el.tag === "div" && el.id === GMAIL_FALLBACK_BANNER_ID);
+}
+
+describe("openGmailAppCompose — native app deep link without touching the Pepa tab", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("navigates to googlegmail:///co? with the complete draft data", () => {
-    const { assign } = stubBrowser();
+  it("fires the verified googlegmail:///co? deep link directly from a hidden anchor", () => {
+    const { created, body } = stubBrowser();
 
     const result = openGmailAppCompose({
       to: " info@test.cz ",
@@ -198,11 +285,13 @@ describe("openGmailAppCompose — iPhone-verified native app deep link", () => {
       body: "Dobrý den,\n\nrád bych vám nabídl řešení & více.\n\nS pozdravem, Matyáš",
     });
 
-    expect(assign).toHaveBeenCalledTimes(1);
-    const url = assign.mock.calls[0]![0] as string;
-    expect(url.startsWith("googlegmail:///co?")).toBe(true);
+    const anchor = deepLinkAnchor(created);
+    expect(anchor.href.startsWith("googlegmail:///co?")).toBe(true);
+    expect(anchor.clicks).toBe(1);
+    expect(anchor.removed).toBe(true);
+    expect(body.appendChild).toHaveBeenCalledWith(anchor);
 
-    const params = new URL(url);
+    const params = new URL(anchor.href);
     expect(params.searchParams.get("to")).toBe("info@test.cz");
     expect(params.searchParams.get("subject")).toBe("Příjemné odpoledne — nabídka");
     expect(params.searchParams.get("body")).toBe(
@@ -210,38 +299,76 @@ describe("openGmailAppCompose — iPhone-verified native app deep link", () => {
     );
 
     expect(result.navigated).toBe(true);
-    expect(result.url).toBe(url);
+    expect(result.url).toBe(anchor.href);
     expect(result.fallbackUrl).toContain("https://mail.google.com/mail/");
   });
 
-  it("arms a not-installed fallback to web compose after the hand-off window", () => {
-    const { assign, timers } = stubBrowser();
+  it("NEVER navigates the Pepa tab: window.location is not touched at all", () => {
+    const { assign } = stubBrowser();
+
+    openGmailAppCompose({ to: "info@test.cz", subject: "Test", body: "Body" });
+
+    expect(assign).not.toHaveBeenCalled();
+  });
+
+  it("offers the web fallback as a MANUAL banner, never an automatic redirect", () => {
+    const { assign, timers, created } = stubBrowser();
 
     openGmailAppCompose({ to: "info@test.cz", subject: "Test", body: "Body" });
 
     expect(timers).toHaveLength(1);
     expect(timers[0]!.ms).toBe(GMAIL_APP_FALLBACK_DELAY_MS);
+    expect(fallbackBanner(created)).toBeUndefined(); // nothing appears right away
 
-    // The page is still foreground — the app did not open — so the operator
-    // is sent to web compose instead of a dead end.
+    // Never backgrounded → the app did not open → the banner appears…
     timers[0]!.fn();
-    expect(assign).toHaveBeenCalledTimes(2);
-    const fallback = assign.mock.calls[1]![0] as string;
-    expect(fallback.startsWith("https://mail.google.com/mail/?view=cm&fs=1")).toBe(true);
-    expect(fallback).toContain("to=info%40test.cz");
+
+    // …and even then nothing navigates: the web URL is only an offer the
+    // operator can follow with an explicit click.
+    expect(assign).not.toHaveBeenCalled();
+    const banner = fallbackBanner(created);
+    expect(banner).toBeDefined();
+    const webLink = banner!.children.flatMap((c) => c.children).find((c) => c.tag === "a");
+    expect(webLink).toBeDefined();
+    expect(webLink!.href.startsWith("https://mail.google.com/mail/?view=cm&fs=1")).toBe(true);
+    expect(webLink!.href).toContain("to=info%40test.cz");
+    expect(webLink!.textContent).toBe("Otevřít Gmail na webu");
   });
 
-  it("does not fire the fallback when the app took over (page hidden)", () => {
-    const { assign, timers } = stubBrowser({ hidden: true });
+  it("suppresses the fallback permanently once the page was backgrounded (return from Gmail)", () => {
+    // Regression for the reported bug: iOS SUSPENDS timers while the page is
+    // backgrounded, so a naive fallback timer runs when the operator RETURNS
+    // from Gmail — document.hidden is false again by then — and the old
+    // version assigned mail.google.com web compose into the Pepa tab at that
+    // exact moment. The background latch must kill the fallback for good.
+    const { assign, timers, created, docListeners, documentStub } = stubBrowser();
 
     openGmailAppCompose({ to: "info@test.cz", subject: "Test", body: "Body" });
+
+    // iOS hands off to Gmail: the page goes to background…
+    documentStub.hidden = true;
+    docListeners.get("visibilitychange")!();
+
+    // …and the operator later returns to Safari; the suspended timer resumes.
+    documentStub.hidden = false;
     timers[0]!.fn();
 
-    expect(assign).toHaveBeenCalledTimes(1); // only the app deep link
+    expect(assign).not.toHaveBeenCalled();
+    expect(fallbackBanner(created)).toBeUndefined();
+  });
+
+  it("settles the visibility listener once the attempt is over", () => {
+    const { timers, docListeners } = stubBrowser();
+
+    openGmailAppCompose({ to: "info@test.cz", subject: "Test", body: "Body" });
+    expect(docListeners.has("visibilitychange")).toBe(true);
+
+    timers[0]!.fn();
+    expect(docListeners.has("visibilitychange")).toBe(false);
   });
 
   it("carries a long Czech body un-truncated into the deep link", () => {
-    const { assign } = stubBrowser();
+    const { created } = stubBrowser();
     const body = Array.from(
       { length: 25 },
       (_, i) => `Odstavec ${i + 1}: řešení šetří čas vašeho personálu & doporučí.`,
@@ -249,25 +376,26 @@ describe("openGmailAppCompose — iPhone-verified native app deep link", () => {
 
     openGmailAppCompose({ to: "info@test.cz", subject: "Dlouhá nabídka", body });
 
-    const url = assign.mock.calls[0]![0] as string;
-    expect(new URL(url).searchParams.get("body")).toBe(body);
+    const anchor = deepLinkAnchor(created);
+    expect(new URL(anchor.href).searchParams.get("body")).toBe(body);
   });
 
   it("never sends, never touches the network, never marks anything sent", () => {
-    const { assign } = stubBrowser();
+    const { created } = stubBrowser();
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
 
     openGmailAppCompose({ to: "info@test.cz", subject: "Test", body: "Body" });
 
     expect(fetchSpy).not.toHaveBeenCalled();
-    for (const [url] of assign.mock.calls) {
-      expect(url as string).not.toMatch(/send|mark|status|authuser|oauth/i);
+    for (const el of created) {
+      expect(el.href).not.toMatch(/send|mark|status|authuser|oauth/i);
     }
   });
 
-  it("does not crash during SSR (no window)", () => {
+  it("does not crash during SSR (no window, no document)", () => {
     vi.stubGlobal("window", undefined);
+    vi.stubGlobal("document", undefined);
 
     const result = openGmailAppCompose({ to: "info@test.cz", subject: "Test", body: "Body" });
 
@@ -306,9 +434,9 @@ describe("openGmailComposeSmart — the one platform-aware entry-point helper", 
     expect(result.fallbackUrl).toBeUndefined();
   });
 
-  it("opens the verified native app compose on iPhone with the full draft", () => {
+  it("opens the verified native app compose on iPhone with the full draft — without navigating the tab", () => {
     stubIphone();
-    const { assign, timers } = stubBrowser();
+    const { assign, timers, created } = stubBrowser();
 
     const draft = {
       to: "  info@thearchive.cz  ",
@@ -317,16 +445,16 @@ describe("openGmailComposeSmart — the one platform-aware entry-point helper", 
     };
     const result = openGmailComposeSmart(draft);
 
-    expect(assign).toHaveBeenCalledTimes(1);
-    const url = assign.mock.calls[0]![0] as string;
-    expect(url.startsWith("googlegmail:///co?")).toBe(true);
+    const anchor = deepLinkAnchor(created);
+    expect(anchor.href.startsWith("googlegmail:///co?")).toBe(true);
+    expect(assign).not.toHaveBeenCalled(); // the Pepa tab stays put
 
-    const params = new URL(url);
+    const params = new URL(anchor.href);
     expect(params.searchParams.get("to")).toBe("info@thearchive.cz");
     expect(params.searchParams.get("subject")).toBe(draft.subject);
     expect(params.searchParams.get("body")).toBe(draft.body);
 
-    // Web fallback armed in case the app is not installed.
+    // Manual web fallback armed in case the app is not installed.
     expect(timers).toHaveLength(1);
     expect(timers[0]!.ms).toBe(GMAIL_APP_FALLBACK_DELAY_MS);
     expect(result.fallbackUrl).toContain("view=cm");
@@ -339,11 +467,12 @@ describe("openGmailComposeSmart — the one platform-aware entry-point helper", 
     ]) {
       vi.clearAllMocks();
       vi.stubGlobal("navigator", { userAgent });
-      const { assign } = stubBrowser();
+      const { assign, created } = stubBrowser();
 
       openGmailComposeSmart({ to: "info@test.cz", subject: "S", body: "B" });
 
-      expect((assign.mock.calls[0]![0] as string).startsWith("googlegmail:///co?")).toBe(true);
+      expect(deepLinkAnchor(created).href.startsWith("googlegmail:///co?")).toBe(true);
+      expect(assign).not.toHaveBeenCalled();
       vi.unstubAllGlobals();
     }
   });
