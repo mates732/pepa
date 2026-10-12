@@ -303,6 +303,22 @@ describe("openGmailAppCompose — native app deep link without touching the Pepa
     expect(result.fallbackUrl).toContain("https://mail.google.com/mail/");
   });
 
+  it("sends spaces as %20 to the anchor — the app never receives form-style `+`", () => {
+    // Regression: the native app printed `Dobrý+den,` because the deep link
+    // carried application/x-www-form-urlencoded spaces. The anchor href must
+    // contain NO raw `+` at all; genuine plus signs arrive as %2B.
+    const { created } = stubBrowser();
+
+    const body = "Dobrý den,\n\nkrátce navazuji na svůj e-mail. Cena 100 + DPH & doprava";
+    openGmailAppCompose({ to: "info@test.cz", subject: "Dobrý den, nabídka", body });
+
+    const href = deepLinkAnchor(created).href;
+    expect(href).toContain("Dobr%C3%BD%20den%2C");
+    expect(href).not.toContain("+");
+    expect(new URL(href).searchParams.get("body")).toBe(body);
+    expect(new URL(href).searchParams.get("subject")).toBe("Dobrý den, nabídka");
+  });
+
   it("NEVER navigates the Pepa tab: window.location is not touched at all", () => {
     const { assign } = stubBrowser();
 

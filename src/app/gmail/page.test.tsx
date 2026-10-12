@@ -42,7 +42,7 @@ describe("/gmail — app-launching test bench", () => {
 
     expect(googleHrefList(markup)).toEqual([
       GMAIL_APP_LINK_CONSTANTS.APP_SCHEME,
-      "googlegmail:///co?to=test%40example.com&subject=PEPA+TEST&body=Test+message",
+      "googlegmail:///co?to=test%40example.com&subject=PEPA%20TEST&body=Test%20message",
       "https://mail.google.com/mail/mu/mp/399/#",
       "https://mail.google.com/mail/?view=cm&fs=1&to=test@example.com&su=PEPA%20GMAIL%20TEST&body=Test%20message",
     ]);
@@ -91,7 +91,7 @@ describe("buildGmailAppComposeUrl — app compose scheme encoding", () => {
         body: "Test message",
       }),
     ).toBe(
-      "googlegmail:///co?to=test%40example.com&subject=PEPA+TEST&body=Test+message",
+      "googlegmail:///co?to=test%40example.com&subject=PEPA%20TEST&body=Test%20message",
     );
   });
 
@@ -102,7 +102,8 @@ describe("buildGmailAppComposeUrl — app compose scheme encoding", () => {
       body: "Dobrý den, zdraví Matyáš.",
     });
 
-    expect(url).toContain("subject=P%C5%99%C3%ADjemn%C3%A9+odpoledne+%E2%80%94+nab%C3%ADdka");
+    expect(url).toContain("subject=P%C5%99%C3%ADjemn%C3%A9%20odpoledne%20%E2%80%94%20nab%C3%ADdka");
+    expect(url).not.toContain("+");
     const params = new URL(url);
     expect(params.searchParams.get("subject")).toBe("Příjemné odpoledne — nabídka");
     expect(params.searchParams.get("body")).toBe("Dobrý den, zdraví Matyáš.");

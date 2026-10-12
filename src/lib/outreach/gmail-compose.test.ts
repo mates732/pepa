@@ -212,7 +212,74 @@ describe("buildGmailAppUrl — verified iOS app compose scheme", () => {
         subject: "PEPA TEST",
         body: "Test message",
       }),
-    ).toBe("googlegmail:///co?to=test%40example.com&subject=PEPA+TEST&body=Test+message");
+    ).toBe("googlegmail:///co?to=test%40example.com&subject=PEPA%20TEST&body=Test%20message");
+  });
+
+  it("encodes spaces as %20 — never form-style `+`, which the app shows literally", () => {
+    // Regression: the native Gmail app printed `Dobrý+den,` when the deep
+    // link carried application/x-www-form-urlencoded spaces (`+`).
+    const url = buildGmailAppUrl({
+      to: "info@thearchive.cz",
+      subject: "Dobrý den, nabídka recepce",
+      body: "Dobrý den,",
+    });
+
+    expect(url).toContain("subject=Dobr%C3%BD%20den%2C%20nab%C3%ADdka%20recepce");
+    expect(url).toContain("body=Dobr%C3%BD%20den%2C");
+    // The only `+` allowed in a query built by URLSearchParams is a genuine
+    // plus sign encoded as %2B — so NO raw `+` may appear at all.
+    expect(url).not.toContain("+");
+  });
+
+  it("round-trips the exact real-device sample draft with spaces and a blank line", () => {
+    const body = "Dobrý den,\n\nkrátce navazuji na svůj e-mail.";
+    const url = buildGmailAppUrl({
+      to: "info@thearchive.cz",
+      subject: "Navázání",
+      body,
+    });
+
+    expect(url).toContain("body=Dobr%C3%BD%20den%2C%0A%0Akr%C3%A1tce%20navazuji%20na%20sv%C5%AFj%20e-mail.");
+    expect(readComposeParam(url, "body")).toBe(body);
+    expect(url).not.toContain("+");
+  });
+
+  it("preserves genuine plus signs as %2B (never misread as spaces)", () => {
+    const body = "Cena 100 + DPH & bonus + doprava zdarma";
+    const url = buildGmailAppUrl({ to: "receipt+archive@gmail.com", subject: "A + B", body });
+
+    // Genuine plus signs are percent-encoded, NOT spaces.
+    expect(url).toContain("receipt%2Barchive%40gmail.com");
+    expect(url).toContain("subject=A%20%2B%20B");
+    expect(url).toContain("bonus%20%2B%20doprava");
+    expect(readComposeParam(url, "to")).toBe("receipt+archive@gmail.com");
+    expect(readComposeParam(url, "subject")).toBe("A + B");
+    expect(readComposeParam(url, "body")).toBe(body);
+    expect(url).not.toContain("+");
+  });
+
+  it("encodes ampersands as %26 so they never split parameters", () => {
+    const url = buildGmailAppUrl({
+      to: "info@thearchive.cz",
+      subject: "Test & confirm",
+      body: "A & B = C",
+    });
+
+    expect(url).toContain("subject=Test%20%26%20confirm");
+    expect(url).toContain("body=A%20%26%20B%20%3D%20C");
+    const keys = [...new URLSearchParams(url.slice(url.indexOf("?") + 1)).keys()];
+    expect(keys).toEqual(["to", "subject", "body"]);
+    expect(readComposeParam(url, "body")).toBe("A & B = C");
+    expect(url).not.toContain("+");
+  });
+
+  it("keeps multi-paragraph bodies with spaces and line breaks intact", () => {
+    const body = "Dobrý den, pan Novák.\n\nPosílám nabídku.\n\nS pozdravem\nMatyáš";
+    const url = buildGmailAppUrl({ to: "info@thearchive.cz", subject: "Nabídka recepce", body });
+
+    expect(url).toContain("%0A%0A");
+    expect(url).not.toContain("+");
+    expect(readComposeParam(url, "body")).toBe(body);
   });
 
   it("uses three slashes — the old two-slash form never opened compose", () => {

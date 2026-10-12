@@ -106,10 +106,22 @@ export const GMAIL_APP_COMPOSE_BASE = "googlegmail:///co?";
  *
  * Produces the exact construction verified on the operator's iPhone:
  * `googlegmail:///co?to=...&subject=...&body=...` with all three parameters
- * always present, in that order, encoded by URLSearchParams (spaces as `+`,
- * newlines as `%0A`, Czech diacritics and `&` percent-encoded). The body is
- * preserved byte for byte — no newline normalization — so what the operator
- * sees in the Gmail compose screen is exactly what PEPA stored.
+ * always present, in that order. Encoding is percent-encoding (RFC 3986):
+ * spaces as `%20`, newlines as `%0A`, Czech diacritics and `&`
+ * percent-encoded. The body is preserved byte for byte — no newline
+ * normalization — so what the operator sees in the Gmail compose screen is
+ * exactly what PEPA stored.
+ *
+ * WHY NOT URLSearchParams.toString() OUTPUT VERBATIM: it serializes as
+ * application/x-www-form-urlencoded, where a space becomes `+`. Gmail's web
+ * compose endpoint decodes `+` as a space, but the native iOS app's
+ * `googlegmail:///co` handler does not — real-device testing showed the
+ * compose screen displaying `Dobrý+den,` instead of `Dobrý den,`. The app
+ * scheme expects plain RFC 3986 percent-encoding, so spaces are re-encoded
+ * as `%20` after serialization. This is safe: URLSearchParams already
+ * encodes a literal `+` in the content as `%2B`, so every `+` remaining in
+ * the serialized query is a space marker and nothing else — genuine plus
+ * signs survive as `%2B` and are decoded back to `+` by the Gmail app.
  *
  * The recipient is trimmed; a null/absent subject or body becomes an empty
  * parameter rather than being omitted, matching the verified URL shape.
@@ -128,7 +140,13 @@ export function buildGmailAppUrl(input: GmailComposeInput): string {
   // The body is preserved byte for byte; URLSearchParams encodes newlines as %0A.
   params.set("body", input.body ?? "");
 
-  return `${GMAIL_APP_COMPOSE_BASE}${params.toString()}`;
+  // URLSearchParams serializes spaces as `+` (application/x-www-form-urlencoded),
+  // which the native Gmail app prints literally (`Dobrý+den,`). Re-encode space
+  // markers as %20 for the app scheme. URLSearchParams already emits genuine
+  // `+` characters as `%2B`, so this replacement touches ONLY space markers.
+  const query = params.toString().replace(/\+/g, "%20");
+
+  return `${GMAIL_APP_COMPOSE_BASE}${query}`;
 }
 
 /**

@@ -13,8 +13,10 @@
  * app — but this exact form opens the native app into a prefilled compose
  * screen on the operator's device.
  *
- * Encoding is done with URLSearchParams so Czech diacritics, ampersands,
- * plus signs and multiline bodies survive exactly as on the web compose URL.
+ * Encoding is percent-encoding (RFC 3986, spaces as `%20` — NOT the `+` of
+ * form-encoding, which the native app renders literally), so Czech
+ * diacritics, ampersands, genuine plus signs and multiline bodies survive
+ * exactly as stored.
  * Nothing here sends email — Gmail opens a compose screen and the operator
  * still presses Send.
  */
