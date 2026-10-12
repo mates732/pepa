@@ -140,7 +140,7 @@ export function ParserClient() {
   return (
     <div className="flex flex-col gap-7">
       <header>
-        <h1 className="heading-sticker text-2xl text-midnight">Paste Emails</h1>
+        <h1 className="heading-sticker text-xl text-midnight">Paste Emails</h1>
         <p className="mt-1 text-sm text-midnight-soft">
           Paste finished emails — one or multiple leads separated by <code className="font-mono">--- LEAD NN ---</code>
         </p>
@@ -198,21 +198,21 @@ export function ParserClient() {
           </div>
           <div className="p-5">
             <div className="flex flex-wrap gap-4 mb-4 text-sm">
-              <span className="rounded-full border-2 border-midnight bg-midnight-faint px-3 py-1 text-midnight font-semibold">
+              <span className="rounded-full border border-accent/30 bg-accent-soft px-3 py-1 text-accent-strong font-semibold">
                 {totalInitial} initial email{totalInitial === 1 ? "" : "s"}
               </span>
-              <span className="rounded-full border-2 border-midnight bg-midnight/15 px-3 py-1 text-midnight font-semibold">
+              <span className="rounded-full border border-midnight-line-strong bg-midnight-faint px-3 py-1 text-midnight font-semibold">
                 {totalFollowups} follow-up{totalFollowups === 1 ? "" : "s"}
               </span>
               {totalInvalid > 0 && (
-                <span className="rounded-full border-2 border-midnight bg-midnight/65 px-3 py-1 text-cream font-semibold">
+                <span className="rounded-full border border-error-line bg-error-soft px-3 py-1 text-error-ink font-semibold">
                   {totalInvalid} invalid/skipped
                 </span>
               )}
             </div>
 
             {preview.candidates.map((candidate, idx) => (
-              <div key={candidate.recipient ?? idx} className="mb-4 p-4 rounded-[0.75rem] border border-midnight-line/40 bg-midnight-faint/30">
+              <div key={candidate.recipient ?? idx} className="mb-4 p-4 rounded-blob border border-midnight-line bg-midnight-faint/40">
                 <div className="flex flex-wrap items-center gap-2 mb-2">
                   <span className="chip chip-solid text-xs">
                     {candidate.status === "parsed" ? "Valid" : candidate.status}
@@ -251,7 +251,7 @@ export function ParserClient() {
                 )}
 
                 {candidate.warnings && candidate.warnings.length > 0 && (
-                  <div className="mt-2 text-xs text-amber-700 bg-amber-50/80 p-2 rounded">
+                  <div className="mt-2 text-xs text-warning-ink bg-warning-soft p-2 rounded">
                     {candidate.warnings.join("; ")}
                   </div>
                 )}
@@ -280,24 +280,24 @@ export function ParserClient() {
       )}
 
       {saveResult && (
-        <div className="sticker rounded-[1.25rem] border-[3px] border-midnight bg-midnight-faint/40 p-4">
-          <p className="text-sm font-black uppercase tracking-wide text-midnight mb-2">
+        <div className="sticker rounded-blob border border-midnight-line bg-midnight-faint/40 p-4">
+          <p className="text-sm font-bold uppercase tracking-wide text-midnight mb-2">
             {saveResult.created + saveResult.existing} draft{saveResult.created + saveResult.existing === 1 ? "" : "s"} ready
           </p>
           <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-wider">
-            <span className="rounded-full border-2 border-midnight bg-midnight-faint px-2 py-0.5 text-midnight">
+            <span className="rounded-full border border-success-line bg-success-soft px-2 py-0.5 text-success-ink">
               {saveResult.created} created
             </span>
-            <span className="rounded-full border-2 border-midnight bg-midnight/15 px-2 py-0.5 text-midnight">
+            <span className="rounded-full border border-midnight-line-strong bg-midnight-faint px-2 py-0.5 text-midnight">
               {saveResult.existing} updated
             </span>
             {saveResult.skipped > 0 && (
-              <span className="rounded-full border-2 border-midnight bg-midnight/35 px-2 py-0.5 text-midnight">
+              <span className="rounded-full border border-warning-line bg-warning-soft px-2 py-0.5 text-warning-ink">
                 {saveResult.skipped} skipped
               </span>
             )}
             {saveResult.failed > 0 && (
-              <span className="rounded-full border-2 border-midnight bg-midnight/65 px-2 py-0.5 text-cream">
+              <span className="rounded-full border border-error-line bg-error-soft px-2 py-0.5 text-error-ink">
                 {saveResult.failed} failed
               </span>
             )}

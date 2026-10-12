@@ -3,11 +3,11 @@
 import { daysAgo, DUPLICATE_LABEL, formatDate, formatDateTime } from "@/lib/format";
 import type { DuplicateCheckResult } from "@/lib/types";
 
-/** Monochrome: severity by ink density, new → contacted goes light to solid. */
+/** Neutral → warning → solid ink: the warmer the read, the firmer the block. */
 const TONE: Record<string, string> = {
-  new: "border-midnight bg-midnight-faint text-midnight",
-  existing: "border-midnight bg-midnight/15 text-midnight",
-  contacted: "border-midnight bg-midnight text-cream",
+  new: "border-midnight-line bg-midnight-faint text-midnight",
+  existing: "border-warning-line bg-warning-soft text-warning-ink",
+  contacted: "border-midnight bg-midnight text-white",
 };
 
 interface DuplicateNoticeProps {
@@ -61,10 +61,10 @@ export function DuplicateNotice({ result, pending, error }: DuplicateNoticeProps
 
   return (
     <div
-      className={`rounded-[1.25rem] border-[3px] px-4 py-3 shadow-[3px_3px_0_0_var(--color-midnight)] ${TONE[state]}`}
+      className={`rounded-blob border px-4 py-3 shadow-card ${TONE[state]}`}
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="text-sm font-black uppercase tracking-wide">
+        <span className="text-sm font-bold uppercase tracking-wide">
           {DUPLICATE_LABEL[state]}
         </span>
         <span className="font-mono text-xs break-all opacity-80">

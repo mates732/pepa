@@ -1,28 +1,53 @@
 @import "tailwindcss";
 
 /* ==========================================================================
-   PEPA — cartoon design system
-   Two colours only: warm off-white and midnight blue. Depth comes from
-   opacity, never from a third hue. Every surface is a "sticker": thick
-   ink outline, big radius, hard offset shadow with no blur.
+   PEPA V2 — design system
+   Light professional SaaS: gray page canvas, white surfaces, hairline
+   borders, one blue accent. Depth comes from 1px borders and very faint
+   shadows — never from thick outlines or hard offset shadows.
    ========================================================================== */
 
 @theme {
-  --color-cream: #faf7f0;
-  --color-shell: #f2ecdf;
-  --color-paper: #fffdf8;
+  /* Surfaces ------------------------------------------------------------- */
+  --color-cream: #f7f8fa; /* app page canvas (#F7F8FA) */
+  --color-shell: #ffffff; /* sidebar / top bar surface */
+  --color-paper: #ffffff; /* cards, inputs, elevated surfaces */
 
-  --color-midnight: #16244a;
-  --color-midnight-soft: #46578a;
-  --color-midnight-faint: #e4e8f2;
-  --color-midnight-line: #c3cbe2;
+  /* Ink ------------------------------------------------------------------ */
+  --color-midnight: #172033; /* primary text (#172033) */
+  --color-midnight-soft: #667085; /* secondary text (#667085) */
+  --color-midnight-faint: #f2f4f7; /* subtle fill: hover, disabled, tags */
+  --color-midnight-line: #e6e9ef; /* hairline borders (#E6E9EF) */
+  --color-midnight-line-strong: #d0d5dd; /* emphasised border / dashed states */
 
-  --color-alarm: #b91c1c;
+  /* Accent --------------------------------------------------------------- */
+  --color-accent: #4f6bed; /* primary accent (#4F6BED) */
+  --color-accent-strong: #3d57d6; /* hover / active */
+  --color-accent-soft: #eef1fd; /* selected tint */
 
-  --radius-blob: 1.75rem;
+  /* Semantics (restrained) ---------------------------------------------- */
+  --color-alarm: #d92d20; /* danger fill / legacy alarm class */
+  --color-error-soft: #fef3f2;
+  --color-error-line: #fecdca;
+  --color-error-ink: #b42318;
+  --color-success: #12b76a;
+  --color-success-soft: #ecfdf3;
+  --color-success-line: #abefc6;
+  --color-success-ink: #067647;
+  --color-warning: #f79009;
+  --color-warning-soft: #fffaeb;
+  --color-warning-line: #fedf89;
+  --color-warning-ink: #b54708;
 
-  --font-sans: var(--font-geist-sans), ui-rounded, "SF Pro Rounded",
-    ui-sans-serif, system-ui, sans-serif;
+  /* Radii ---------------------------------------------------------------- */
+  --radius-control: 0.5rem; /* buttons, inputs (8px) */
+  --radius-blob: 0.75rem; /* legacy name → card/panel radius (12px) */
+
+  /* Shadows -------------------------------------------------------------- */
+  --shadow-card: 0 1px 2px 0 rgb(16 24 40 / 0.05);
+  --shadow-pop: 0 4px 14px 0 rgb(16 24 40 / 0.08);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-geist-mono), ui-monospace, monospace;
 
   /* ----------------------------------------------------------------------
@@ -46,57 +71,60 @@ body {
   background-color: var(--color-cream);
   color: var(--color-midnight);
   font-family: var(--font-sans);
-  /* A faint dot grid keeps the page feeling like paper without a texture file. */
-  background-image: radial-gradient(
-    circle at 1px 1px,
-    color-mix(in srgb, var(--color-midnight) 9%, transparent) 1px,
-    transparent 0
-  );
-  background-size: 22px 22px;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 ::selection {
-  background: var(--color-midnight);
-  color: var(--color-cream);
+  background: color-mix(in srgb, var(--color-accent) 22%, #ffffff);
+  color: var(--color-midnight);
 }
 
 kbd {
   font-family: var(--font-sans);
 }
 
+/* Keyboard focus everywhere: one consistent accent ring. */
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 /* --------------------------------------------------------------------------
-   Sticker surfaces
+   Surfaces (cards, panels)
    -------------------------------------------------------------------------- */
 
 .sticker {
-  border: 3px solid var(--color-midnight);
+  border: 1px solid var(--color-midnight-line);
   border-radius: var(--radius-blob);
   background: var(--color-paper);
-  box-shadow: 5px 5px 0 0 var(--color-midnight);
+  box-shadow: var(--shadow-card);
 }
 
 .sticker-sm {
-  border: 3px solid var(--color-midnight);
-  border-radius: 1.25rem;
+  border: 1px solid var(--color-midnight-line);
+  border-radius: var(--radius-blob);
   background: var(--color-paper);
-  box-shadow: 3px 3px 0 0 var(--color-midnight);
+  box-shadow: var(--shadow-card);
 }
 
 .sticker-flat {
-  border: 3px solid var(--color-midnight);
-  border-radius: 1.25rem;
+  border: 1px solid var(--color-midnight-line);
+  border-radius: var(--radius-blob);
   background: var(--color-paper);
 }
 
-/* Dashed outline = "nothing here yet", still on-palette. */
+/* Dashed outline = "nothing here yet". */
 .sticker-empty {
-  border: 3px dashed var(--color-midnight-line);
+  border: 1px dashed var(--color-midnight-line-strong);
   border-radius: var(--radius-blob);
-  background: color-mix(in srgb, var(--color-paper) 60%, transparent);
+  background: transparent;
 }
 
 /* --------------------------------------------------------------------------
-   Buttons
+   Buttons — secondary by default, accent for primary, semantic for danger.
    -------------------------------------------------------------------------- */
 
 .btn {
@@ -104,104 +132,96 @@ kbd {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  border: 3px solid var(--color-midnight);
-  border-radius: 999px;
-  padding: 0.55rem 1.15rem;
+  border: 1px solid var(--color-midnight-line);
+  border-radius: var(--radius-control);
+  padding: 0.5rem 1rem;
   font-size: 0.875rem;
-  font-weight: 700;
-  line-height: 1.2;
+  font-weight: 600;
+  line-height: 1.25;
   background: var(--color-paper);
   color: var(--color-midnight);
-  box-shadow: 3px 3px 0 0 var(--color-midnight);
+  box-shadow: 0 1px 2px 0 rgb(16 24 40 / 0.04);
   cursor: pointer;
   transition:
-    transform 120ms ease,
-    box-shadow 120ms ease,
-    background-color 120ms ease;
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .btn:hover:not(:disabled) {
-  transform: translate(-2px, -2px);
-  box-shadow: 5px 5px 0 0 var(--color-midnight);
+  background: var(--color-midnight-faint);
+  border-color: var(--color-midnight-line-strong);
 }
 
 .btn:active:not(:disabled) {
-  transform: translate(2px, 2px);
-  box-shadow: 1px 1px 0 0 var(--color-midnight);
+  background: color-mix(in srgb, var(--color-midnight-faint) 80%, var(--color-midnight-line-strong));
 }
 
 .btn:focus-visible {
-  outline: 3px dashed var(--color-midnight);
-  outline-offset: 3px;
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 .btn:disabled {
   cursor: not-allowed;
   color: var(--color-midnight-soft);
   background: var(--color-midnight-faint);
-  box-shadow: 3px 3px 0 0 var(--color-midnight-line);
   border-color: var(--color-midnight-line);
+  box-shadow: none;
+}
+
+.btn[aria-busy="true"] {
+  cursor: progress;
 }
 
 .btn-primary {
-  background: var(--color-midnight);
-  color: var(--color-cream);
+  background: var(--color-accent);
+  border-color: var(--color-accent);
+  color: #ffffff;
+  box-shadow: 0 1px 2px 0 rgb(16 24 40 / 0.08);
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-midnight) 88%, #ffffff);
+  background: var(--color-accent-strong);
+  border-color: var(--color-accent-strong);
+}
+
+.btn-primary:active:not(:disabled) {
+  background: color-mix(in srgb, var(--color-accent) 86%, #000000);
+  border-color: color-mix(in srgb, var(--color-accent) 86%, #000000);
+}
+
+.btn-primary:disabled {
+  background: var(--color-midnight-faint);
+  border-color: var(--color-midnight-line);
+  color: var(--color-midnight-soft);
 }
 
 .btn-alarm {
   background: var(--color-alarm);
-  color: var(--color-cream);
   border-color: var(--color-alarm);
+  color: #ffffff;
 }
 
 .btn-alarm:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--color-alarm) 88%, #ffffff);
+  background: color-mix(in srgb, var(--color-alarm) 86%, #000000);
+  border-color: color-mix(in srgb, var(--color-alarm) 86%, #000000);
 }
 
 .btn-sm {
-  padding: 0.35rem 0.8rem;
-  font-size: 0.75rem;
-  border-width: 2px;
-  box-shadow: 2px 2px 0 0 var(--color-midnight);
-}
-
-.btn-sm:hover:not(:disabled) {
-  box-shadow: 3px 3px 0 0 var(--color-midnight);
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
 }
 
 .btn-xs {
   padding: 0.25rem 0.6rem;
   font-size: 0.6875rem;
-  border-width: 2px;
-  border-radius: 999px;
-  box-shadow: 1.5px 1.5px 0 0 var(--color-midnight);
-}
-
-.btn-xs:hover:not(:disabled) {
-  box-shadow: 2.5px 2.5px 0 0 var(--color-midnight);
-  transform: translate(-1px, -1px);
-}
-
-.btn-xs:active:not(:disabled) {
-  transform: translate(1px, 1px);
-  box-shadow: 0.5px 0.5px 0 0 var(--color-midnight);
-}
-
-.btn-xs:disabled {
-  cursor: not-allowed;
-  color: var(--color-midnight-soft);
-  background: var(--color-midnight-faint);
-  box-shadow: 1.5px 1.5px 0 0 var(--color-midnight-line);
-  border-color: var(--color-midnight-line);
 }
 
 .btn-lg {
-  padding: 0.8rem 1.6rem;
-  font-size: 1rem;
+  padding: 0.7rem 1.4rem;
+  font-size: 0.9375rem;
 }
 
 /* --------------------------------------------------------------------------
@@ -210,26 +230,31 @@ kbd {
 
 .field {
   width: 100%;
-  border: 3px solid var(--color-midnight);
-  border-radius: 1.25rem;
-  background: var(--color-cream);
-  padding: 0.7rem 0.95rem;
+  border: 1px solid var(--color-midnight-line);
+  border-radius: var(--radius-control);
+  background: var(--color-paper);
+  padding: 0.6rem 0.8rem;
   font-size: 0.9375rem;
   color: var(--color-midnight);
-  box-shadow: inset 2px 2px 0 0
-    color-mix(in srgb, var(--color-midnight) 7%, transparent);
-  transition: box-shadow 120ms ease;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .field::placeholder {
-  color: color-mix(in srgb, var(--color-midnight-soft) 65%, transparent);
+  color: var(--color-midnight-soft);
+  opacity: 0.75;
+}
+
+.field:hover:not(:disabled):not(:focus) {
+  border-color: var(--color-midnight-line-strong);
 }
 
 .field:focus {
   outline: none;
-  background: var(--color-paper);
-  box-shadow: inset 0 0 0 0 transparent, 0 0 0 4px
-    color-mix(in srgb, var(--color-midnight) 18%, transparent);
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px
+    color-mix(in srgb, var(--color-accent) 20%, transparent);
 }
 
 .field:disabled {
@@ -240,11 +265,11 @@ kbd {
 
 .field-label {
   display: block;
-  margin-bottom: 0.4rem;
-  font-size: 0.6875rem;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  margin-bottom: 0.375rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
   color: var(--color-midnight-soft);
 }
 
@@ -256,57 +281,86 @@ kbd {
   display: inline-flex;
   align-items: center;
   gap: 0.35rem;
-  border: 2px solid var(--color-midnight);
+  border: 1px solid var(--color-midnight-line);
   border-radius: 999px;
-  padding: 0.15rem 0.65rem;
+  padding: 0.15rem 0.6rem;
   font-size: 0.6875rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   text-transform: uppercase;
-  background: var(--color-paper);
+  background: var(--color-midnight-faint);
   color: var(--color-midnight);
 }
 
 .chip-solid {
   background: var(--color-midnight);
-  color: var(--color-cream);
+  border-color: var(--color-midnight);
+  color: #ffffff;
+}
+
+/* Semantic chip tones — restrained tints for status readouts. */
+.chip-success {
+  background: var(--color-success-soft);
+  border-color: var(--color-success-line);
+  color: var(--color-success-ink);
+}
+
+.chip-warning {
+  background: var(--color-warning-soft);
+  border-color: var(--color-warning-line);
+  color: var(--color-warning-ink);
+}
+
+.chip-danger {
+  background: var(--color-alarm);
+  border-color: var(--color-alarm);
+  color: #ffffff;
 }
 
 .notice {
-  border: 3px solid var(--color-midnight);
-  border-radius: 1.25rem;
+  border: 1px solid var(--color-midnight-line);
+  border-radius: var(--radius-blob);
   padding: 0.75rem 1rem;
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 500;
   background: var(--color-midnight-faint);
   color: var(--color-midnight);
-  box-shadow: 3px 3px 0 0 var(--color-midnight);
 }
 
-/* Errors stay on-palette: instead of red, use a solid midnight fill. */
+/* Errors: restrained semantic tint instead of a solid dark fill. */
 .notice-alarm {
-  background: var(--color-midnight);
-  color: var(--color-cream);
+  background: var(--color-error-soft);
+  border-color: var(--color-error-line);
+  color: var(--color-error-ink);
 }
 
 .heading-sticker {
-  font-weight: 900;
-  letter-spacing: -0.02em;
-  line-height: 1.1;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 1.25;
 }
 
-/* Slight tilt, used sparingly on decorative elements only. */
-.tilt {
-  transform: rotate(-1.5deg);
+/* Panel header used inside .sticker cards (composer, parser, history). */
+.sticker-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--color-midnight-line);
+  padding: 0.625rem 1.25rem;
+}
+
+.sticker-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--color-midnight);
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .btn {
+  .btn,
+  .field {
     transition: none;
-  }
-  .btn:hover:not(:disabled),
-  .btn:active:not(:disabled) {
-    transform: none;
   }
 }
 

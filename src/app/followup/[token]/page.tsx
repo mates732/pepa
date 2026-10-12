@@ -88,7 +88,7 @@ export default async function FollowUpPage({ params }: PageProps<"/followup/[tok
       </header>
 
       <section className="sticker">
-        <div className="space-y-1 border-b-[3px] border-midnight px-5 py-4">
+        <div className="space-y-1 border-b border-midnight-line px-5 py-4">
           <h2 className="heading-sticker text-lg text-midnight">
             {lead.company_name || lead.contact_name || lead.email}
           </h2>

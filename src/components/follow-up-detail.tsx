@@ -135,7 +135,7 @@ export function FollowUpDetail({
 
   return (
     <section className="sticker">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-midnight-line px-5 py-3">
         <h2 className="heading-sticker text-base text-midnight">
           {detail.isInitial ? "Initial outreach" : `Follow-up #${message.sequence_number}`}
         </h2>
@@ -167,9 +167,9 @@ export function FollowUpDetail({
                   </span>
                 ) : null}
                 <div
-                  className={`min-w-0 rounded-[0.9rem] border-2 px-3 py-2 ${
+                  className={`min-w-0 rounded-blob border px-3 py-2 ${
                     node.state === "current"
-                      ? "border-midnight bg-midnight-faint/60"
+                      ? "border-accent bg-accent-soft"
                       : node.state === "missing"
                         ? "border-dashed border-midnight-line bg-paper"
                         : "border-midnight-line bg-paper"
@@ -233,7 +233,7 @@ export function FollowUpDetail({
             "Open in Gmail" fills a compose window and records nothing.
             Only "Mark as sent" writes, and it goes through the existing
             authenticated action, so the server-authoritative gate still runs. */}
-        <div className="flex flex-wrap items-center gap-2 border-t-[3px] border-dashed border-midnight-line pt-4">
+        <div className="flex flex-wrap items-center gap-2 border-t border-dashed border-midnight-line-strong pt-4">
           <button
             type="button"
             onClick={() => onOpenInGmail(message.id)}
@@ -308,7 +308,7 @@ export function FollowUpDetail({
             already exists for this recipient — re-saving or branching is not
             something the client can talk its way into. */}
         <form
-          className="space-y-2 border-t-[3px] border-dashed border-midnight-line pt-4"
+          className="space-y-2 border-t border-dashed border-midnight-line-strong pt-4"
           onSubmit={(event) => {
             event.preventDefault();
             if (!followUpSubject.trim() || creating) return;

@@ -92,7 +92,7 @@ export function FollowUpsClient({ initialFollowUps, initialError }: Props) {
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <h1 className="heading-sticker text-2xl text-midnight">Follow-ups</h1>
+        <h1 className="heading-sticker text-xl text-midnight">Follow-ups</h1>
         <p className="mt-1 text-sm text-midnight-soft">
           {followUps.length} follow-up{followUps.length === 1 ? "" : "s"} total
           {draftFollowUps.length > 0 && ` · ${draftFollowUps.length} draft`}
@@ -144,7 +144,7 @@ export function FollowUpsClient({ initialFollowUps, initialError }: Props) {
                 horizontally instead of crushing five columns. */}
             <table className="w-full min-w-[640px] border-collapse text-sm">
               <thead>
-                <tr className="border-b-[3px] border-midnight text-left text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
+                <tr className="border-b border-midnight-line text-left text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
                   <th className="px-4 py-3">Lead</th>
                   <th className="px-4 py-3">Email</th>
                   <th className="px-4 py-3 max-w-[300px]">Subject</th>
@@ -158,17 +158,17 @@ export function FollowUpsClient({ initialFollowUps, initialError }: Props) {
               <tbody className="divide-y divide-midnight-line/40">
                 {followUps.map((item) => (
                   <tr key={item.message.id} className="hover:bg-midnight-faint/50">
-                    <td className="px-4 py-3 font-semibold text-midnight-ink">{leadTitle(item.lead)}</td>
+                    <td className="px-4 py-3 font-semibold text-midnight">{leadTitle(item.lead)}</td>
                     <td className="px-4 py-3 font-mono text-xs text-midnight-soft">{item.lead.email}</td>
-                    <td className="px-4 py-3 max-w-[300px] truncate text-midnight-ink">{item.message.subject || "—"}</td>
+                    <td className="px-4 py-3 max-w-[300px] truncate text-midnight">{item.message.subject || "—"}</td>
                     <td className="px-4 py-3 whitespace-nowrap text-xs font-semibold text-midnight-soft">{sequenceLabel(item.message.sequence_number)}</td>
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <span className={`inline-flex items-center rounded-full border-2 px-2.5 py-0.5 text-[11px] uppercase tracking-wider ${
+                      <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] uppercase tracking-wider ${
                         item.message.status === "sent"
-                          ? "bg-emerald-faint text-emerald border-emerald"
+                          ? "bg-success-soft text-success-ink border-success-line"
                           : item.message.status === "draft"
-                          ? "bg-midnight-faint text-midnight border-midnight"
-                          : "bg-amber-faint text-amber border-amber"
+                          ? "bg-midnight-faint text-midnight-soft border-midnight-line-strong"
+                          : "bg-warning-soft text-warning-ink border-warning-line"
                       }`}>
                         {item.message.status}
                       </span>

@@ -13,8 +13,8 @@ export function SetupNotice({
         Outreach Tool
       </h1>
 
-      <div className="mt-6 rounded-[var(--radius-blob)] border-[3px] border-midnight bg-midnight-faint p-5 shadow-[5px_5px_0_0_var(--color-midnight)]">
-        <p className="text-sm font-black uppercase tracking-wide text-midnight">Setup required</p>
+      <div className="mt-6 rounded-[var(--radius-blob)] border border-midnight-line bg-midnight-faint p-5">
+        <p className="text-sm font-bold uppercase tracking-wide text-midnight">Setup required</p>
 
         {missing.length > 0 ? (
           <>
@@ -36,7 +36,7 @@ export function SetupNotice({
             {hint ? <p className="mt-1 text-sm text-midnight">{hint}</p> : null}
             <p className="mt-2 text-sm text-midnight">
               Apply the schema first:{" "}
-              <code className="rounded-md border-2 border-midnight bg-paper px-1.5 py-0.5 font-mono text-[13px]">
+              <code className="rounded-md border border-midnight-line-strong bg-midnight-faint px-1.5 py-0.5 font-mono text-[13px]">
                 supabase db push
               </code>{" "}
               (or paste{" "}

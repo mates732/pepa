@@ -28,20 +28,20 @@ export default async function LoginPage({
   return (
     <div className="flex min-h-full items-center justify-center px-4 py-16">
       <div className="w-full max-w-sm">
-        <div className="tilt mb-3 flex justify-center">
+        <div className="mb-4 flex justify-center">
           <div
             aria-hidden
-            className="grid h-16 w-16 place-items-center rounded-[1.4rem] border-[3px] border-midnight bg-midnight text-2xl font-black text-cream shadow-[5px_5px_0_0_var(--color-midnight)]"
+            className="grid h-12 w-12 place-items-center rounded-xl bg-accent text-xl font-bold text-white shadow-card"
           >
             P
           </div>
         </div>
 
-        <div className="sticker p-7">
-          <h1 className="heading-sticker text-center text-2xl text-midnight">
+        <div className="sticker p-6 sm:p-7">
+          <h1 className="heading-sticker text-center text-xl text-midnight">
             PEPA the Outman
           </h1>
-          <p className="mt-1 text-center text-[11px] font-bold uppercase tracking-[0.22em] text-midnight-soft">
+          <p className="mt-1.5 text-center text-xs font-medium text-midnight-soft">
             Internal Outreach System
           </p>
 

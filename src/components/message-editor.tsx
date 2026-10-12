@@ -113,7 +113,7 @@ export function MessageEditor({
         </p>
       ) : null}
 
-      <div className="flex flex-wrap items-center gap-2 border-t-[3px] border-dashed border-midnight-line pt-5">
+      <div className="flex flex-wrap items-center gap-2 border-t border-dashed border-midnight-line-strong pt-5">
         {editing ? (
           <button
             type="button"

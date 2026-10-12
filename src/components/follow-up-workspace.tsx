@@ -77,7 +77,7 @@ export function FollowUpWorkspace({
 
   return (
     <section className="sticker">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-midnight-line px-5 py-3">
         <h2 className="heading-sticker text-base text-midnight">
           <span className="chip chip-solid mr-2 align-middle">4</span>
           Follow-ups
@@ -94,11 +94,11 @@ export function FollowUpWorkspace({
       {error ? (
         <p className="m-5 notice notice-alarm">{error}</p>
       ) : loading ? (
-        <p className="m-5 rounded-[1.25rem] border-[3px] border-dashed border-midnight-line bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
+        <p className="m-5 rounded-blob border border-dashed border-midnight-line-strong bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
           Loading follow-ups…
         </p>
       ) : followUps.length === 0 ? (
-        <p className="m-5 rounded-[1.25rem] border-[3px] border-dashed border-midnight-line bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
+        <p className="m-5 rounded-blob border border-dashed border-midnight-line-strong bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
           {/* "No follow-ups recorded", not "no follow-ups exist": a lead can
               have `followup_count > 0` with nothing stored, and those cannot be
               shown here without inventing them. */}
@@ -126,9 +126,9 @@ export function FollowUpWorkspace({
                           type="button"
                           onClick={() => onSelect(id)}
                           aria-current={isSelected ? "true" : undefined}
-                          className={`flex w-full min-w-0 items-center gap-3 rounded-[1rem] border-[3px] px-3 py-2.5 text-left transition-colors ${
+                          className={`flex w-full min-w-0 items-center gap-3 rounded-blob border px-3 py-2.5 text-left transition-colors ${
                             isSelected
-                              ? "border-midnight bg-midnight-faint/60"
+                              ? "border-accent bg-accent-soft"
                               : "border-midnight-line bg-paper hover:bg-midnight-faint/40"
                           }`}
                         >

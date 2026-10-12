@@ -101,7 +101,7 @@ export function OutreachActivityDetail({
 
   return (
     <section className="sticker">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-midnight-line px-5 py-3">
         <h2 className="heading-sticker text-base text-midnight">{detail.typeLabel}</h2>
         <button type="button" onClick={onClose} className="btn btn-sm">
           Close
@@ -156,9 +156,9 @@ export function OutreachActivityDetail({
                   </span>
                 ) : null}
                 <div
-                  className={`min-w-0 rounded-[0.9rem] border-2 px-3 py-2 ${
+                  className={`min-w-0 rounded-blob border px-3 py-2 ${
                     node.state === "current"
-                      ? "border-midnight bg-midnight-faint/60"
+                      ? "border-accent bg-accent-soft"
                       : node.state === "missing"
                         ? "border-dashed border-midnight-line bg-paper"
                         : "border-midnight-line bg-paper"
@@ -198,7 +198,7 @@ export function OutreachActivityDetail({
         {/* --- Actions -------------------------------------------------
             One read-only control. Activity has no mutation surface at all,
             so there is nothing here to mark unsent, edit or delete. */}
-        <div className="flex flex-wrap items-center gap-2 border-t-[3px] border-dashed border-midnight-line pt-4">
+        <div className="flex flex-wrap items-center gap-2 border-t border-dashed border-midnight-line-strong pt-4">
           <button
             type="button"
             onClick={() => onOpenInGmail(message.id)}

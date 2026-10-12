@@ -350,24 +350,24 @@ Petr`;
           </div>
 
           {saveResult && saveResult.created + saveResult.existing > 0 && (
-            <div className="mt-4 rounded-[1.25rem] border-[3px] border-midnight px-4 py-3 bg-midnight-faint/40">
-              <p className="text-sm font-black uppercase tracking-wide text-midnight">
+            <div className="mt-4 rounded-blob border border-midnight-line px-4 py-3 bg-midnight-faint/40">
+              <p className="text-sm font-bold uppercase tracking-wide text-midnight">
                 {saveResult.created + saveResult.existing} draft{saveResult.created + saveResult.existing === 1 ? "" : "s"} ready
               </p>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-wider">
-                <span className="rounded-full border-2 border-midnight bg-midnight-faint px-2 py-0.5 text-midnight">
+                <span className="rounded-full border border-success-line bg-success-soft px-2 py-0.5 text-success-ink">
                   {saveResult.created} created
                 </span>
-                <span className="rounded-full border-2 border-midnight bg-midnight/15 px-2 py-0.5 text-midnight">
+                <span className="rounded-full border border-midnight-line-strong bg-midnight-faint px-2 py-0.5 text-midnight">
                   {saveResult.existing} updated
                 </span>
                 {saveResult.skipped > 0 && (
-                  <span className="rounded-full border-2 border-midnight bg-midnight/35 px-2 py-0.5 text-midnight">
+                  <span className="rounded-full border border-warning-line bg-warning-soft px-2 py-0.5 text-warning-ink">
                     {saveResult.skipped} skipped
                   </span>
                 )}
                 {saveResult.failed > 0 && (
-                  <span className="rounded-full border-2 border-midnight bg-midnight/65 px-2 py-0.5 text-cream">
+                  <span className="rounded-full border border-error-line bg-error-soft px-2 py-0.5 text-error-ink">
                     {saveResult.failed} failed
                   </span>
                 )}
@@ -383,15 +383,15 @@ Petr`;
         </div>
 
         {draftsLoading ? (
-          <p className="m-5 rounded-[1.25rem] border-[3px] border-dashed border-midnight-line bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
+          <p className="m-5 rounded-blob border border-dashed border-midnight-line-strong bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
             Loading drafts…
           </p>
         ) : draftsError ? (
-          <p className="m-5 rounded-[1.25rem] border-[3px] border-red-300 bg-red-50/80 px-5 py-4 text-sm font-semibold text-red-700">
+          <p className="m-5 rounded-blob border border-error-line bg-error-soft px-5 py-4 text-sm font-semibold text-error-ink">
             {draftsError}
           </p>
         ) : drafts.length === 0 ? (
-          <p className="m-5 rounded-[1.25rem] border-[3px] border-dashed border-midnight-line bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
+          <p className="m-5 rounded-blob border border-dashed border-midnight-line-strong bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
             No drafts yet. Paste emails above and click &ldquo;Save drafts&rdquo;.
           </p>
         ) : (
@@ -406,9 +406,9 @@ Petr`;
 
               return (
                 <li key={draft.message.id} className="px-5 py-4">
-                  <p className="text-sm font-semibold text-midnight-ink">{title}</p>
+                  <p className="text-sm font-semibold text-midnight">{title}</p>
                   <p className="text-xs text-midnight-soft">{draft.message.recipient_email}</p>
-                  <p className="mt-1 text-sm text-midnight-ink">{draft.message.subject || "(No subject)"}</p>
+                  <p className="mt-1 text-sm text-midnight">{draft.message.subject || "(No subject)"}</p>
                   <p className="mt-1 text-xs font-semibold text-midnight-soft">
                     {sequenceLabel(draft.message.sequence_number)}
                   </p>
@@ -481,7 +481,7 @@ Petr`;
             className="sticker relative w-full max-w-2xl"
             onClick={(event) => event.stopPropagation()}
           >
-            <header className="flex items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
+            <header className="flex items-center justify-between gap-2 border-b border-midnight-line px-5 py-3">
               <h3 className="heading-sticker text-base text-midnight">
                 Edit Draft
               </h3>
@@ -582,7 +582,7 @@ Petr`;
             className="sticker relative w-full max-w-2xl"
             onClick={(event) => event.stopPropagation()}
           >
-            <header className="flex items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
+            <header className="flex items-center justify-between gap-2 border-b border-midnight-line px-5 py-3">
               <h3 className="heading-sticker text-base text-midnight">
                 Draft Details
               </h3>

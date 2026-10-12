@@ -40,7 +40,7 @@ export function EmailComposer(props: EmailComposerProps) {
 
   return (
     <section className="sticker">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-midnight-line px-5 py-3">
         <h2 className="heading-sticker text-base text-midnight">
           <span className="chip chip-solid mr-2 align-middle">2</span>
           Email composer
@@ -72,7 +72,7 @@ export function EmailComposer(props: EmailComposerProps) {
         </label>
 
         {/* --- MAIN OUTREACH (sequence 0) --- */}
-        <div className="border-2 border-midnight rounded-[1.25rem] p-4 space-y-3 bg-midnight-faint/20">
+        <div className="border border-midnight-line rounded-blob p-4 space-y-3 bg-midnight-faint/40">
           <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-midnight">
             <span className="chip chip-solid">Main</span>
             Initial outreach (sequence 0)
@@ -106,7 +106,7 @@ export function EmailComposer(props: EmailComposerProps) {
         </div>
 
         {/* --- FOLLOW-UP (sequence 1) --- */}
-        <div className="border-2 border-midnight rounded-[1.25rem] p-4 space-y-3 bg-midnight-faint/20">
+        <div className="border border-midnight-line rounded-blob p-4 space-y-3 bg-midnight-faint/40">
           <h3 className="flex items-center gap-2 text-sm font-bold uppercase tracking-wider text-midnight">
             <span className="chip chip-solid">Follow-up</span>
             Follow-up email (sequence 1)
@@ -139,7 +139,7 @@ export function EmailComposer(props: EmailComposerProps) {
           </label>
         </div>
 
-        <details className="rounded-[1.25rem] border-[3px] border-dashed border-midnight-line px-4 py-3">
+        <details className="rounded-blob border border-dashed border-midnight-line-strong px-4 py-3">
           <summary className="cursor-pointer text-xs font-bold uppercase tracking-widest text-midnight-soft">
             Lead details (optional)
           </summary>
@@ -171,7 +171,7 @@ export function EmailComposer(props: EmailComposerProps) {
 
         <QualityGatePanel gate={props.gate} pending={props.gatePending} />
 
-        <div className="flex flex-wrap items-center gap-2 border-t-[3px] border-dashed border-midnight-line pt-5">
+        <div className="flex flex-wrap items-center gap-2 border-t border-dashed border-midnight-line-strong pt-5">
           <button
             type="button"
             onClick={props.onSave}

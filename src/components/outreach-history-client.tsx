@@ -92,7 +92,7 @@ export function OutreachHistoryClient({ initialHistory, initialError }: Props) {
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <h1 className="heading-sticker text-2xl text-midnight">Outreach History</h1>
+        <h1 className="heading-sticker text-xl text-midnight">Outreach History</h1>
         <p className="mt-1 text-sm text-midnight-soft">
           {history.length} lead{history.length === 1 ? "" : "s"} with outreach history
         </p>
@@ -116,7 +116,7 @@ export function OutreachHistoryClient({ initialHistory, initialError }: Props) {
           <div className="overflow-x-auto -mx-5 px-5">
             <table className="w-full border-collapse text-sm min-w-[720px]">
               <thead>
-                <tr className="border-b-[3px] border-midnight text-left text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
+                <tr className="border-b border-midnight-line text-left text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
                   <th className="px-4 py-3">Lead</th>
                   <th className="px-4 py-3">Email</th>
                   <th className="px-4 py-3">Subject</th>
@@ -129,18 +129,18 @@ export function OutreachHistoryClient({ initialHistory, initialError }: Props) {
               <tbody className="divide-y divide-midnight-line/40">
                 {history.map((lead) => (
                   <tr key={lead.id} className="hover:bg-midnight-faint/50">
-                    <td className="px-4 py-3 font-semibold text-midnight-ink">{leadTitle(lead)}</td>
+                    <td className="px-4 py-3 font-semibold text-midnight">{leadTitle(lead)}</td>
                     <td className="px-4 py-3 font-mono text-xs text-midnight-soft">{lead.email}</td>
-                    <td className="px-4 py-3 truncate text-midnight-ink">
+                    <td className="px-4 py-3 truncate text-midnight">
                       {lead.latestSubject || "—"}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
-                      <span className={`inline-flex items-center rounded-full border-2 px-2 py-0.5 text-[11px] uppercase tracking-wider ${
+                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-wider ${
                         lead.latestMessageStatus === "sent"
-                          ? "bg-emerald-faint text-emerald border-emerald"
+                          ? "bg-success-soft text-success-ink border-success-line"
                           : lead.latestMessageStatus === "draft"
-                          ? "bg-midnight-faint text-midnight border-midnight"
-                          : "bg-amber-faint text-amber border-amber"
+                          ? "bg-midnight-faint text-midnight-soft border-midnight-line-strong"
+                          : "bg-warning-soft text-warning-ink border-warning-line"
                       }`}>
                         {lead.latestMessageStatus || "—"}
                       </span>

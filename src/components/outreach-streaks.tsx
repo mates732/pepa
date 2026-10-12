@@ -78,9 +78,9 @@ function Figure({
   note?: string;
 }) {
   return (
-    <div className="min-w-0 rounded-[1rem] border-[3px] border-midnight-line bg-paper px-3 py-2">
+    <div className="min-w-0 rounded-blob border border-midnight-line bg-paper px-3 py-2">
       <p className="field-label mb-1 truncate">{label}</p>
-      <p className="text-2xl font-black leading-none tabular-nums text-midnight">{value}</p>
+      <p className="text-2xl font-bold leading-none tabular-nums text-midnight">{value}</p>
       {note ? <p className="mt-1 text-[11px] font-semibold text-midnight-soft">{note}</p> : null}
     </div>
   );
@@ -109,7 +109,7 @@ export function OutreachStreaks({
 
   return (
     <section className="sticker">
-      <header className="flex flex-wrap items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b border-midnight-line px-5 py-3">
         <h2 className="heading-sticker text-base text-midnight">
           <span className="chip chip-solid mr-2 align-middle">7</span>
           Outreach streaks
@@ -152,7 +152,7 @@ export function OutreachStreaks({
             />
           </div>
 
-          <div className="space-y-1 border-t-[3px] border-dashed border-midnight-line pt-3">
+          <div className="space-y-1 border-t border-dashed border-midnight-line-strong pt-3">
             {noActiveDays ? (
               <p className="text-xs font-semibold text-midnight-soft">
                 No active days yet. A day becomes active when outreach recorded as sent falls on it.

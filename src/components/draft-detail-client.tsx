@@ -156,7 +156,7 @@ export function DraftDetailClient({ initialDraft }: Props) {
           <Link href="/drafts" className="text-sm text-midnight-soft hover:text-midnight mb-2 inline-block">
             ← Back to Drafts
           </Link>
-          <h1 className="heading-sticker text-2xl text-midnight">Draft Detail</h1>
+          <h1 className="heading-sticker text-xl text-midnight">Draft Detail</h1>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Link href="/drafts" className="btn btn-sm">Back to List</Link>
@@ -180,7 +180,7 @@ export function DraftDetailClient({ initialDraft }: Props) {
             <dl className="p-5 grid gap-3 sm:grid-cols-2">
               <div className="sm:col-span-2">
                 <dt className="text-xs font-medium uppercase tracking-wider text-midnight-soft">Lead</dt>
-                <dd className="font-semibold text-midnight-ink">
+                <dd className="font-semibold text-midnight">
                   {draft.lead.company_name || draft.lead.contact_name || draft.lead.email}
                 </dd>
               </div>
@@ -190,17 +190,17 @@ export function DraftDetailClient({ initialDraft }: Props) {
               </div>
               <div>
                 <dt className="text-xs font-medium uppercase tracking-wider text-midnight-soft">Type</dt>
-                <dd className="font-semibold text-midnight-ink">{sequenceLabel(draft.message.sequence_number)}</dd>
+                <dd className="font-semibold text-midnight">{sequenceLabel(draft.message.sequence_number)}</dd>
               </div>
               <div>
                 <dt className="text-xs font-medium uppercase tracking-wider text-midnight-soft">Status</dt>
                 <dd>
-                  <span className={`inline-flex items-center rounded-full border-2 px-2.5 py-0.5 text-[11px] uppercase tracking-wider ${
+                  <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] uppercase tracking-wider ${
                     draft.message.status === "draft"
-                      ? "bg-midnight-faint text-midnight border-midnight"
+                      ? "bg-midnight-faint text-midnight-soft border-midnight-line-strong"
                       : draft.message.status === "ready"
-                      ? "bg-emerald-faint text-emerald border-emerald"
-                      : "bg-amber-faint text-amber border-amber"
+                      ? "bg-success-soft text-success-ink border-success-line"
+                      : "bg-warning-soft text-warning-ink border-warning-line"
                   }`}>
                     {draft.message.status}
                   </span>

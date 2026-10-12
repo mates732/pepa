@@ -13,11 +13,11 @@ import { formatDate } from "@/lib/format";
  * from ink density, so `ready` is the lightest and a refusal is solid.
  */
 const STATUS_TONE: Record<BulkEmailStatus, string> = {
-  ready: "border-midnight bg-midnight-faint text-midnight",
-  already_contacted: "border-midnight bg-midnight text-cream",
-  duplicate: "border-midnight bg-midnight/35 text-midnight",
-  needs_review: "border-midnight-line bg-paper text-midnight-soft border-dashed",
-  failed: "border-midnight bg-midnight/65 text-cream",
+  ready: "border-success-line bg-success-soft text-success-ink",
+  already_contacted: "border-midnight bg-midnight text-white",
+  duplicate: "border-warning-line bg-warning-soft text-warning-ink",
+  needs_review: "border-midnight-line-strong bg-paper text-midnight-soft border-dashed",
+  failed: "border-error-line bg-error-soft text-error-ink",
 };
 
 const STATUS_LABEL: Record<BulkEmailStatus, string> = {
@@ -38,11 +38,11 @@ const SPLIT_BY_LABEL: Record<string, string> = {
 
 export function BulkSummary({ summary, splitBy }: { summary: BulkEmailSummary; splitBy: string }) {
   const chips: Array<{ label: string; value: number; tone: string }> = [
-    { label: "Ready", value: summary.ready, tone: "bg-midnight-faint text-midnight border-midnight" },
+    { label: "Ready", value: summary.ready, tone: "bg-success-soft text-success-ink border-success-line" },
     {
       label: "Already contacted",
       value: summary.alreadyContacted,
-      tone: "bg-midnight text-cream border-midnight",
+      tone: "bg-midnight text-white border-midnight",
     },
     {
       label: "Needs review",
@@ -52,19 +52,19 @@ export function BulkSummary({ summary, splitBy }: { summary: BulkEmailSummary; s
     {
       label: "Duplicate",
       value: summary.duplicates,
-      tone: "bg-midnight/25 text-midnight border-midnight",
+      tone: "bg-warning-soft text-warning-ink border-warning-line",
     },
   ];
 
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <span className="text-sm font-black uppercase tracking-wide text-midnight">
+      <span className="text-sm font-bold uppercase tracking-wide text-midnight">
         Detected: {summary.total} email{summary.total === 1 ? "" : "s"}
       </span>
       {chips.map((chip) => (
         <span
           key={chip.label}
-          className={`inline-flex items-center gap-1 rounded-full border-2 px-2.5 py-0.5 text-[11px] uppercase tracking-wider ${chip.tone} ${
+          className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide ${chip.tone} ${
             chip.value === 0 ? "opacity-50" : ""
           }`}
         >
@@ -72,7 +72,7 @@ export function BulkSummary({ summary, splitBy }: { summary: BulkEmailSummary; s
         </span>
       ))}
       {summary.failed > 0 ? (
-        <span className="inline-flex items-center gap-1 rounded-full border-2 border-midnight bg-midnight/65 px-2.5 py-0.5 text-[11px] uppercase tracking-wider text-cream">
+        <span className="inline-flex items-center gap-1 rounded-full border border-error-line bg-error-soft px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide text-error-ink">
           {summary.failed} Failed
         </span>
       ) : null}
@@ -115,7 +115,7 @@ function PreviewRow({ row }: { row: BulkEmailRow }) {
       </td>
       <td className="px-3 py-2 align-top">
         <span
-          className={`inline-flex items-center rounded-full border-2 px-2.5 py-0.5 text-[11px] uppercase tracking-wider ${STATUS_TONE[row.status]}`}
+          className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-wide ${STATUS_TONE[row.status]}`}
         >
           {STATUS_LABEL[row.status]}
         </span>
@@ -150,7 +150,7 @@ export function BulkPreviewTable({ rows }: { rows: BulkEmailRow[] }) {
   if (rows.length === 0) return null;
 
   return (
-    <div aria-live="polite" className="mt-4 max-h-[26rem] overflow-auto rounded-[1.25rem] border-[3px] border-midnight">
+    <div aria-live="polite" className="mt-4 max-h-[26rem] overflow-auto rounded-blob border border-midnight-line">
       <table className="w-full border-collapse text-left text-sm">
         <thead className="sticky top-0">
           <tr className="bg-midnight text-[11px] uppercase tracking-wider text-cream">

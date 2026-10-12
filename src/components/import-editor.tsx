@@ -45,7 +45,7 @@ export function ImportEditor({ token, recipient, subject, body }: ImportEditorPr
         saveLabel="Save imported draft"
       />
 
-      <div className="space-y-2 border-t-[3px] border-dashed border-midnight-line pt-5">
+      <div className="space-y-2 border-t border-dashed border-midnight-line-strong pt-5">
         <GmailComposeButton input={{ to: recipient, subject, body }} />
 
         {/* The button fills from the SAVED draft, exactly like the dashboard

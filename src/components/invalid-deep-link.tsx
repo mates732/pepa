@@ -15,8 +15,8 @@ export function InvalidDeepLink({ message }: InvalidDeepLinkProps) {
         PEPA the Outman
       </h1>
 
-      <div className="mt-6 rounded-[var(--radius-blob)] border-[3px] border-midnight bg-midnight-faint p-5 shadow-[5px_5px_0_0_var(--color-midnight)]">
-        <p className="text-sm font-black uppercase tracking-wide text-midnight">Link unavailable</p>
+      <div className="mt-6 rounded-[var(--radius-blob)] border border-midnight-line bg-midnight-faint p-5">
+        <p className="text-sm font-bold uppercase tracking-wide text-midnight">Link unavailable</p>
         <p className="mt-1 text-sm text-midnight">{message}</p>
       </div>
 

@@ -54,7 +54,7 @@ export function QualityGatePanel({
   if (!gate) {
     // Nothing evaluated yet. Never render an implicit "ready".
     return (
-      <div className="border-t-[3px] border-dashed border-midnight-line pt-4">
+      <div className="border-t border-dashed border-midnight-line-strong pt-4">
         <p className="field-label">Quality gate</p>
         <p className="text-xs text-midnight-soft">
           {pending ? "Evaluating…" : "Waiting for a recipient, subject and body."}
@@ -68,12 +68,16 @@ export function QualityGatePanel({
   const passing = gate.checks.filter((check) => check.status === "pass");
 
   return (
-    <div className="border-t-[3px] border-dashed border-midnight-line pt-4">
+    <div className="border-t border-dashed border-midnight-line-strong pt-4">
       <div className="flex items-center justify-between gap-2">
         <p className="field-label">Quality gate</p>
         <span
           className={
-            gate.status === "ready" ? "chip" : "chip chip-solid"
+            gate.status === "ready"
+              ? "chip chip-success"
+              : gate.status === "warning"
+                ? "chip chip-warning"
+                : "chip chip-danger"
           }
         >
           {pending ? "…" : VERDICT[gate.status]}
@@ -83,7 +87,7 @@ export function QualityGatePanel({
       <ul className="mt-2 space-y-1">
         {passing.map((check) => (
           <li key={check.name} className="flex gap-2 text-xs text-midnight-soft">
-            <span aria-hidden className="font-bold text-midnight">
+            <span aria-hidden className="font-bold text-success-ink">
               {GLYPH.pass}
             </span>
             <span>{label(check)}</span>
@@ -91,8 +95,8 @@ export function QualityGatePanel({
         ))}
 
         {warning.map((check) => (
-          <li key={check.name} className="flex gap-2 text-xs font-semibold text-midnight">
-            <span aria-hidden className="font-black">
+          <li key={check.name} className="flex gap-2 text-xs font-semibold text-warning-ink">
+            <span aria-hidden className="font-bold">
               {GLYPH.warn}
             </span>
             <span>
@@ -103,8 +107,8 @@ export function QualityGatePanel({
         ))}
 
         {blocking.map((check) => (
-          <li key={check.name} className="flex gap-2 text-xs font-bold text-midnight">
-            <span aria-hidden className="font-black">
+          <li key={check.name} className="flex gap-2 text-xs font-bold text-error-ink">
+            <span aria-hidden className="font-bold">
               {GLYPH.block}
             </span>
             <span>

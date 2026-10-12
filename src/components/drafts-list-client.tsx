@@ -87,7 +87,7 @@ export function DraftsListClient({ initialDrafts, initialError }: Props) {
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <h1 className="heading-sticker text-2xl text-midnight">Drafts</h1>
+        <h1 className="heading-sticker text-xl text-midnight">Drafts</h1>
         <p className="mt-1 text-sm text-midnight-soft">
           {drafts.length} draft{drafts.length === 1 ? "" : "s"} saved
         </p>
@@ -111,7 +111,7 @@ export function DraftsListClient({ initialDrafts, initialError }: Props) {
           <div className="overflow-x-auto -mx-5 px-5">
             <table className="w-full border-collapse text-sm min-w-[640px]">
               <thead>
-                <tr className="border-b-[3px] border-midnight text-left text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
+                <tr className="border-b border-midnight-line text-left text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
                   <th className="px-4 py-3">Lead</th>
                   <th className="px-4 py-3">Recipient</th>
                   <th className="px-4 py-3">Subject</th>
@@ -128,17 +128,17 @@ export function DraftsListClient({ initialDrafts, initialError }: Props) {
 
                   return (
                     <tr key={draft.message.id} className="hover:bg-midnight-faint/50">
-                      <td className="px-4 py-3 font-semibold text-midnight-ink">{draftTitle(draft)}</td>
+                      <td className="px-4 py-3 font-semibold text-midnight">{draftTitle(draft)}</td>
                       <td className="px-4 py-3 font-mono text-xs text-midnight-soft">{draft.message.recipient_email}</td>
-                      <td className="px-4 py-3 truncate text-midnight-ink">{draft.message.subject || "(No subject)"}</td>
+                      <td className="px-4 py-3 truncate text-midnight">{draft.message.subject || "(No subject)"}</td>
                       <td className="px-4 py-3 whitespace-nowrap text-xs font-semibold text-midnight-soft">{sequenceLabel(draft.message.sequence_number)}</td>
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <span className={`inline-flex items-center rounded-full border-2 px-2 py-0.5 text-[11px] uppercase tracking-wider ${
+                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] uppercase tracking-wider ${
                           draft.message.status === "draft"
-                            ? "bg-midnight-faint text-midnight border-midnight"
+                            ? "bg-midnight-faint text-midnight-soft border-midnight-line-strong"
                             : draft.message.status === "ready"
-                            ? "bg-emerald-faint text-emerald border-emerald"
-                            : "bg-amber-faint text-amber border-amber"
+                            ? "bg-success-soft text-success-ink border-success-line"
+                            : "bg-warning-soft text-warning-ink border-warning-line"
                         }`}>
                           {draft.message.status}
                         </span>

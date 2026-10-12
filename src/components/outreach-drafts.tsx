@@ -47,15 +47,15 @@ export function OutreachDrafts({
       </div>
 
       {loading ? (
-        <p className="m-5 rounded-[1.25rem] border-[3px] border-dashed border-midnight-line bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
+        <p className="m-5 rounded-blob border border-dashed border-midnight-line-strong bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
           Loading drafts…
         </p>
       ) : error ? (
-        <p className="m-5 rounded-[1.25rem] border-[3px] border-red-300 bg-red-50/80 px-5 py-4 text-sm font-semibold text-red-700">
+        <p className="m-5 rounded-blob border border-red-300 bg-red-50/80 px-5 py-4 text-sm font-semibold text-red-700">
           {error}
         </p>
       ) : drafts.length === 0 ? (
-        <p className="m-5 rounded-[1.25rem] border-[3px] border-dashed border-midnight-line bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
+        <p className="m-5 rounded-blob border border-dashed border-midnight-line-strong bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
           No drafts yet.
         </p>
       ) : (
@@ -67,9 +67,9 @@ export function OutreachDrafts({
 
             return (
               <li key={draft.message.id} className="px-5 py-4">
-                <p className="text-sm font-semibold text-midnight-ink">{title}</p>
+                <p className="text-sm font-semibold text-midnight">{title}</p>
                 <p className="text-xs text-midnight-soft">{draft.message.recipient_email}</p>
-                <p className="mt-1 text-sm text-midnight-ink">{draft.message.subject || "(No subject)"}</p>
+                <p className="mt-1 text-sm text-midnight">{draft.message.subject || "(No subject)"}</p>
                 <p className="mt-1 text-xs font-semibold text-midnight-soft">
                   {sequenceLabel(draft.message.sequence_number)}
                 </p>

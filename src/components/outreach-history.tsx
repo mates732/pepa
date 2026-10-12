@@ -152,7 +152,7 @@ export function OutreachHistory({
   return (
     <>
       <section className="sticker">
-        <header className="flex flex-wrap items-center justify-between gap-2 border-b-[3px] border-midnight px-5 py-3">
+        <header className="flex flex-wrap items-center justify-between gap-2 border-b border-midnight-line px-5 py-3">
           <h2 className="heading-sticker text-base text-midnight">
             <span className="chip chip-solid mr-2 align-middle">3</span>
             Outreach history
@@ -161,14 +161,14 @@ export function OutreachHistory({
         </header>
 
         {rows.length === 0 ? (
-          <p className="m-5 rounded-[1.25rem] border-[3px] border-dashed border-midnight-line bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
+          <p className="m-5 rounded-blob border border-dashed border-midnight-line-strong bg-midnight-faint/40 px-5 py-8 text-center text-sm font-semibold text-midnight-soft">
             No leads yet. Paste an outreach block above and save it as a draft.
           </p>
         ) : (
           <div className="overflow-x-auto p-2">
             <table className="w-full min-w-[1000px] border-collapse text-sm">
               <thead>
-                <tr className="border-b-[3px] border-midnight text-left text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
+                <tr className="border-b border-midnight-line text-left text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
                   <th className="px-4 py-3 w-10">
                     {rows.length > 0 && (
                       <input
@@ -258,7 +258,7 @@ export function OutreachHistory({
                               ⋮
                             </button>
                             {openMenuRowId === row.id && (
-                              <div className="absolute right-0 top-full mt-1 z-20 sticker min-w-[140px] py-1 shadow-lg border-2 border-midnight">
+                              <div className="absolute right-0 top-full mt-1 z-20 sticker min-w-[140px] py-1 shadow-pop border border-midnight-line">
                                 {row.unsent && (
                                   <button
                                     type="button"
@@ -308,7 +308,7 @@ export function OutreachHistory({
 
             {/* Bulk action bar */}
             {selection.size > 0 && (
-              <div className="border-t-[3px] border-dashed border-midnight-line p-3 flex flex-wrap items-center gap-2">
+              <div className="border-t border-dashed border-midnight-line-strong p-3 flex flex-wrap items-center gap-2">
                 <span className="text-sm font-bold text-midnight">
                   {selection.size} selected
                 </span>

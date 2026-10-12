@@ -44,7 +44,7 @@ export function FollowUpState({ row }: { row: OutreachHistoryRow }) {
         Follow-up #{attempt} · due {formatDate(row.next_followup_at)}
       </div>
       {row.lastFollowupNotifiedNumber !== null && row.lastFollowupNotifiedAt ? (
-        <div className="inline-flex items-center gap-1 rounded-full border-2 border-midnight bg-midnight px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-cream">
+        <div className="inline-flex items-center gap-1 rounded-full border border-success-line bg-success-soft px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-success-ink">
           Notified · #{row.lastFollowupNotifiedNumber} ·{" "}
           {formatDateTime(row.lastFollowupNotifiedAt)}
         </div>
