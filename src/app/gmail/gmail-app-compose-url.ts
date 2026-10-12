@@ -1,11 +1,17 @@
 /**
  * Builder for the Gmail iOS **app** compose scheme.
  *
- * `googlegmail:///co?...` is community-reported only — Google does not
- * officially document any URL scheme for the iOS Gmail app — but the plain
- * `googlegmail://` launcher has now been confirmed working on the user's
- * iPhone, so this is the next diagnostic step: same scheme family, plus the
- * commonly reported `co` (compose) route with to/subject/body.
+ * This module used to own its own copy of the `googlegmail:///co?...`
+ * construction. That construction was confirmed working on the user's
+ * iPhone, so it has since been promoted to the shared outreach library
+ * (`src/lib/outreach/gmail-compose.ts`, `buildGmailAppUrl`) and this module
+ * now re-exports it. The /gmail diagnostic page and every production draft
+ * entry point therefore build the identical URL and can never drift apart.
+ *
+ * `googlegmail:///co?...` (three slashes) is community-reported only —
+ * Google does not officially document any URL scheme for the iOS Gmail
+ * app — but this exact form opens the native app into a prefilled compose
+ * screen on the operator's device.
  *
  * Encoding is done with URLSearchParams so Czech diacritics, ampersands,
  * plus signs and multiline bodies survive exactly as on the web compose URL.
@@ -13,18 +19,16 @@
  * still presses Send.
  */
 
-export const GMAIL_APP_COMPOSE_BASE = "googlegmail:///co?";
+import {
+  GMAIL_APP_COMPOSE_BASE,
+  buildGmailAppUrl,
+  type GmailComposeInput,
+} from "@/lib/outreach/gmail-compose";
 
-export interface GmailAppComposeInput {
-  to: string;
-  subject: string;
-  body: string;
-}
+export { GMAIL_APP_COMPOSE_BASE };
 
-export function buildGmailAppComposeUrl(input: GmailAppComposeInput): string {
-  const params = new URLSearchParams();
-  params.set("to", input.to.trim());
-  params.set("subject", input.subject);
-  params.set("body", input.body);
-  return `${GMAIL_APP_COMPOSE_BASE}${params.toString()}`;
-}
+/** Input shape kept for existing callers: recipient plus optional fields. */
+export type GmailAppComposeInput = GmailComposeInput;
+
+/** The shared, iPhone-verified app compose builder (single source of truth). */
+export const buildGmailAppComposeUrl = buildGmailAppUrl;

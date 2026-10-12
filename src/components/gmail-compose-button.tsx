@@ -3,8 +3,7 @@
 import { useCallback } from "react";
 
 import type { GmailComposeInput } from "@/lib/outreach/gmail-compose-client";
-import { buildGmailAppUrl } from "@/lib/outreach/gmail-compose";
-import { isIOS, isAndroid, openGmailCompose } from "@/lib/outreach/open-gmail-compose";
+import { isIOS, isAndroid, openGmailCompose, openGmailAppCompose } from "@/lib/outreach/open-gmail-compose";
 
 /**
  * "Open in Gmail" button — provides two options on mobile:
@@ -32,12 +31,11 @@ export function GmailComposeButton({
   title?: string;
 }) {
   const handleTryGmailApp = useCallback(() => {
-    // Try to open Gmail app via googlegmail:// scheme.
-    // This is best-effort — may not work on all Gmail versions or iOS configs.
-    // If it fails, user can use the browser compose button below.
-    if (typeof window !== "undefined") {
-      window.location.assign(buildGmailAppUrl(input));
-    }
+    // Centralized helper: the iPhone-verified googlegmail:///co? deep link
+    // with the full draft data, plus the not-installed guard that falls back
+    // to web compose if the app does not open. If that still fails, the
+    // browser compose button below remains available.
+    openGmailAppCompose(input);
   }, [input]);
 
   const handleBrowserCompose = useCallback(() => {

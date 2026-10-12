@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 
-import { openGmailCompose } from "@/lib/outreach/open-gmail-compose";
+import { openGmailComposeSmart } from "@/lib/outreach/open-gmail-compose";
 import { loadFollowUps } from "@/app/actions";
 import { formatDate, formatDateTime, sequenceLabel, leadTitle } from "@/lib/utils/date";
 
@@ -73,14 +73,17 @@ export function FollowUpsClient({ initialFollowUps, initialError }: Props) {
     setOpeningGmailId(item.message.id);
     setNotice(null);
 
-    openGmailCompose({
+    // Centralized helper: on iOS the native Gmail app opens into a prefilled
+    // compose screen (iPhone-verified deep link), elsewhere web compose. The
+    // full stored follow-up goes across; nothing is sent, nothing is marked sent.
+    openGmailComposeSmart({
       to: item.lead.email,
       subject: item.message.subject,
       body: item.message.body,
     });
 
-    // Navigation happens synchronously in openGmailCompose via window.location.assign().
-    // No notice needed — the browser navigates away.
+    // Navigation happens synchronously in the helper via window.location.assign().
+    // No notice needed — the browser (or the Gmail app) takes over.
   }
 
   const draftFollowUps = followUps.filter((f) => f.message.status === "draft");

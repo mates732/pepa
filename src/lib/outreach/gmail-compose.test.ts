@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
-import { buildGmailComposeUrl, readComposeParam } from "./gmail-compose";
+import { buildGmailAppComposeUrl } from "@/app/gmail/gmail-app-compose-url";
+
+import { buildGmailAppUrl, buildGmailComposeUrl, readComposeParam } from "./gmail-compose";
 
 /**
  * Pure tests for the Gmail compose URL builder.
@@ -199,6 +201,154 @@ describe("buildGmailComposeUrl — safety properties", () => {
 
     expect(readComposeParam(url, "bcc")).toBeNull();
     expect(readComposeParam(url, "su")).toBe("hello&bcc=victim@example.com");
+  });
+});
+
+describe("buildGmailAppUrl — verified iOS app compose scheme", () => {
+  it("builds the exact URL confirmed working on the operator's iPhone", () => {
+    expect(
+      buildGmailAppUrl({
+        to: "test@example.com",
+        subject: "PEPA TEST",
+        body: "Test message",
+      }),
+    ).toBe("googlegmail:///co?to=test%40example.com&subject=PEPA+TEST&body=Test+message");
+  });
+
+  it("uses three slashes — the old two-slash form never opened compose", () => {
+    const url = buildGmailAppUrl({ to: "info@thearchive.cz", subject: "X", body: "Y" });
+
+    expect(url.startsWith("googlegmail:///co?")).toBe(true);
+    // The broken legacy base is NOT a substring of the verified one.
+    expect(url).not.toContain("googlegmail://co?");
+  });
+
+  it("always emits to, subject and body in that order", () => {
+    const url = buildGmailAppUrl({ to: "x@y.cz", subject: "S", body: "B" });
+
+    expect(url).toBe("googlegmail:///co?to=x%40y.cz&subject=S&body=B");
+  });
+
+  it("contains exactly the three compose parameters — nothing that could send", () => {
+    const url = buildGmailAppUrl({
+      to: "info@thearchive.cz",
+      subject: "Nabídka",
+      body: "Text",
+    });
+
+    const keys = [...new URLSearchParams(url.slice(url.indexOf("?") + 1)).keys()];
+    expect(keys).toEqual(["to", "subject", "body"]);
+    expect(url).not.toMatch(/send|authuser|oauth|ik=|pli=|bcc|(^|&)cc=/i);
+  });
+
+  it("round-trips Czech diacritics through decoding", () => {
+    const subject = "Příjemné odpoledne — nabídka";
+    const url = buildGmailAppUrl({ to: "info@thearchive.cz", subject });
+
+    expect(readComposeParam(url, "subject")).toBe(subject);
+    expect(url).toContain("%C5%99"); // ř is percent-encoded, not raw
+    expect(url).not.toContain("ř");
+  });
+
+  it("keeps an ampersand in the body from splitting the URL into a new parameter", () => {
+    const body = "Cena 500 Kč & více, pošlete prosím";
+    const url = buildGmailAppUrl({ to: "info@thearchive.cz", body });
+
+    const keys = [...new URLSearchParams(url.slice(url.indexOf("?") + 1)).keys()];
+    expect(keys).toEqual(["to", "subject", "body"]);
+    expect(readComposeParam(url, "body")).toBe(body);
+  });
+
+  it("preserves a plus sign in the recipient instead of decoding it as a space", () => {
+    const url = buildGmailAppUrl({ to: "receipt+archive@gmail.com", subject: "S", body: "B" });
+
+    expect(readComposeParam(url, "to")).toBe("receipt+archive@gmail.com");
+  });
+
+  it("encodes paragraph breaks as %0A and round-trips them", () => {
+    const body = "Dobrý den,\n\nrád bych vám nabídl řešení.\n\nS pozdravem";
+    const url = buildGmailAppUrl({ to: "info@thearchive.cz", body });
+
+    expect(url).toContain("%0A%0A");
+    expect(readComposeParam(url, "body")).toBe(body);
+  });
+
+  it("preserves CRLF line endings byte for byte (no normalization)", () => {
+    const body = "Řádek 1\r\n\r\nŘádek 3";
+    const url = buildGmailAppUrl({ to: "info@thearchive.cz", body });
+
+    expect(readComposeParam(url, "body")).toBe(body);
+  });
+
+  it("round-trips a long realistic body un-truncated", () => {
+    const body = Array.from(
+      { length: 40 },
+      (_, i) => `Odstavec ${i + 1}: automatizace recepce šetří čas vašeho personálu.`,
+    ).join("\n\n");
+    const url = buildGmailAppUrl({ to: "info@thearchive.cz", subject: "Dlouhá nabídka", body });
+
+    const decoded = readComposeParam(url, "body");
+    expect(decoded).toBe(body);
+    expect(decoded!.length).toBe(body.length);
+  });
+
+  it("trims the recipient and subject but keeps the body byte for byte", () => {
+    const url = buildGmailAppUrl({
+      to: "  info@thearchive.cz  ",
+      subject: " Nabídka ",
+      body: " Text ",
+    });
+
+    expect(readComposeParam(url, "to")).toBe("info@thearchive.cz");
+    expect(readComposeParam(url, "subject")).toBe("Nabídka");
+    expect(readComposeParam(url, "body")).toBe(" Text ");
+  });
+
+  it("keeps a malicious subject from injecting extra parameters", () => {
+    const url = buildGmailAppUrl({
+      to: "info@thearchive.cz",
+      subject: "hello&bcc=victim@example.com",
+      body: "Text",
+    });
+
+    expect(readComposeParam(url, "bcc")).toBeNull();
+    expect(readComposeParam(url, "subject")).toBe("hello&bcc=victim@example.com");
+  });
+
+  it("emits empty subject and body parameters for null values (verified URL shape)", () => {
+    const url = buildGmailAppUrl({ to: "info@thearchive.cz", subject: null, body: null });
+
+    expect(readComposeParam(url, "to")).toBe("info@thearchive.cz");
+    expect(readComposeParam(url, "subject")).toBe("");
+    expect(readComposeParam(url, "body")).toBe("");
+  });
+
+  it("is a pure function and does not mutate its input", () => {
+    const input = { to: " info@thearchive.cz ", subject: " Nabídka ", body: " Text " };
+    buildGmailAppUrl(input);
+
+    expect(input).toEqual({ to: " info@thearchive.cz ", subject: " Nabídka ", body: " Text " });
+    expect(buildGmailAppUrl(input)).toBe(buildGmailAppUrl(input));
+  });
+});
+
+describe("buildGmailAppUrl — parity with the /gmail diagnostic builder", () => {
+  it("produces byte-identical URLs to the builder verified on the iPhone", () => {
+    // The diagnostic module re-exports this builder, so production and the
+    // /gmail test bench can never drift apart. This pins the parity explicitly.
+    const cases = [
+      { to: "test@example.com", subject: "PEPA TEST", body: "Test message" },
+      {
+        to: "info@test.cz",
+        subject: "Příjemné odpoledne — nabídka",
+        body: "Dobrý den, zdraví Matyáš.\n\nS pozdravem",
+      },
+      { to: "  info@test.cz  ", subject: "Test & confirm", body: "A & B = C\nřádek dvě" },
+    ];
+
+    for (const input of cases) {
+      expect(buildGmailAppUrl(input)).toBe(buildGmailAppComposeUrl(input));
+    }
   });
 });
 

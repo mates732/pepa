@@ -3,8 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 
-import { openGmailCompose, isIOS } from "@/lib/outreach/open-gmail-compose";
-import { buildGmailAppUrl } from "@/lib/outreach/gmail-compose";
+import { openGmailComposeSmart, openGmailAppCompose, isIOS } from "@/lib/outreach/open-gmail-compose";
 import { loadOutreachHistory } from "@/app/actions";
 import { formatDate, formatDateTime, sequenceLabel, leadTitle } from "@/lib/utils/date";
 
@@ -74,14 +73,18 @@ export function OutreachHistoryClient({ initialHistory, initialError }: Props) {
     setOpeningGmailId(messageId);
     setNotice(null);
 
-    openGmailCompose({
+    // Centralized helper: on iOS the native Gmail app opens into a prefilled
+    // compose screen (iPhone-verified deep link), elsewhere web compose. The
+    // full stored message — recipient, subject and complete body — goes
+    // across; nothing is sent, nothing is marked sent.
+    openGmailComposeSmart({
       to: recipient,
       subject,
       body,
     });
 
-    // Navigation happens synchronously in openGmailCompose via window.location.assign().
-    // No notice needed — the browser navigates away.
+    // Navigation happens synchronously in the helper via window.location.assign().
+    // No notice needed — the browser (or the Gmail app) takes over.
   }
 
   const showGmailAppOption = isIOS();
@@ -165,13 +168,15 @@ export function OutreachHistoryClient({ initialHistory, initialError }: Props) {
                                 type="button"
                                 className="btn btn-xs text-midnight-soft"
                                 onClick={() => {
-                                  if (typeof window !== "undefined") {
-                                    window.location.assign(buildGmailAppUrl({
-                                      to: lead.email,
-                                      subject: lead.mainEmail!.message.subject,
-                                      body: "",
-                                    }));
-                                  }
+                                  // Same verified deep link via the centralized
+                                  // helper — with the COMPLETE stored body (this
+                                  // button previously sent an empty one) and the
+                                  // not-installed web fallback.
+                                  openGmailAppCompose({
+                                    to: lead.email,
+                                    subject: lead.mainEmail!.message.subject,
+                                    body: lead.mainEmail!.message.body,
+                                  });
                                 }}
                                 disabled={openingGmailId === lead.mainEmail!.message.id}
                               >

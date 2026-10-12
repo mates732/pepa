@@ -5,8 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { saveDraftsFromPaste } from "@/app/save-drafts-action";
 import { loadDraftById } from "@/app/load-draft-action";
 import { updateDraft } from "@/app/update-draft-action";
-import { openGmailCompose, isIOS } from "@/lib/outreach/open-gmail-compose";
-import { buildGmailAppUrl } from "@/lib/outreach/gmail-compose";
+import { openGmailComposeSmart, openGmailAppCompose, isIOS } from "@/lib/outreach/open-gmail-compose";
 import { deleteOutreachMessage, loadOutreachDraftRows as loadOutreachDraftRowsAction } from "@/app/actions";
 import type { OutreachDraftRow } from "@/lib/services/outreach-service";
 
@@ -128,29 +127,30 @@ export function Inbox() {
     setOpeningGmailId(messageId);
     setNotice(null);
 
-    // Build URL client-side from draft data we already have — no async wait
-    // needed, no about:blank intermediate tab. The shared helper handles the
-    // popup-blocking fallback and never claims success when the tab is blocked.
-    openGmailCompose({
+    // The centralized helper picks the platform: on iOS it opens the native
+    // Gmail app into a prefilled compose screen (the iPhone-verified deep
+    // link), everywhere else it opens web compose in the same tab. The full
+    // stored draft — recipient, subject and complete body — goes across; the
+    // helper never sends and never changes the draft's status.
+    openGmailComposeSmart({
       to: draft.message.recipient_email,
       subject: draft.message.subject,
       body: draft.message.body,
     });
 
-    // Navigation happens synchronously in openGmailCompose via window.location.assign().
-    // No notice needed — the browser navigates away.
+    // Navigation happens synchronously in the helper via window.location.assign().
+    // No notice needed — the browser (or the Gmail app) takes over.
   }
 
   function handleTryGmailApp(messageId: string, draft: OutreachDraftRow) {
-    // On iOS, mailto: may open the Gmail app if configured as default.
-    // This is not guaranteed — it depends on iOS settings.
-    if (typeof window !== "undefined") {
-      window.location.assign(buildGmailAppUrl({
-        to: draft.message.recipient_email,
-        subject: draft.message.subject,
-        body: draft.message.body,
-      }));
-    }
+    // Manual "try the app" retry: same verified deep link with the full draft,
+    // plus the helper's not-installed guard that falls back to web compose
+    // when the app does not open.
+    openGmailAppCompose({
+      to: draft.message.recipient_email,
+      subject: draft.message.subject,
+      body: draft.message.body,
+    });
   }
 
   const showGmailAppOption = isIOS();

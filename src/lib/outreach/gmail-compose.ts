@@ -87,34 +87,48 @@ export function buildMailtoUrl(input: GmailComposeInput): string {
 }
 
 /**
+ * Verified Gmail iOS **app** compose base URL.
+ *
+ * Note the THREE slashes: `googlegmail:///co?`. This exact form was confirmed
+ * on the operator's real iPhone to open the native Gmail app directly into a
+ * compose screen prefilled with to/subject/body. The two-slash form
+ * (`googlegmail://co?`) that previously shipped here did not open compose and
+ * was the root cause of drafts only ever reaching Gmail-in-Safari.
+ *
+ * Google does not officially document any iOS URL scheme — this is
+ * community-reported behavior, verified on our device, and could change in a
+ * future Gmail release.
+ */
+export const GMAIL_APP_COMPOSE_BASE = "googlegmail:///co?";
+
+/**
  * Build a Gmail app deep link URL for iOS/Android.
  *
- * Uses the `googlegmail://` custom URL scheme which may open the Gmail app
- * directly. This is NOT guaranteed to work:
- *   - The Gmail app must be installed
- *   - iOS may show a dialog asking which app to use
- *   - Some Gmail versions may not support compose via this scheme
- *   - The scheme format may change between Gmail versions
+ * Produces the exact construction verified on the operator's iPhone:
+ * `googlegmail:///co?to=...&subject=...&body=...` with all three parameters
+ * always present, in that order, encoded by URLSearchParams (spaces as `+`,
+ * newlines as `%0A`, Czech diacritics and `&` percent-encoded). The body is
+ * preserved byte for byte — no newline normalization — so what the operator
+ * sees in the Gmail compose screen is exactly what PEPA stored.
  *
- * URL format: googlegmail://co?to=&subject=&body=
- * Parameters are URL-encoded using URLSearchParams. Newlines are preserved
- * as actual newline characters; URLSearchParams will encode them as %0A.
+ * The recipient is trimmed; a null/absent subject or body becomes an empty
+ * parameter rather than being omitted, matching the verified URL shape.
+ *
+ * This is NOT guaranteed to work forever: the Gmail app must be installed,
+ * iOS may show a picker dialog, and the scheme may change between versions.
+ * Callers should keep the web compose URL (`buildGmailComposeUrl`) as the
+ * fallback — see `openGmailAppCompose`, which wires that fallback in.
+ *
+ * Nothing here sends. Gmail opens a compose screen; the operator presses Send.
  */
 export function buildGmailAppUrl(input: GmailComposeInput): string {
   const params = new URLSearchParams();
-  const to = (input.to ?? "").trim();
-  if (to) params.set("to", to);
+  params.set("to", (input.to ?? "").trim());
+  params.set("subject", (input.subject ?? "").trim());
+  // The body is preserved byte for byte; URLSearchParams encodes newlines as %0A.
+  params.set("body", input.body ?? "");
 
-  const subject = (input.subject ?? "").trim();
-  if (subject) params.set("subject", subject);
-
-  const body = input.body ?? "";
-  if (body.trim()) {
-    // Use the body as-is; URLSearchParams will encode newlines as %0A
-    params.set("body", body.replace(/\r\n/g, "\n"));
-  }
-
-  return `googlegmail://co?${params.toString()}`;
+  return `${GMAIL_APP_COMPOSE_BASE}${params.toString()}`;
 }
 
 /**
@@ -127,10 +141,10 @@ export function isIOS(): boolean {
 }
 
 /**
- * Build both URLs for a compose action.
+ * Build all compose URLs for a draft.
  *
  * Returns:
- *   - gmailApp: googlegmail:// URL for trying to open the Gmail app (best-effort)
+ *   - gmailApp: verified googlegmail:///co? app deep link (best-effort)
  *   - mailto: mailto: URL as another fallback
  *   - web: Gmail web compose URL as reliable fallback
  */

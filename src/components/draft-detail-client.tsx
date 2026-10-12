@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 
-import { openGmailCompose } from "@/lib/outreach/open-gmail-compose";
+import { openGmailComposeSmart } from "@/lib/outreach/open-gmail-compose";
 import { updateDraft } from "@/app/update-draft-action";
 import { loadDraftById } from "@/app/load-draft-action";
 import { deleteOutreachMessage } from "@/app/actions";
@@ -118,14 +118,17 @@ export function DraftDetailClient({ initialDraft }: Props) {
     setOpeningGmail(true);
     setNotice(null);
 
-    openGmailCompose({
+    // Centralized helper: on iOS the native Gmail app opens into a prefilled
+    // compose screen (iPhone-verified deep link), elsewhere web compose. The
+    // full stored draft goes across; nothing is sent, nothing is marked sent.
+    openGmailComposeSmart({
       to: draft.message.recipient_email,
       subject: draft.message.subject,
       body: draft.message.body,
     });
 
-    // Navigation happens synchronously in openGmailCompose via window.location.assign().
-    // No notice needed — the browser navigates away.
+    // Navigation happens synchronously in the helper via window.location.assign().
+    // No notice needed — the browser (or the Gmail app) takes over.
   }
 
   async function handleDelete() {
