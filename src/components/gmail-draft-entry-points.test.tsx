@@ -59,7 +59,11 @@ const ENTRY_POINTS: EntryPoint[] = [
   },
   {
     file: "follow-ups-client.tsx",
-    toField: "to: item.lead.email",
+    // The sequence is keyed by lead AND recipient: a follow-up row may target
+    // an address other than the lead's primary one, and the compose window
+    // must open on the row's own recipient — same rule the notification engine
+    // applies ("uses the notified row's own recipient").
+    toField: "to: item.message.recipient_email",
     subjectField: "subject: item.message.subject",
     bodyField: "body: item.message.body",
   },
@@ -68,6 +72,14 @@ const ENTRY_POINTS: EntryPoint[] = [
     toField: "to: recipient",
     subjectField: "subject,",
     bodyField: "body,",
+  },
+  {
+    file: "follow-up-detail-panel.tsx",
+    // The Telegram deep-link landing point — same centralized opener, same
+    // row-recipient rule as the workspace.
+    toField: "to: detail!.message.recipient_email",
+    subjectField: "subject: detail!.message.subject",
+    bodyField: "body: detail!.message.body",
   },
 ];
 

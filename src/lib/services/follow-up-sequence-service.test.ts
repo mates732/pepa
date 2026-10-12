@@ -859,3 +859,66 @@ describe("follow-up workspace — detail edge cases", () => {
     expect(detail.reason).toBe("not_found");
   });
 });
+
+describe("follow-up workspace — association with the initial send", () => {
+  it("reports the initial's send timestamp, which is what timing derives from", async () => {
+    seedLead();
+    const initial = seedMessage(); // sent by default
+    const { createFollowUpDraft, listFollowUps } = await load();
+    await createFollowUpDraft({ anchorMessageId: initial.id, subject: "FU1", body: "Navazuji." });
+
+    const list = await listFollowUps();
+    const item = list.data?.[0];
+
+    expect(item?.message.sequence_number).toBe(1);
+    expect(item?.initialSent).toBe(true);
+    expect(item?.initialSentAt).toBe("2026-09-20T09:00:00.000Z");
+  });
+
+  it("marks a follow-up inactive while the initial has never been sent", async () => {
+    seedLead();
+    const initial = seedMessage({ status: "draft", sent_at: null });
+    const { createFollowUpDraft, listFollowUps } = await load();
+    await createFollowUpDraft({ anchorMessageId: initial.id, subject: "FU1", body: "Navazuji." });
+
+    const list = await listFollowUps();
+    const item = list.data?.[0];
+
+    expect(item?.initialSent).toBe(false);
+    expect(item?.initialSentAt).toBeNull();
+    // No send means no schedule exists (`next_followup_at` is only ever set by
+    // the send transition), so the row can never be actionable.
+    expect(item?.due).toBe(false);
+    expect(item?.attention).toBe(1);
+  });
+
+  it("associates the initial by lead AND recipient, never by lead alone", async () => {
+    seedLead();
+    seedMessage(); // sequence 0, recipient A, sent
+    // A follow-up row addressed to a different recipient on the same lead has
+    // no sequence-0 sibling of its own — it must not borrow recipient A's send.
+    db.messages.push({
+      id: "bbbbbbbb-0000-0000-0000-000000000002",
+      lead_id: LEAD_ID,
+      recipient_email: OTHER_RECIPIENT,
+      recipient_normalized: OTHER_RECIPIENT,
+      subject: "Jiný příjemce",
+      body: null,
+      status: "draft",
+      provider: null,
+      provider_message_id: null,
+      sent_at: null,
+      created_at: "2026-10-02T08:00:00.000Z",
+      sequence_number: 1,
+      parent_message_id: null,
+    } as OutreachMessageRow);
+
+    const { listFollowUps } = await load();
+    const list = await listFollowUps();
+    const item = list.data?.[0];
+
+    expect(item?.message.recipient_email).toBe(OTHER_RECIPIENT);
+    expect(item?.initialSent).toBe(false);
+    expect(item?.initialSentAt).toBeNull();
+  });
+});

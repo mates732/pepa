@@ -89,7 +89,14 @@ export function DraftsListClient({ initialDrafts, initialError }: Props) {
       <header>
         <h1 className="heading-sticker text-xl text-midnight">Drafts</h1>
         <p className="mt-1 text-sm text-midnight-soft">
-          {drafts.length} draft{drafts.length === 1 ? "" : "s"} saved
+          {drafts.length} draft{drafts.length === 1 ? "" : "s"} saved · initial outreach only
+        </p>
+        <p className="mt-1 text-xs text-midnight-soft">
+          Scheduled follow-ups never appear here — they surface in{" "}
+          <Link href="/follow-ups" className="font-semibold text-accent underline-offset-2 hover:underline">
+            Follow-ups
+          </Link>{" "}
+          only once their initial email is sent and they are due.
         </p>
       </header>
 

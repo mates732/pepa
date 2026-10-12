@@ -203,6 +203,18 @@ export interface FollowUpListItem {
   due: boolean;
   dueAt: string | null;
   /**
+   * When the sequence's initial outreach (slot 0 for the same recipient) was
+   * marked sent — the timestamp follow-up timing is computed from. Null when
+   * that row is missing or still unsent; `initialSent` disambiguates the two.
+   */
+  initialSentAt: string | null;
+  /**
+   * Whether a stored sequence-0 row exists AND is marked sent. False when the
+   * initial is still a draft — in which case every follow-up in the sequence is
+   * inactive, however old it is — and also when the row itself is gone.
+   */
+  initialSent: boolean;
+  /**
    * Operational rank: 0 = needs attention now, 1 = unsent, 2 = already sent.
    * See {@link listFollowUps} for why this is not a database column.
    */
@@ -248,13 +260,38 @@ export async function listFollowUps(limit = 100): Promise<FollowUpResult<FollowU
 
   if (error) return fail("store_failed", "Follow-ups could not be loaded.");
 
-  const items = ((data ?? []) as Array<Record<string, unknown>>).map((row) => {
+  const rows = (data ?? []) as Array<Record<string, unknown>>;
+
+  // The initial outreach of each sequence: one bounded second query for the
+  // whole page, never one per row. Keyed by lead + recipient because a sequence
+  // is defined over exactly that pair (same rule as `findAnchorByLeadAndRecipient`).
+  const leadIds = [...new Set(rows.map((row) => String(row.lead_id)))];
+  const initialsByKey = new Map<string, { sentAt: string | null; sent: boolean }>();
+  if (leadIds.length > 0) {
+    const { data: initialRows } = await supabase
+      .from("outreach_messages")
+      .select("lead_id, recipient_email, sent_at, status")
+      .eq("sequence_number", 0)
+      .in("lead_id", leadIds);
+
+    for (const row of (initialRows ?? []) as Array<Record<string, unknown>>) {
+      const key = `${String(row.lead_id)}\u0000${String(row.recipient_email ?? "")}`;
+      const sentAt = (row.sent_at ?? null) as string | null;
+      initialsByKey.set(key, {
+        sentAt,
+        sent: sentAt !== null || String(row.status ?? "") === "sent",
+      });
+    }
+  }
+
+  const items = rows.map((row) => {
     const message = toMessage(row);
     const lead = (row.leads ?? {}) as Record<string, unknown>;
     const dueAt = (lead.next_followup_at ?? null) as string | null;
     const dueTimestamp = dueAt ? Date.parse(dueAt) : Number.NaN;
     const due = Number.isFinite(dueTimestamp) && dueTimestamp <= now;
     const sent = isSent(message);
+    const initial = initialsByKey.get(`${message.lead_id}\u0000${message.recipient_email}`);
 
     return {
       message,
@@ -266,6 +303,8 @@ export async function listFollowUps(limit = 100): Promise<FollowUpResult<FollowU
       },
       dueAt,
       due,
+      initialSentAt: initial?.sentAt ?? null,
+      initialSent: initial?.sent === true,
       // Due wins over merely unsent: an overdue follow-up is the actionable one.
       attention: (sent ? 2 : due ? 0 : 1) as 0 | 1 | 2,
     };

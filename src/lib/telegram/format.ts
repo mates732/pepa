@@ -8,7 +8,7 @@
  * from lead names and subjects.
  */
 
-import { formatDate } from "@/lib/format";
+import { formatDate, formatDateTime } from "@/lib/format";
 import type { ActionNotification } from "@/lib/providers/types";
 import type { TelegramInlineButton } from "@/lib/telegram/client";
 
@@ -20,6 +20,12 @@ export interface FollowUpDueDetails {
   /** 1-based follow-up attempt number. */
   attempt: number;
   lastContactedAt: string | null;
+  /**
+   * When this follow-up became (or becomes) due — the schedule the engine
+   * computed from the initial send. Shown so the operator can tell an overdue
+   * follow-up from one that only just came due.
+   */
+  dueAt: string | null;
   /** Absolute PEPA deep link carrying only an opaque token. */
   deepLink: string;
 }
@@ -45,6 +51,7 @@ export function formatFollowUpNotification(details: FollowUpDueDetails): {
       details.leadName?.trim() || details.email,
       "",
       `Follow-up #${details.attempt}`,
+      `Due: ${formatDateTime(details.dueAt)}`,
       `Last contact: ${formatDate(details.lastContactedAt)}`,
       "",
       details.email,

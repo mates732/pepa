@@ -538,6 +538,9 @@ export async function processDueFollowUps(options: ProcessOptions = {}): Promise
         // Read, never computed: this is the row's own position in the sequence.
         attempt: sequenceNumber,
         lastContactedAt: entry.lead.last_contacted_at,
+        // The schedule the engine is acting on, straight from the due view —
+        // not recomputed here, so the message can never disagree with the claim.
+        dueAt: entry.dueAt ?? null,
         deepLink: await buildDeepLink(token.data.token),
       });
 

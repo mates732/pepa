@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
+import { formatDateTime } from "@/lib/format";
 import {
   formatFollowUpDueMessage,
   formatPlainNotification,
@@ -25,12 +26,15 @@ const details = {
   email: "info@thearchive.cz",
   attempt: 1,
   lastContactedAt: "2026-09-30T09:00:00Z",
+  dueAt: "2026-10-01T08:00:00Z",
   deepLink: "https://pepa.example.com/followup/fp1_abc",
 };
 
 describe("formatFollowUpDueMessage", () => {
   it("renders the notification surface exactly as designed", () => {
-    // en-GB renders September as "Sept".
+    // en-GB renders September as "Sept". The due line is built with the same
+    // formatter the notification uses, so the pin is exact without assuming a
+    // machine time zone.
     expect(formatFollowUpDueMessage(details)).toBe(
       [
         "🔥 FOLLOW-UP DUE",
@@ -38,11 +42,21 @@ describe("formatFollowUpDueMessage", () => {
         "The Archive",
         "",
         "Follow-up #1",
+        `Due: ${formatDateTime(details.dueAt)}`,
         "Last contact: 30 Sept 2026",
         "",
         "info@thearchive.cz",
       ].join("\n"),
     );
+  });
+
+  it("includes the due time so overdue is distinguishable from just-due", () => {
+    expect(formatFollowUpDueMessage(details)).toContain(`Due: ${formatDateTime(details.dueAt)}`);
+  });
+
+  it("falls back to an em dash when the due time is missing", () => {
+    const text = formatFollowUpDueMessage({ ...details, dueAt: null });
+    expect(text).toContain("Due: —");
   });
 
   it("falls back to the email when no company or contact name is known", () => {

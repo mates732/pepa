@@ -109,6 +109,9 @@ export class TelegramProvider implements NotificationService {
       email: input.lead.email,
       attempt: input.attempt,
       lastContactedAt: input.lead.last_contacted_at,
+      // The lead's schedule is the only due time this entry point knows; the
+      // engine path passes the due view's own `next_followup_at` instead.
+      dueAt: input.lead.next_followup_at ?? null,
       deepLink: await buildDeepLink(minted.data.token),
     };
 

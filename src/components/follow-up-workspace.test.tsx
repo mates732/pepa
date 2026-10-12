@@ -40,6 +40,8 @@ function item(overrides: Partial<FollowUpListItem> = {}): FollowUpListItem {
     },
     due: true,
     dueAt: "2026-10-01T08:00:00.000Z",
+    initialSentAt: "2026-09-28T10:00:00.000Z",
+    initialSent: true,
     attention: 0,
     ...overrides,
   };

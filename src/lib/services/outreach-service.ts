@@ -603,7 +603,12 @@ async function leadOutreachEmails(
 }
 
 /**
- * Rows for the dashboard table, joined with each lead's two outreach emails.
+ * Rows for the dashboard table and the Drafts list, joined with each lead.
+ *
+ * Initial outreach only (`sequence_number = 0`). Follow-up rows live in the
+ * Follow-ups workspace and must never surface here: a follow-up is not a draft
+ * the operator should act on until the workspace says it is due. Filtering in
+ * the query — not in the UI — keeps every consumer of this function honest.
  */
 export async function listOutreachDrafts(): Promise<ServiceResult<OutreachDraftRow[]>> {
   const supabase = getSupabaseAdmin();
@@ -613,6 +618,7 @@ export async function listOutreachDrafts(): Promise<ServiceResult<OutreachDraftR
       "id, lead_id, recipient_email, subject, body, status, provider, provider_message_id, sent_at, created_at, sequence_number, parent_message_id, leads!inner(id, email, company_name, contact_name)",
     )
     .is("sent_at", null)
+    .eq("sequence_number", 0)
     .order("created_at", { ascending: false });
 
   if (error) return fail(error.message);
