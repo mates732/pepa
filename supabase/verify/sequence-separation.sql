@@ -107,7 +107,7 @@ where f.parent_message_id is not null
 
 --    6c. notification ledger rows pointing at a message that no longer exists
 --        (harmless — the ledger only deduplicates — but visible).
-select n.id, n.lead_id, n.sequence_number, n.outreach_id
+select n.id, n.lead_id, n.followup_number, n.outreach_id
 from followup_notifications n
 where n.outreach_id is not null
   and not exists (
