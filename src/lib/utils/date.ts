@@ -26,15 +26,15 @@ export function formatDateTime(dateString: string | null): string {
   }
 }
 
-export function sequenceLabel(sequenceNumber: number): string {
-  if (sequenceNumber <= 0) return "Initial";
-  return `Follow-up #${sequenceNumber}`;
-}
-
 export function leadTitle(lead: { company_name: string | null; contact_name: string | null; email: string }): string {
   return lead.company_name || lead.contact_name || lead.email;
 }
 
 export function draftTitle(draft: { lead: { company_name: string | null; contact_name: string | null; email: string } }): string {
   return leadTitle(draft.lead);
+}
+
+export function sequenceLabel(sequenceNumber: number): string {
+  if (sequenceNumber <= 0) return "Initial";
+  return `Follow-up #${sequenceNumber}`;
 }

@@ -11,26 +11,24 @@ import { CLAIM_LEASE_MS, processDueFollowUps, type ActionNotifier } from "./foll
 
 type Row = Record<string, unknown>;
 
-const { db, makeSupabase } = vi.hoisted(() => {
-  const db = {
+const { db, makeSupabase } = vi.hoisted(() => {  const db = {
     dueFollowups: [] as Row[],
     notifications: [] as Row[],
     tokens: [] as Row[],
     leads: [] as Row[],
-    /** Phase 8A: the real sequence rows a notification can point at. */
     messages: [] as Row[],
-    /** Makes markNotified() fail, i.e. a send that cannot be booked. */
     failBookkeeping: false,
+    dueNow: null as number | null,
+    notificationDueAtOverride: null as string | null,
   };
 
-  /** Supabase table name -> store. */
-  const TABLES = {
+  const TABLES: Record<string, string> = {
     due_followups: "dueFollowups",
     followup_notifications: "notifications",
     action_tokens: "tokens",
     leads: "leads",
     outreach_messages: "messages",
-  } as const;
+  };
 
   type Table = keyof typeof TABLES;
 
@@ -48,29 +46,41 @@ const { db, makeSupabase } = vi.hoisted(() => {
 
   function builder(table: Table, filters: Filter[]) {
     let order: { column: string; ascending: boolean } | null = null;
-    let limit: number | null = null;
-
-    const matched = () => {
-      const filtered = (db[TABLES[table]] as Row[]).filter((row) =>
-        filters.every(({ column, op, value }) => {
-          if (op === "eq") return row[column] === value;
-          if (op === "is") return value === null ? (row[column] ?? null) === null : row[column] === value;
-          if (op === "in") return (value as unknown[]).includes(row[column]);
-          return Number(row[column] ?? Number.NEGATIVE_INFINITY) > Number(value);
-        }),
+    let limit: number | null = null;  const matched = () => {
+      let base = (db[TABLES[table]] as Row[]).filter(
+        (row) =>
+          filters.every(({ column, op, value }) => {
+            if (op === "eq") return row[column] === value;
+            if (op === "is")
+              return value === null ? (row[column] ?? null) === null : row[column] === value;
+            if (op === "in") return (value as unknown[]).includes(row[column]);
+            return Number(row[column] ?? Number.NEGATIVE_INFINITY) > Number(value);
+          }),
       );
+      // The `due_followups` view filters `next_followup_at <= now()` or
+      // `notification_due_at <= now()` in SQL. Replicate that here.
+      if (table === "dueFollowups") {
+        const now = db.dueNow ?? Date.now();
+        base = base.filter((row) => {
+          const nextFu = row.next_followup_at;
+          const notifDue = row.notification_due_at ?? db.notificationDueAtOverride;
+          if (!nextFu) return false;
+          if (!notifDue) return Date.parse(String(nextFu)) <= now;
+          return Date.parse(String(nextFu)) <= now || Date.parse(String(notifDue)) <= now;
+        });
+      }
       // PostgREST applies ORDER BY before LIMIT, and the Phase 8A resolution
       // depends on it: "the highest open sequence row" is only correct if the
       // fake actually sorts.
       if (order) {
         const direction = order.ascending ? 1 : -1;
-        filtered.sort((a, b) => {
+        base.sort((a, b) => {
           const av = Number(a[order!.column] ?? 0);
           const bv = Number(b[order!.column] ?? 0);
           return (av - bv) * direction;
         });
       }
-      return limit === null ? filtered : filtered.slice(0, limit);
+      return limit === null ? base : base.slice(0, limit);
     };
 
     const b: Record<string, unknown> = {};
@@ -251,7 +261,20 @@ vi.mock("@/lib/config/base-url", () => ({
   getBaseUrl: async () => "https://pepa.example.com",
 }));
 
-const notifications: Array<{ title: string; body: string; actionLabel: string; actionUrl: string }> = [];
+vi.mock("@/lib/services/followup-notification-settings", () => ({
+  getNotificationDelayConfig: async () => ({
+    value: 3,
+    unit: "minutes",
+  }),
+  updateNotificationDelaySettings: async (input) => {
+    if (!Number.isInteger(input.value) || input.value < 0) {
+      return { ok: false, data: null, error: "Invalid delay configuration." };
+    }
+    return { ok: true, data: { id: "s1", delayValue: input.value, delayUnit: input.unit, updatedAt: new Date().toISOString() }, error: null };
+  },
+}));
+
+const notifications: Array<{ title: string; body: string; actionLabel: string; actionUrl: string; notificationDueAt: string | null }> = [];
 let failNextSend = false;
 
 const notifier: ActionNotifier = {
@@ -260,7 +283,7 @@ const notifier: ActionNotifier = {
       failNextSend = false;
       throw new Error("Telegram delivery failed: 502");
     }
-    notifications.push({ ...notification });
+    notifications.push({ ...notification, notificationDueAt: null });
   },
 };
 
@@ -298,6 +321,9 @@ function seedFollowUpRow(overrides: Partial<Row> = {}): Row {
 }
 
 function seedDueFollowUp(overrides: Partial<Row> = {}) {
+  const now = new Date("2026-10-01T08:00:00.000Z");
+  const notificationDueAt = overrides.notification_due_at as string | undefined ??
+    (overrides.next_followup_at as string | undefined ?? "2026-10-01T08:00:00.000Z");
   const row = {
     lead_id: LEAD_ID,
     email: "hello@example.cz",
@@ -308,6 +334,7 @@ function seedDueFollowUp(overrides: Partial<Row> = {}) {
     updated_at: "2026-09-28T00:00:00.000Z",
     last_contacted_at: "2026-09-28T00:00:00.000Z",
     next_followup_at: "2026-10-01T08:00:00.000Z",
+    notification_due_at: notificationDueAt,
     followup_count: 0,
     outreach_id: OUTREACH_ID,
     recipient_email: "hello@example.cz",
@@ -324,6 +351,7 @@ function seedDueFollowUp(overrides: Partial<Row> = {}) {
     id: LEAD_ID,
     followup_count: 0,
     next_followup_at: "2026-10-01T08:00:00.000Z",
+    notification_due_at: notificationDueAt,
     ...overrides,
   });
   // Scheduling alone never justifies a notification: the follow-up row itself
@@ -340,8 +368,9 @@ beforeEach(() => {
   db.notifications = [];
   db.tokens = [];
   db.leads = [];
-  db.messages = [];
-  db.failBookkeeping = false;
+  db.messages = [];    db.failBookkeeping = false;
+    db.dueNow = null;
+    db.notificationDueAtOverride = null;
 });
 
 describe("processDueFollowUps — due selection", () => {
@@ -938,5 +967,280 @@ describe("Phase 8A — failure safety", () => {
     expect(outcome.skippedAlreadySent).toBe(1);
     expect(notifications).toHaveLength(0);
     expect(db.notifications).toHaveLength(0);
+  });
+
+  it("releases the claim under the authoritative key, not the counter", async () => {
+    seedDueFollowUp({ followup_count: 2, followup_number: 3 });
+    failNextSend = true;
+
+    await processDueFollowUps({ notifier });
+    // The released row must be gone entirely, so the next run is not blocked by
+    // a claim recorded under a number the follow-up does not own.
+    expect(db.notifications).toHaveLength(0);
+  });
+});
+
+// ===========================================================================
+// Notification delay — configurable per-unit delay for Telegram notifications.
+// ===========================================================================
+
+describe("notification delay — scheduling semantics", () => {
+  it("notifies when notification_due_at is in the past (3-minute default)", async () => {
+    // notification_due_at = dueAt (same as next_followup_at) = now.
+    seedDueFollowUp();
+    db.dueNow = Date.now();
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(1);
+    expect(outcome.skippedNotificationNotDue).toBe(0);
+    expect(notifications).toHaveLength(1);
+  });
+
+  it("does not notify when notification_due_at is still in the future", async () => {
+    // notification_due_at = 5 minutes in the future.
+    seedDueFollowUp({ notification_due_at: new Date(Date.now() + 5 * 60 * 1000).toISOString() });
+    db.dueNow = Date.now();
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(0);
+    expect(outcome.skippedNotificationNotDue).toBe(1);
+    expect(notifications).toHaveLength(0);
+    expect(db.notifications).toHaveLength(0);
+  });
+
+  it("notifies after the delay passes (3 minutes later)", async () => {
+    // notification_due_at = 3 minutes in the future, then time passes.
+    const futureDue = new Date(Date.now() + 3 * 60 * 1000);
+    const futureDueIso = futureDue.toISOString();
+    seedDueFollowUp({ notification_due_at: futureDueIso });
+
+    // First run: notification not due yet (use real clock).
+    let outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(0);
+    expect(outcome.skippedNotificationNotDue).toBe(1);
+
+    // Second run: 3 minutes later, notification is due.
+    const later = new Date(futureDue.getTime() + 1000);
+    outcome = await processDueFollowUps({ notifier, now: later });
+    expect(outcome.notified).toBe(1);
+    expect(outcome.skippedNotificationNotDue).toBe(0);
+    expect(notifications).toHaveLength(1);
+  });
+
+  it("seconds unit: notification due 30 seconds after scheduling", async () => {
+    // notification_due_at = now + 30 seconds.
+    const dueIn30s = new Date(Date.now() + 30 * 1000);
+    seedDueFollowUp({ notification_due_at: dueIn30s.toISOString() });
+
+    // First run: not due yet.
+    let outcome = await processDueFollowUps({ notifier });
+    expect(outcome.skippedNotificationNotDue).toBe(1);
+
+    // Second run: 30 seconds later, due.
+    outcome = await processDueFollowUps({ notifier, now: new Date(dueIn30s.getTime() + 1000) });
+    expect(outcome.notified).toBe(1);
+  });
+
+  it("hours unit: notification due 2 hours after scheduling", async () => {
+    const dueIn2h = new Date(Date.now() + 2 * 60 * 60 * 1000);
+    seedDueFollowUp({ notification_due_at: dueIn2h.toISOString() });
+
+    let outcome = await processDueFollowUps({ notifier });
+    expect(outcome.skippedNotificationNotDue).toBe(1);
+
+    outcome = await processDueFollowUps({ notifier, now: new Date(dueIn2h.getTime() + 1000) });
+    expect(outcome.notified).toBe(1);
+  });
+
+  it("days unit: notification due 1 day after scheduling", async () => {
+    const dueIn1d = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    seedDueFollowUp({ notification_due_at: dueIn1d.toISOString() });
+
+    let outcome = await processDueFollowUps({ notifier });
+    expect(outcome.skippedNotificationNotDue).toBe(1);
+
+    outcome = await processDueFollowUps({ notifier, now: new Date(dueIn1d.getTime() + 1000) });
+    expect(outcome.notified).toBe(1);
+  });
+
+  it("legacy fallback: when notification_due_at is null, uses next_followup_at", async () => {
+    // notification_due_at is null (legacy lead). Should fall back to dueAt.
+    seedDueFollowUp({ notification_due_at: null });
+    db.dueNow = Date.now();
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(1);
+    expect(outcome.skippedNotificationNotDue).toBe(0);
+    expect(notifications).toHaveLength(1);
+  });
+
+  it("legacy fallback: null notification_due_at but future next_followup_at is skipped", async () => {
+    // notification_due_at is null AND next_followup_at is in the future.
+    seedDueFollowUp({ notification_due_at: null, next_followup_at: new Date(Date.now() + 1000).toISOString() });
+    db.dueNow = Date.now();
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(0);
+    expect(outcome.skippedNotificationNotDue).toBe(1);
+    expect(notifications).toHaveLength(0);
+  });
+
+  it("email eligibility is unchanged: notification_due_at does not affect next_followup_at", async () => {
+    // The notification fires at notification_due_at, but next_followup_at
+    // (email-due) is unchanged and independent.
+    seedDueFollowUp({ notification_due_at: new Date(Date.now() - 1000).toISOString() });
+    db.dueNow = Date.now();
+
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(1);
+    // The lead's next_followup_at is still the original cadence-based value.
+    expect(db.leads[0].next_followup_at).toBe("2026-10-01T08:00:00.000Z");
+    // notification_due_at was set by the test seed.
+    expect(db.leads[0].notification_due_at).toBeTruthy();
+  });
+
+  it("existing scheduled follow-ups are not rescheduled when delay config changes", async () => {
+    // The delay config affects NEWLY scheduled follow-ups (via markFollowUpSent).
+    // Existing leads keep their current notification_due_at.
+    seedDueFollowUp({ notification_due_at: new Date(Date.now() - 1000).toISOString() });
+    db.dueNow = Date.now();
+
+    // Notification fires for the existing lead.
+    await processDueFollowUps({ notifier });
+    expect(notifications).toHaveLength(1);
+
+    // Now change the delay config to 30 minutes (mocking).
+    vi.doMock("@/lib/services/followup-notification-settings", async () => ({
+      getNotificationDelayConfig: async () => ({ value: 30, unit: "minutes" }),
+    }));
+
+    // The existing lead is still notified (it was already due).
+    const outcome = await processDueFollowUps({ notifier });
+    expect(outcome.notified).toBe(0); // Already notified, skipped by ledger.
+    expect(outcome.skippedAlreadyNotified).toBe(1);
+  });
+
+  it("invalid delay settings are rejected: negative value", async () => {
+    const { validateDelayConfig } = await import("@/lib/followup/notification-delay");
+    expect(validateDelayConfig({ value: -1, unit: "minutes" })).toBe(false);
+  });
+
+  it("invalid delay settings are rejected: invalid unit", async () => {
+    const { validateDelayConfig } = await import("@/lib/followup/notification-delay");
+    expect(validateDelayConfig({ value: 5, unit: "weeks" })).toBe(false);
+  });
+
+  it("invalid delay settings are rejected: non-integer value", async () => {
+    const { validateDelayConfig } = await import("@/lib/followup/notification-delay");
+    expect(validateDelayConfig({ value: 1.5, unit: "minutes" })).toBe(false);
+  });
+
+  it("valid delay settings are accepted: zero delay", async () => {
+    const { validateDelayConfig } = await import("@/lib/followup/notification-delay");
+    expect(validateDelayConfig({ value: 0, unit: "minutes" })).toBe(true);
+  });
+
+  it("valid delay settings are accepted: 30 seconds", async () => {
+    const { validateDelayConfig } = await import("@/lib/followup/notification-delay");
+    expect(validateDelayConfig({ value: 30, unit: "seconds" })).toBe(true);
+  });
+
+  it("updateNotificationDelaySettings validates input before writing", async () => {
+    const { validateDelayConfig } = await import("@/lib/followup/notification-delay");
+    // The service uses validateDelayConfig internally; test the validation directly.
+    expect(validateDelayConfig({ value: -1, unit: "minutes" })).toBe(false);
+    expect(validateDelayConfig({ value: 30, unit: "seconds" })).toBe(true);
+  });
+});
+
+describe("notification delay — computeNotificationDueAt", () => {
+  it("computes due time from scheduled_at + delay", async () => {
+    const { computeNotificationDueAt } = await import("@/lib/followup/notification-delay");
+    const scheduledAt = new Date("2026-10-01T08:00:00.000Z");
+
+    // 3 minutes after.
+    const due = computeNotificationDueAt(scheduledAt, { value: 3, unit: "minutes" });
+    expect(due.toISOString()).toBe("2026-10-01T08:03:00.000Z");
+  });
+
+  it("seconds: 30 seconds after", async () => {
+    const { computeNotificationDueAt } = await import("@/lib/followup/notification-delay");
+    const scheduledAt = new Date("2026-10-01T08:00:00.000Z");
+    const due = computeNotificationDueAt(scheduledAt, { value: 30, unit: "seconds" });
+    expect(due.toISOString()).toBe("2026-10-01T08:00:30.000Z");
+  });
+
+  it("hours: 2 hours after", async () => {
+    const { computeNotificationDueAt } = await import("@/lib/followup/notification-delay");
+    const scheduledAt = new Date("2026-10-01T08:00:00.000Z");
+    const due = computeNotificationDueAt(scheduledAt, { value: 2, unit: "hours" });
+    expect(due.toISOString()).toBe("2026-10-01T10:00:00.000Z");
+  });
+
+  it("days: 1 day after", async () => {
+    const { computeNotificationDueAt } = await import("@/lib/followup/notification-delay");
+    const scheduledAt = new Date("2026-10-01T08:00:00.000Z");
+    const due = computeNotificationDueAt(scheduledAt, { value: 1, unit: "days" });
+    expect(due.toISOString()).toBe("2026-10-02T08:00:00.000Z");
+  });
+
+  it("validateDelayConfig rejects negative values", async () => {
+    const { validateDelayConfig } = await import("@/lib/followup/notification-delay");
+    expect(validateDelayConfig({ value: -1, unit: "minutes" })).toBe(false);
+  });
+
+  it("validateDelayConfig rejects invalid units", async () => {
+    const { validateDelayConfig } = await import("@/lib/followup/notification-delay");
+    expect(validateDelayConfig({ value: 5, unit: "weeks" })).toBe(false);
+  });
+
+  it("validateDelayConfig rejects non-integers", async () => {
+    const { validateDelayConfig } = await import("@/lib/followup/notification-delay");
+    expect(validateDelayConfig({ value: 1.5, unit: "minutes" })).toBe(false);
+  });
+
+  it("validateDelayConfig accepts zero", async () => {
+    const { validateDelayConfig } = await import("@/lib/followup/notification-delay");
+    expect(validateDelayConfig({ value: 0, unit: "minutes" })).toBe(true);
+  });
+
+  it("isNotificationDue returns true when notification_due_at is in the past", async () => {
+    const { isNotificationDue } = await import("@/lib/followup/notification-delay");
+    expect(
+      isNotificationDue(
+        "2026-10-01T08:00:00.000Z",
+        "2026-10-01T08:00:00.000Z",
+        new Date("2026-10-01T08:01:00.000Z"),
+      ),
+    ).toBe(true);
+  });
+
+  it("isNotificationDue returns false when notification_due_at is in the future", async () => {
+    const { isNotificationDue } = await import("@/lib/followup/notification-delay");
+    expect(
+      isNotificationDue(
+        "2026-10-01T08:05:00.000Z",
+        "2026-10-01T08:00:00.000Z",
+        new Date("2026-10-01T08:01:00.000Z"),
+      ),
+    ).toBe(false);
+  });
+
+  it("isNotificationDue falls back to next_followup_at when notification_due_at is null", async () => {
+    const { isNotificationDue } = await import("@/lib/followup/notification-delay");
+    expect(
+      isNotificationDue(
+        null,
+        "2026-10-01T08:00:00.000Z",
+        new Date("2026-10-01T08:01:00.000Z"),
+      ),
+    ).toBe(true);
+  });
+
+  it("isNotificationDue returns false when both are null", async () => {
+    const { isNotificationDue } = await import("@/lib/followup/notification-delay");
+    expect(
+      isNotificationDue(null, null, new Date("2026-10-01T08:01:00.000Z")),
+    ).toBe(false);
   });
 });

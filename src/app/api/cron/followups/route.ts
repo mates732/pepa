@@ -48,7 +48,7 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       ok: true,
       ...outcome,
       processed_at: new Date().toISOString(),
-    });
+    }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     // Never echo the underlying message: it can contain Supabase/Telegram detail.
     console.error("follow-up scheduler failed", {

@@ -1484,6 +1484,98 @@ describe.skipIf(!DATABASE)("Phase 8D — A11: acting on a follow-up", () => {
       sentAt: SENT_FOLLOW_UP_1_AT,
       confirmWarnings: true,
     });
+  it("AA.1 the due follow-up lands in the due section, not the schedule", async () => {
+    const { leadId, followUpId } = await seedDueFollowUpDueInTwoMinutes();
+
+    // The reminder fires 2 minutes after the send — a fixed window the
+    // operator reads off the Due column, never off the submission clock.
+    const rows = await messageRows();
+    const followUp = rows.find((row) => row.id === followUpId)!;
+    const dueAt = new Date(Number(followUp.sent_at) + 2 * 60_000).toISOString();
+
+    const workspace = await listFollowUps();
+    expect(workspace.ok).toBe(true);
+    const due = workspace.data?.find((item) => item.message.id === followUpId);
+    expect(due).toBeDefined();
+    expect(due?.message.sequence_number).toBe(1);
+    expect(due?.attention).toBe(0);
+    // The due time is the two-minute window, and the engine clocks it from
+    // `next_followup_at`, so a due time 2 minutes from the send is due;
+    // one 2 hours later is not.
+    expect(due?.dueAt).toBe(dueAt);
+    expect(workspace.data?.map((item) => item.message.id)).toEqual([followUpId]);
+  });
+
+  it("AA.2 the detail panel exposes Gmail and an explicit Mark as sent", async () => {
+    const { leadId, followUpId } = await seedDueFollowUpDueInTwoMinutes();
+
+    const rows = await messageRows();
+    const followUp = rows.find((row) => row.id === followUpId)!;
+    const before = await messageRows();
+    const leadBefore = (await leadRows())[0];
+
+    // Gmail compose carries the row's own recipient and nothing is written.
+    buildGmailComposeUrl({
+      to: String(followUp.recipient_email),
+      subject: followUp.subject as string,
+      body: followUp.body as string,
+    });
+    expect(await messageRows()).toEqual(before);
+    const leadAfter = (await leadRows())[0];
+    expect(leadAfter.last_contacted_at).toBe(leadBefore.last_contacted_at);
+    expect(leadAfter.followup_count).toBe(leadBefore.followup_count);
+
+    // The explicit Mark as sent is the single write: it records the send,
+    // schedules the next follow-up, and never touches the anchor or other rows.
+    const recorded = await recordOutreachSent({
+      messageId: followUpId,
+      leadId,
+      sentAt: new Date(Number(followUp.sent_at) + 10 * 60_000),
+      confirmWarnings: true,
+    });
+    expect(recorded.data?.outcome).toBe("recorded");
+
+    const rowsAfter = await messageRows();
+    const updated = rowsAfter.find((row) => row.id === followUpId)!;
+    expect(updated.status).toBe("sent");
+    expect(Number(updated.sequence_number)).toBe(1);
+    expect(updated.parent_message_id).toBe(String(followUpId));
+    expect(rowsAfter.find((row) => row.id === String(followUp.id))?.status).toBe("sent");
+
+    const leadAfterSend = (await leadRows())[0];
+    // Scheduling advanced once: follow-up #2 is due 7 days after this send.
+    expect(Number(leadAfterSend.followup_count)).toBe(2);
+    expect(leadAfterSend.next_followup_at).toBeTruthy();
+  });
+
+  it("AA.3 replaying Mark as sent is idempotent and never advances the schedule twice", async () => {
+    const { leadId, followUpId } = await seedDueFollowUpDueInTwoMinutes();
+
+    // The due window is a property of the schedule, not the submission clock. A
+    // replay must therefore report the same scheduled time and never bump
+    // followup_count a second time.
+    const scheduledOnce = (await leadRows())[0].next_followup_at;
+
+    await recordOutreachSent({
+      messageId: followUpId,
+      leadId,
+      sentAt: new Date(Number(new Date().getTime()) + 10 * 60_000),
+      confirmWarnings: true,
+    });
+    const scheduled = (await leadRows())[0].next_followup_at;
+
+    const replay = await recordOutreachSent({
+      messageId: followUpId,
+      leadId,
+      sentAt: new Date(Number(new Date().getTime()) + 10 * 60_000),
+      confirmWarnings: true,
+    });
+
+    expect(replay.data?.outcome).toBe("already_sent");
+    expect((await leadRows())[0].next_followup_at).toBe(scheduledOnce);
+    expect(Number((await leadRows())[0].followup_count)).toBe(2);
+  });
+
     expect(recorded.data?.outcome).toBe("recorded");
 
     const rows = await messageRows();
@@ -1502,6 +1594,114 @@ describe.skipIf(!DATABASE)("Phase 8D — A11: acting on a follow-up", () => {
       new Date("2026-03-17T07:15:00.000Z").getTime(),
     );
   });
+describe.skipIf(!DATABASE)("Phase 8D — AA: follow-up detail panel + workspace", () => {
+  it("AA.4 the workspace header counts only actionable follow-ups", async () => {
+    const { followUpId } = await seedDueFollowUpDueInTwoMinutes();
+
+    // One unsent, due follow-up: the due section is populated and the header
+    // reports exactly what can be acted on now.
+    const before = (await messageRows());
+    const workspace = await listFollowUps();
+    expect(workspace.ok).toBe(true);
+    expect(workspace.data).toHaveLength(1);
+    expect(workspace.data![0].message.id).toBe(followUpId);
+    expect(workspace.data![0].attention).toBe(0);
+    expect(workspace.data![0].due).toBe(true);
+
+    // The UI-level contract is a server-side read, so the count is the same as
+    // the client receives: one actionable follow-up, no stale retro-count.
+    expect(workspace.data![0].lead.followup_count).toBe(1);
+    expect(workspace.data![0].message.sent_at).toBeNull();
+  });
+
+  it("AA.5 opening Gmail never records a send and never changes the schedule", async () => {
+    const { leadId, followUpId } = await seedDueFollowUpDueInTwoMinutes();
+    const before = await messageRows();
+    const leadBefore = (await leadRows())[0];
+
+    // Gmail compose carries the row's own recipient, subject and body. It is a
+    // read-only URL build: the sent row is untouched and the schedule is not
+    // advanced by opening anything.
+    const followUp = (await messageRows()).find((row) => row.id === followUpId)!;
+    const url = buildGmailComposeUrl({
+      to: String(followUp.recipient_email),
+      subject: followUp.subject as string,
+      body: followUp.body as string,
+    });
+
+    expect(url).toContain("mail.google.com");
+    expect(url).not.toContain("send");
+    expect(await messageRows()).toEqual(before);
+
+    const leadAfter = (await leadRows())[0];
+    expect(leadAfter.last_contacted_at).toBe(leadBefore.last_contacted_at);
+    expect(leadAfter.followup_count).toBe(leadBefore.followup_count);
+    expect(leadAfter.next_followup_at).toBe(leadBefore.next_followup_at);
+  });
+
+  it("AA.6 an explicit Mark as sent is the only write to the send state", async () => {
+    const { leadId, followUpId } = await seedDueFollowUpDueInTwoMinutes();
+
+    // Capture the schedule the due view is going to report.
+    const startSchedule = (await leadRows())[0].next_followup_at;
+
+    // A double send is a real-world double-click: the compare-and-set makes
+    // the second one idempotent, so it writes nothing twice.
+    const first = await recordOutreachSent({
+      messageId: followUpId,
+      leadId,
+      sentAt: new Date(Number(new Date().getTime()) + 10 * 60_000),
+      confirmWarnings: true,
+    });
+    expect(first.data?.outcome).toBe("recorded");
+
+    const afterOne = (await messageRows()).find((row) => row.id === followUpId)!;
+    expect(afterOne.status).toBe("sent");
+
+    const second = await recordOutreachSent({
+      messageId: followUpId,
+      leadId,
+      sentAt: new Date(Number(new Date().getTime()) + 10 * 60_000),
+      confirmWarnings: true,
+    });
+    expect(second.data?.outcome).toBe("already_sent");
+
+    // The send was recorded once and the schedule advanced once.
+    const after = (await messageRows()).find((row) => row.id === followUpId)!;
+    expect(after.sent_at).toBeTruthy();
+    const leadAfter = (await leadRows())[0];
+    expect(leadAfter.followup_count).toBe(2);
+    expect(leadAfter.next_followup_at).toBe(startSchedule);
+  });
+
+  it("AA.7 opening Gmail then a clear double Mark as sent leaves a single schedule", async () => {
+    const { leadId, followUpId } = await seedDueFollowUpDueInTwoMinutes();
+
+    // The quality gate warns (last contact is more than 4 business days old),
+    // so the first submit only arms the confirmation and writes nothing.
+    const { data: warn } = await recordOutreachSent({
+      messageId: followUpId,
+      leadId,
+      confirmWarnings: false,
+    });
+    expect(warn?.outcome).toBe("needs_confirmation");
+    expect(warn?.requiresConfirmation).toBe(true);
+
+    // The operator confirms; only then does the send land.
+    const confirmed = await recordOutreachSent({
+      messageId: followUpId,
+      leadId,
+      confirmWarnings: true,
+    });
+    expect(confirmed.data?.outcome).toBe("recorded");
+    expect(await messageRows()).toHaveLength(2);
+
+    const leadAfter = (await leadRows())[0];
+    expect(leadAfter.followup_count).toBe(2);
+    expect(leadAfter.next_followup_at).toBeTruthy();
+    expect(leadAfter.last_contacted_at).toBeTruthy();
+  });
+
 
   it("A11.4 replaying Mark as sent on a follow-up is idempotent", async () => {
     const { leadId, followUpId } = await seedDueFollowUp();
@@ -1512,6 +1712,7 @@ describe.skipIf(!DATABASE)("Phase 8D — A11: acting on a follow-up", () => {
       sentAt: SENT_FOLLOW_UP_1_AT,
       confirmWarnings: true,
     });
+
     const scheduled = (await leadRows())[0].next_followup_at;
 
     const replay = await recordOutreachSent({
@@ -1949,6 +2150,30 @@ describe.skipIf(!DATABASE)("Phase 8D — B: failure and edge-case matrix", () =>
     expect(outcome.notified).toBe(0);
     expect(notifications).toHaveLength(0);
     expect(await ledgerRows()).toHaveLength(0);
+  });  });
+
+  it("B.9 replaying Mark as sent on a follow-up is idempotent", async () => {
+    const { leadId, followUpId } = await seedDueFollowUp();
+    await sql(`update leads set last_contacted_at = now() - interval '5 days'`);
+    await recordOutreachSent({
+      messageId: followUpId,
+      leadId,
+      sentAt: SENT_FOLLOW_UP_1_AT,
+      confirmWarnings: true,
+    });
+
+    const scheduled = (await leadRows())[0].next_followup_at;
+
+    const replay = await recordOutreachSent({
+      messageId: followUpId,
+      leadId,
+      sentAt: SENT_FOLLOW_UP_1_AT,
+      confirmWarnings: true,
+    });
+
+    expect(replay.data?.outcome).toBe("already_sent");
+    expect((await leadRows())[0].next_followup_at).toBe(scheduled);
+    expect(Number((await leadRows())[0].followup_count)).toBe(2);
   });
 });
 

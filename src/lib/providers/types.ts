@@ -38,6 +38,8 @@ export interface DueFollowUp {
   lead: Lead;
   lastMessage: OutreachMessage | null;
   dueAt: string;
+  /** When the Telegram notification becomes eligible. May be before dueAt. */
+  notificationDueAt: string | null;
   attempt: number;
 }
 

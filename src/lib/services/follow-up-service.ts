@@ -7,6 +7,8 @@ import {
   toUtcIso,
 } from "@/lib/followup/cadence";
 import { getFollowUpCadence } from "@/lib/followup/cadence-config";
+import { computeNotificationDueAtIso, isNotificationDue } from "@/lib/followup/notification-delay";
+import { getNotificationDelayConfig } from "@/lib/services/followup-notification-settings";
 import { buildDeepLink } from "@/lib/config/base-url";
 import { getNotificationChannel } from "@/lib/providers/notifications";
 import type { ActionNotification, DueFollowUp, FollowUpService } from "@/lib/providers/types";
@@ -92,6 +94,12 @@ export interface ProcessOutcome {
    * notification is sent rather than the wrong one.
    */
   skippedAmbiguous: number;
+  /**
+   * A due lead whose notification_due_at (or next_followup_at for legacy leads)
+   * is still in the future. The lead is in the view (email-due or
+   * notification-due) but the Telegram notification is not eligible yet.
+   */
+  skippedNotificationNotDue: number;
   failed: number;
 }
 
@@ -177,6 +185,7 @@ function toDueFollowUp(row: Record<string, unknown>): ResolvedDueFollowUp | null
       parent_message_id: null,
     },
     dueAt: String(row.next_followup_at),
+    notificationDueAt: (row.notification_due_at ?? null) as string | null,
     attempt: followUpNumber,
   };
 }
@@ -423,6 +432,10 @@ async function releaseClaim(leadId: string, followUpNumber: number): Promise<voi
  *
  * A single bad follow-up never aborts the run: it is counted and the loop
  * continues, so one poisonous row cannot block the queue.
+ *
+ * Notification eligibility uses `notification_due_at` when set, falling back
+ * to `next_followup_at` for legacy leads (pre-migration). Email eligibility
+ * is unchanged: `next_followup_at` still gates the view and the workspace.
  */
 export async function processDueFollowUps(options: ProcessOptions = {}): Promise<ProcessOutcome> {
   const now = options.now ?? new Date();
@@ -436,6 +449,7 @@ export async function processDueFollowUps(options: ProcessOptions = {}): Promise
     skippedUnrecorded: 0,
     skippedAmbiguous: 0,
     failed: 0,
+    skippedNotificationNotDue: 0,
   };
 
   // `getNotificationChannel()` comes from the registration module, so importing
@@ -463,6 +477,13 @@ export async function processDueFollowUps(options: ProcessOptions = {}): Promise
 
     if (!send) {
       outcome.failed += 1;
+      continue;
+    }
+
+    // Notification eligibility: use notification_due_at when set, fall back to
+    // next_followup_at for legacy leads (pre-migration).
+    if (!isNotificationDue(entry.notificationDueAt, entry.dueAt, now)) {
+      outcome.skippedNotificationNotDue += 1;
       continue;
     }
 
@@ -577,28 +598,44 @@ async function clearFollowUpSchedule(leadId: string): Promise<void> {
 /**
  * Advance the schedule after the operator actually sends a follow-up.
  * Called by the future EmailProvider; not wired to anything yet.
+ *
+ * Sets both:
+ *   * `next_followup_at`     — the email-due timestamp (cadence-based).
+ *   * `notification_due_at`  — the Telegram-notification-due timestamp
+ *                              (scheduled_at + configured delay).
+ *
+ * These are independent: the notification can become eligible before or after
+ * the email is due, depending on the configured delay. Email eligibility is
+ * never changed by this function beyond the existing cadence behaviour.
  */
 export async function markFollowUpSent(input: {
   leadId: string;
   sentAt?: Date;
-}): Promise<{ nextFollowUpAt: string | null }> {
+}): Promise<{ nextFollowUpAt: string | null; notificationDueAt: string | null }> {
   const supabase = getSupabaseAdmin();
   const sentAt = input.sentAt ?? new Date();
   const attempt = (await currentFollowUpCount(input.leadId)) + 1;
 
   // Business days after the actual send, in the configured cadence.
   const due = nextFollowUpDueAt(sentAt, attempt, getFollowUpCadence());
+  const nextFollowUpAt = due ? toUtcIso(due) : null;
+
+  // Configurable notification delay: scheduled_at + delay.
+  const delayConfig = await getNotificationDelayConfig();
+  const notificationDueAt = computeNotificationDueAtIso(sentAt, delayConfig);
+
   const { error } = await supabase
     .from("leads")
     .update({
       followup_count: attempt,
       last_contacted_at: toUtcIso(sentAt),
-      next_followup_at: due ? toUtcIso(due) : null,
+      next_followup_at: nextFollowUpAt,
+      notification_due_at: notificationDueAt,
     })
     .eq("id", input.leadId);
 
   if (error) throw new Error(error.message);
-  return { nextFollowUpAt: due ? toUtcIso(due) : null };
+  return { nextFollowUpAt, notificationDueAt };
 }
 
 async function currentFollowUpCount(leadId: string): Promise<number> {

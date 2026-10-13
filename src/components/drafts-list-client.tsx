@@ -6,7 +6,7 @@ import Link from "next/link";
 import { openGmailComposeSmart } from "@/lib/outreach/open-gmail-compose";
 import { deleteOutreachMessage, loadOutreachDraftRows } from "@/app/actions";
 import type { OutreachDraftRow } from "@/lib/services/outreach-service";
-import { formatDate, sequenceLabel, leadTitle, draftTitle } from "@/lib/utils/date";
+import { formatDate, sequenceLabel, draftTitle } from "@/lib/utils/date";
 
 interface Notice {
   kind: "info" | "error";
@@ -92,11 +92,12 @@ export function DraftsListClient({ initialDrafts, initialError }: Props) {
           {drafts.length} draft{drafts.length === 1 ? "" : "s"} saved · initial outreach only
         </p>
         <p className="mt-1 text-xs text-midnight-soft">
-          Scheduled follow-ups never appear here — they surface in{" "}
+          Each draft is an <strong>initial outreach</strong> (sequence 0).
+          Follow-ups are created from the initial email and appear in{" "}
           <Link href="/follow-ups" className="font-semibold text-accent underline-offset-2 hover:underline">
             Follow-ups
           </Link>{" "}
-          only once their initial email is sent and they are due.
+          only when due.
         </p>
       </header>
 

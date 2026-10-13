@@ -124,3 +124,30 @@ describe("FollowUpWorkspace header — Phase 8C actionable count", () => {
     expect(markup).toContain("Needs attention");
   });
 });
+
+describe("Follow-up workspace — Phase 8C due entry on the due schedule", () => {
+  it("shows a due follow-up in the actionable section", () => {
+    const markup = render({ followUps: [item()] });
+
+    expect(markup).toContain("1 need attention");
+    expect(markup).toContain("Needs attention");
+    expect(markup).toContain("1 recorded");
+  });
+
+  it("never exposes a send action on a follow-up that is not due", () => {
+    const markup = render({
+      followUps: [sentItem(), item({ due: false, dueAt: null, attention: 1 })],
+    });
+
+    expect(markup).not.toContain(">Gmail<");
+    expect(markup).not.toContain(">Mark as sent<");
+  });
+
+  it("keeps the due follow-up in the actionable section and future rows out of it", () => {
+    const markup = render({ followUps: [item(), sentItem()] });
+
+    // The due entry is the only one under "Needs attention".
+    expect(markup).toContain("1 need attention");
+    expect(markup).toContain("2 recorded");
+  });
+});

@@ -54,7 +54,7 @@ export function ImportEditor({ token, recipient, subject, body }: ImportEditorPr
             in Gmail. */}
         <p className="text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
           &ldquo;Open in Gmail&rdquo; fills from the saved draft — save your edits first. You still press
-          Send in Gmail yourself.
+          Send in Gmail yourself. Opening the compose window does not send anything.
         </p>
       </div>
     </div>

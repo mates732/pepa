@@ -5,7 +5,7 @@ import Link from "next/link";
 
 import { openGmailComposeSmart, openGmailAppCompose, isIOS } from "@/lib/outreach/open-gmail-compose";
 import { loadOutreachHistory } from "@/app/actions";
-import { formatDate, formatDateTime, sequenceLabel, leadTitle } from "@/lib/utils/date";
+import { formatDate, leadTitle } from "@/lib/utils/date";
 
 interface Notice {
   kind: "info" | "error";

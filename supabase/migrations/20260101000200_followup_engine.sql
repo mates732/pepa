@@ -78,12 +78,21 @@ $$;
 -- never on formatted strings, and never on browser-local time.
 --
 -- A lead is due when:
---   * it has a next_followup_at in the past;
+--   * it has a next_followup_at in the past (email-due);
+--   * OR its Telegram notification_due_at is in the past (notification-due);
 --   * it is not replied / completed / blocked;
 --   * it has at least one outreach message that actually went out and is not
 --     itself replied / completed / blocked;
 --   * followup_count is below the cadence maximum (applied in the service, which
 --     owns the single source of truth for the cadence).
+--
+-- Email eligibility and notification eligibility are now separate:
+--   * `next_followup_at`     — when the follow-up email is due (cadence-based).
+--   * `notification_due_at`  — when the Telegram notification becomes eligible
+--                              (scheduled_at + configured delay).
+-- The view returns a lead if EITHER is due, so a notification can fire before
+-- the email is due. `processDueFollowUps` then checks `notification_due_at`
+-- to decide whether to actually send the Telegram message.
 create or replace view public.due_followups
 with (security_invoker = true) as
 select
@@ -96,6 +105,7 @@ select
   l.updated_at,
   l.last_contacted_at,
   l.next_followup_at,
+  l.notification_due_at,
   l.followup_count,
   m.id as outreach_id,
   m.recipient_email,
@@ -116,8 +126,11 @@ join lateral (
   limit 1
 ) m on true
 where l.next_followup_at is not null
-  and l.next_followup_at <= now()
-  and l.status not in ('replied', 'completed', 'blocked');
+  and l.status not in ('replied', 'completed', 'blocked')
+  and (
+    l.next_followup_at <= now()
+    or (l.notification_due_at is not null and l.notification_due_at <= now())
+  );
 
 -- ---------------------------------------------------------------------------
 -- 3. outreach_overview — extended with follow-up state

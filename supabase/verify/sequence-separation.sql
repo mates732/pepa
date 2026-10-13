@@ -81,13 +81,34 @@ select
   l.id,
   l.email,
   l.followup_count,
-  coalesce(max(m.sequence_number), -1) as highest_stored_sequence
+  coalesce(max(m.sequence_number), -1) as highest_stored_sequence,
+  l.next_followup_at,
+  l.last_contacted_at
 from leads l
 left join outreach_messages m
   on m.lead_id = l.id
-group by l.id, l.email, l.followup_count
+group by l.id, l.email, l.followup_count, l.next_followup_at, l.last_contacted_at
 having l.followup_count > coalesce(max(m.sequence_number), -1)
 order by l.followup_count - coalesce(max(m.sequence_number), -1) desc;
+
+-- 5b. PEPA 워크플로우 검증: 초기 이메일이 발송되지 않은 리드 중
+--     follow-up 일정이 설정된 경우 (비정상 상태).
+--     follow-up 일정은 오직 초기 이메일 발송 후에만 설정되어야 함.
+select
+  l.id,
+  l.email,
+  l.followup_count,
+  l.next_followup_at,
+  l.last_contacted_at,
+  m.sent_at as initial_sent_at
+from leads l
+left join outreach_messages m
+  on m.lead_id = l.id
+  and m.sequence_number = 0
+  and (m.sent_at is not null or m.status = 'sent')
+where l.next_followup_at is not null
+  and m.id is null
+order by l.next_followup_at;
 
 -- 6. Expected-shape checks: these MUST return zero rows.
 --    6a. duplicate sequence slots (the unique index also guarantees this);

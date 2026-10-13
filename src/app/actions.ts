@@ -25,6 +25,11 @@ import {
   type FollowUpListItem,
 } from "@/lib/services/follow-up-sequence-service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
+import {
+  getNotificationDelayConfig,
+  updateNotificationDelaySettings,
+  type DelayConfig,
+} from "@/lib/services/followup-notification-settings";
 import type {
   DuplicateCheckResult,
   Lead,
@@ -868,3 +873,51 @@ export interface OutreachHistoryResult {
 }
 
 export type OutreachHistoryResponse = OutreachHistoryResult | ActionFailure;
+
+export type UpdateNotificationDelayResult =
+  | { ok: true; config: DelayConfig; updatedAt: string }
+  | ActionFailure;
+
+export async function updateNotificationDelay(input: {
+  value: number;
+  unit: "seconds" | "minutes" | "hours" | "days";
+}): Promise<UpdateNotificationDelayResult> {
+  await requireAuthenticatedUser();
+
+  if (!Number.isInteger(input.value) || input.value < 0) {
+    return failure("Delay value must be a non-negative integer.");
+  }
+
+  try {
+    const result = await updateNotificationDelaySettings({
+      value: input.value,
+      unit: input.unit,
+    });
+    if (!result.ok || !result.data) {
+      return failure(result.error ?? "Could not update the notification delay.");
+    }
+    revalidatePath("/");
+    return {
+      ok: true,
+      config: { value: result.data.delayValue, unit: result.data.delayUnit },
+      updatedAt: result.data.updatedAt,
+    };
+  } catch (error) {
+    return failure(
+      error instanceof Error ? error.message : "Could not update the notification delay.",
+    );
+  }
+}
+
+export async function getNotificationDelay(): Promise<{ ok: true; config: DelayConfig } | ActionFailure> {
+  await requireAuthenticatedUser();
+
+  try {
+    const config = await getNotificationDelayConfig();
+    return { ok: true, config };
+  } catch (error) {
+    return failure(
+      error instanceof Error ? error.message : "Could not read the notification delay.",
+    );
+  }
+}

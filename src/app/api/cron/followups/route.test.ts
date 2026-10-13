@@ -16,6 +16,7 @@ const { processDueFollowUps } = vi.hoisted(() => ({
     skippedAlreadySent: 0,
     skippedUnrecorded: 0,
     skippedAmbiguous: 0,
+    skippedNotificationNotDue: 0,
     failed: 0,
   })),
 }));
@@ -79,6 +80,7 @@ describe("GET /api/cron/followups", () => {
       skippedAlreadySent: 0,
       skippedUnrecorded: 0,
       skippedAmbiguous: 0,
+      skippedNotificationNotDue: 0,
       failed: 0,
     });
 
@@ -100,6 +102,7 @@ describe("GET /api/cron/followups", () => {
       skippedAlreadySent: 0,
       skippedUnrecorded: 0,
       skippedAmbiguous: 0,
+      skippedNotificationNotDue: 0,
       failed: 0,
     });
 
@@ -134,6 +137,7 @@ describe("GET /api/cron/followups", () => {
       skippedAlreadySent: 1,
       skippedUnrecorded: 1,
       skippedAmbiguous: 0,
+      skippedNotificationNotDue: 0,
       failed: 0,
     });
 

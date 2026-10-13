@@ -4,7 +4,12 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 
 import { openGmailComposeSmart } from "@/lib/outreach/open-gmail-compose";
-import { loadFollowUps, recordOutreachSent } from "@/app/actions";
+import {
+  loadFollowUps,
+  recordOutreachSent,
+  updateNotificationDelay,
+  getNotificationDelay,
+} from "@/app/actions";
 import { formatDate, formatDateTime, sequenceLabel, leadTitle } from "@/lib/utils/date";
 import {
   followUpScheduleState,
@@ -12,6 +17,10 @@ import {
   scheduleStateLabel,
   type FollowUpBucket,
 } from "@/lib/utils/follow-ups";
+
+const DELAY_UNITS = ["seconds", "minutes", "hours", "days"] as const;
+const DEFAULT_DELAY_VALUE = 3;
+const DEFAULT_DELAY_UNIT = "minutes" as const;
 
 interface Notice {
   kind: "info" | "error";
@@ -67,6 +76,10 @@ export function FollowUpsClient({ initialFollowUps, initialError }: Props) {
   const [recordingId, setRecordingId] = useState<string | null>(null);
   const [armedId, setArmedId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [delayValue, setDelayValue] = useState<number>(DEFAULT_DELAY_VALUE);
+  const [delayUnit, setDelayUnit] = useState<typeof DELAY_UNITS[number]>(DEFAULT_DELAY_UNIT);
+  const [delayLoading, setDelayLoading] = useState(false);
+  const [delaySaved, setDelaySaved] = useState(false);
   const loadedRef = useRef(false);
 
   const loadFollowUpsData = useCallback(async () => {
@@ -90,6 +103,46 @@ export function FollowUpsClient({ initialFollowUps, initialError }: Props) {
       loadFollowUpsData();
     }
   }, [initialFollowUps, initialError, loadFollowUpsData]);
+
+  // Load the current notification delay config on mount.
+  useEffect(() => {
+    let cancelled = false;
+    getNotificationDelay()
+      .then((result) => {
+        if (cancelled) return;
+        if (result.ok) {
+          setDelayValue(result.config.value);
+          setDelayUnit(result.config.unit);
+        }
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.warn("Could not load notification delay:", e);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  async function handleSaveDelay() {
+    if (delayLoading) return;
+    setNotice(null);
+    setDelayLoading(true);
+    try {
+      const result = await updateNotificationDelay({
+        value: delayValue,
+        unit: delayUnit,
+      });
+      if (result.ok) {
+        setNotice({ kind: "info", text: `Notification delay saved: ${result.config.value} ${result.config.unit}.` });
+        setDelaySaved(true);
+      } else {
+        setNotice({ kind: "error", text: result.error ?? "Could not save the delay." });
+      }
+    } catch (e) {
+      setNotice({ kind: "error", text: "Could not save the delay." });
+    } finally {
+      setDelayLoading(false);
+    }
+  }
 
   function handleOpenInGmail(item: FollowUpItem) {
     setOpeningGmailId(item.message.id);
@@ -165,11 +218,29 @@ export function FollowUpsClient({ initialFollowUps, initialError }: Props) {
   return (
     <div className="flex flex-col gap-6">
       <header>
-        <h1 className="heading-sticker text-xl text-midnight">Follow-ups</h1>
-        <p className="mt-1 text-sm text-midnight-soft">
-          {grouped.due.length} due · {grouped.scheduled.length} scheduled ·{" "}
-          {grouped.sent.length} sent
-        </p>
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h1 className="heading-sticker text-xl text-midnight">Follow-ups</h1>
+            <NotificationDelayControl
+              value={delayValue}
+              unit={delayUnit}
+              units={DELAY_UNITS}
+              loading={delayLoading}
+              saved={delaySaved}
+              onChangeValue={setDelayValue}
+              onChangeUnit={setDelayUnit}
+              onSave={handleSaveDelay}
+            />
+          </div>
+          <p className="text-sm text-midnight-soft">
+            {grouped.due.length} due · {grouped.scheduled.length} scheduled ·{" "}
+            {grouped.sent.length} sent
+          </p>
+          <p className="text-xs text-midnight-soft">
+            Initial outreach emails are in <Link href="/drafts" className="font-semibold text-accent underline-offset-2 hover:underline">Drafts</Link>.
+            Follow-ups appear here only when due or scheduled.
+          </p>
+        </div>
       </header>
 
       {error && (
@@ -370,5 +441,90 @@ function Section({ bucket, items, openingGmailId, recordingId, armedId, onOpenIn
         </table>
       </div>
     </section>
+  );
+}
+
+/**
+ * Configuration control for the follow-up Telegram notification delay.
+ *
+ * Persists a global delay (value + unit) that determines when the Telegram
+ * notification becomes eligible after a follow-up is scheduled. Displayed in
+ * the Follow-ups workspace header so the operator can see and change it without
+ * leaving the page.
+ */
+interface NotificationDelayControlProps {
+  value: number;
+  unit: typeof DELAY_UNITS[number];
+  units: readonly typeof DELAY_UNITS[number][];
+  loading: boolean;
+  saved: boolean;
+  onChangeValue: (value: number) => void;
+  onChangeUnit: (unit: typeof DELAY_UNITS[number]) => void;
+  onSave: () => void;
+}
+
+function NotificationDelayControl({
+  value,
+  unit,
+  units,
+  loading,
+  saved,
+  onChangeValue,
+  onChangeUnit,
+  onSave,
+}: NotificationDelayControlProps) {
+  const validValue = Number.isFinite(value) && value >= 0 ? value : 0;
+
+  return (
+    <div className="sticker px-3 py-2" style={{ minWidth: 220 }}>
+      <p className="text-[11px] font-bold uppercase tracking-wider text-midnight-soft mb-2">
+        Notification delay
+      </p>
+      <div className="flex items-center gap-2">
+        <label className="text-xs text-midnight flex-1">
+          <input
+            type="number"
+            min={0}
+            max={365}
+            step={1}
+            value={validValue}
+            onChange={(e) => {
+              const n = parseInt(e.target.value, 10);
+              onChangeValue(Number.isFinite(n) && n >= 0 ? n : 0);
+            }}
+            disabled={loading}
+            className="w-16 text-right border-b border-midnight-line bg-transparent text-midnight outline-none focus:border-accent"
+          />
+        </label>
+        <select
+          value={unit}
+          onChange={(e) => {
+            const next = e.target.value as typeof DELAY_UNITS[number];
+            if (units.includes(next)) onChangeUnit(next);
+          }}
+          disabled={loading}
+          className="text-xs border-b border-midnight-line bg-transparent text-midnight outline-none focus:border-accent"
+        >
+          {units.map((u) => (
+            <option key={u} value={u}>
+              {u.slice(0, -1)}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="flex items-center gap-2 mt-2">
+        <button
+          type="button"
+          className="text-[11px] btn btn-sm btn-primary"
+          onClick={() => onSave()}
+          disabled={loading || validValue < 0}
+        >
+          {loading ? "Saving…" : saved ? "Saved" : "Save"}
+        </button>
+        {saved && (
+          <span className="text-[11px] text-accent">saved</span>
+        )}
+      </div>
+    </div>
   );
 }

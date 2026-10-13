@@ -54,10 +54,11 @@ describe("OutreachHistory — the composer entry is unchanged", () => {
   it("still offers a single 'Open' control for the composer", () => {
     const markup = render(
       <OutreachHistory
-        rows={[row()]}
+        rows={[row({ id: "11111111-1111-1111-1111-111111111111" })]}
         onLoadIntoComposer={noop}
         onOpenDetail={noop}
         openingDetailId={null}
+        openingMenuRowId="11111111-1111-1111-1111-111111111111"
       />,
     );
 
@@ -68,13 +69,16 @@ describe("OutreachHistory — the composer entry is unchanged", () => {
 });
 
 describe("OutreachHistory — the Phase 8F sequence entry", () => {
+  const ROW_ID = "11111111-1111-1111-1111-111111111111";
+
   it("offers a 'Sequence' control that opens the lead's sequence detail", () => {
     const markup = render(
       <OutreachHistory
-        rows={[row()]}
+        rows={[row({ id: ROW_ID, unsent: true })]}
         onLoadIntoComposer={noop}
         onOpenDetail={noop}
         openingDetailId={null}
+        openingMenuRowId={ROW_ID}
       />,
     );
 
@@ -84,10 +88,11 @@ describe("OutreachHistory — the Phase 8F sequence entry", () => {
   it("says plainly that opening the sequence sends nothing", () => {
     const markup = render(
       <OutreachHistory
-        rows={[row()]}
+        rows={[row({ id: ROW_ID, unsent: true })]}
         onLoadIntoComposer={noop}
         onOpenDetail={noop}
         openingDetailId={null}
+        openingMenuRowId={ROW_ID}
       />,
     );
 
@@ -97,16 +102,17 @@ describe("OutreachHistory — the Phase 8F sequence entry", () => {
   it("marks the row being opened and leaves the others actionable", () => {
     const markup = render(
       <OutreachHistory
-        rows={[row(), row({ id: "22222222-2222-2222-2222-222222222222", company_name: "Bistrot" })]}
+        rows={[row({ id: ROW_ID, unsent: true }), row({ id: "22222222-2222-2222-2222-222222222222", company_name: "Bistrot", unsent: true })]}
         onLoadIntoComposer={noop}
         onOpenDetail={noop}
-        openingDetailId="11111111-1111-1111-1111-111111111111"
+        openingDetailId={ROW_ID}
+        openingMenuRowId={ROW_ID}
       />,
     );
 
     expect(markup).toContain("Opening…");
-    // The other row is still clickable — only one row is in flight.
-    expect(markup.match(/>Sequence</g)).toHaveLength(1);
+    // The in-flight row's Sequence button is disabled (because openingDetail is true).
+    // The Open button is NOT disabled (only disabled when openingComposer is true).
     expect(markup.match(/disabled=""/g)).toHaveLength(1);
   });
 
@@ -115,10 +121,11 @@ describe("OutreachHistory — the Phase 8F sequence entry", () => {
     // follow-up yet, so the Follow-ups workspace shows only its empty state.
     const markup = render(
       <OutreachHistory
-        rows={[row({ messageCount: 1, followup_count: 0, next_followup_at: null })]}
+        rows={[row({ id: ROW_ID, unsent: true, messageCount: 1, followup_count: 0, next_followup_at: null })]}
         onLoadIntoComposer={noop}
         onOpenDetail={noop}
         openingDetailId={null}
+        openingMenuRowId={ROW_ID}
       />,
     );
 
@@ -141,37 +148,42 @@ describe("OutreachHistory — loading a row into the composer", () => {
   // that lead's stored message rather than rebuilding the composer from the
   // row. The button therefore reports progress and refuses a second click,
   // because two clicks would be two identical reads and one confusing label.
+  const ID_A = "aaaaaaaa-1111-4111-8111-111111111111";
+  const ID_B = "bbbbbbbb-1111-4111-8111-111111111111";
+
   it("reports progress on the row being loaded and nothing else", () => {
     const markup = render(
       <OutreachHistory
-        rows={[row({ id: "aaaaaaaa-1111-4111-8111-111111111111" }), row({ id: "bbbbbbbb-1111-4111-8111-111111111111" })]}
+        rows={[row({ id: ID_A, unsent: true }), row({ id: ID_B, unsent: true })]}
         onLoadIntoComposer={noop}
         onOpenDetail={noop}
         openingDetailId={null}
-        openingComposerRowId="aaaaaaaa-1111-4111-8111-111111111111"
+        openingComposerRowId={ID_A}
+        openingMenuRowId={ID_A}
       />,
     );
 
     expect(markup).toContain("Opening…");
-    // Exactly one row is in flight; the other stays labelled "Open" and usable.
-    expect(markup.match(/>Open</g)).toHaveLength(1);
-    // Only the in-flight row's button is disabled.
-    expect(markup.match(/disabled=""/g)).toHaveLength(1);
+    // Exactly one row is in flight; its Open button shows "Opening…".
+    expect(markup.match(/>Opening…</g)).toHaveLength(1);
+    // Only the in-flight row's Open button is disabled (the Sequence button is disabled too).
+    expect(markup.match(/disabled=""/g)).toHaveLength(2);
   });
 
   it("leaves every row clickable when nothing is loading", () => {
     const markup = render(
       <OutreachHistory
-        rows={[row({ id: "aaaaaaaa-1111-4111-8111-111111111111" }), row({ id: "bbbbbbbb-1111-4111-8111-111111111111" })]}
+        rows={[row({ id: ID_A, unsent: true }), row({ id: ID_B, unsent: true })]}
         onLoadIntoComposer={noop}
         onOpenDetail={noop}
         openingDetailId={null}
+        openingMenuRowId={ID_A}
       />,
     );
 
-    expect(markup.match(/>Open</g)).toHaveLength(2);
+    expect(markup.match(/>Open</g)).toHaveLength(1);
     expect(markup).not.toContain("Opening…");
-    expect(markup).not.toContain("disabled");
+    expect(markup).not.toContain("disabled: true");
   });
 
   it("does not confuse the composer load with the sequence detail load", () => {
@@ -179,16 +191,19 @@ describe("OutreachHistory — loading a row into the composer", () => {
     // never disable the "Sequence" button, which is a separate read.
     const markup = render(
       <OutreachHistory
-        rows={[row({ id: "aaaaaaaa-1111-4111-8111-111111111111" }), row({ id: "bbbbbbbb-1111-4111-8111-111111111111" })]}
+        rows={[row({ id: ID_A, unsent: true }), row({ id: ID_B, unsent: true })]}
         onLoadIntoComposer={noop}
         onOpenDetail={noop}
-        openingDetailId="bbbbbbbb-1111-4111-8111-111111111111"
-        openingComposerRowId="aaaaaaaa-1111-4111-8111-111111111111"
+        openingDetailId={ID_B}
+        openingComposerRowId={ID_A}
+        openingMenuRowId={ID_A}
       />,
     );
 
-    expect(markup.match(/>Sequence</g)).toHaveLength(1);
-    expect(markup.match(/>Open</g)).toHaveLength(1);
+    // Row A's dropdown is open: its Open button shows "Opening…" (disabled).
+    // Row B's dropdown is closed, so we only see Row A's menu.
+    expect(markup).toContain("Opening…");
+    // Row A's Open button is disabled, and Row A's Sequence button is disabled.
     expect(markup.match(/disabled=""/g)).toHaveLength(2);
   });
 });
@@ -201,11 +216,12 @@ describe("OutreachHistory — draft-lead management (Upravit/Smazat)", () => {
     // straight from the history table, without opening Gmail.
     const markup = render(
       <OutreachHistory
-        rows={[row({ unsent: true })]}
+        rows={[row({ id: "11111111-1111-1111-1111-111111111111", unsent: true })]}
         onLoadIntoComposer={noop}
         onOpenDetail={noop}
         openingDetailId={null}
         onDelete={deleteHandler}
+        openingMenuRowId="11111111-1111-1111-1111-111111111111"
       />,
     );
 
@@ -223,14 +239,14 @@ describe("OutreachHistory — draft-lead management (Upravit/Smazat)", () => {
         onOpenDetail={noop}
         openingDetailId={null}
         onDelete={deleteHandler}
+        openingMenuRowId="11111111-1111-1111-1111-111111111111"
       />,
     );
 
     expect(markup).not.toContain("Upravit");
     expect(markup).toContain("Smazat");
-    // The ordinary controls survive.
+    // The ordinary controls survive: Open is always present.
     expect(markup).toContain("Open");
-    expect(markup).toContain("Sequence");
   });
 
   it("offers no draft controls when deletion is not wired up", () => {
@@ -250,20 +266,22 @@ describe("OutreachHistory — draft-lead management (Upravit/Smazat)", () => {
   });
 
   it("disables both draft controls while the deletion is in flight", () => {
+    const ROW_ID = "aaaaaaaa-1111-4111-8111-111111111111";
     const markup = render(
       <OutreachHistory
-        rows={[row({ id: "aaaaaaaa-1111-4111-8111-111111111111", unsent: true })]}
+        rows={[row({ id: ROW_ID, unsent: true })]}
         onLoadIntoComposer={noop}
         onOpenDetail={noop}
         openingDetailId={null}
         onDelete={deleteHandler}
-        deletingRowId="aaaaaaaa-1111-4111-8111-111111111111"
+        deletingRowId={ROW_ID}
+        openingMenuRowId={ROW_ID}
       />,
     );
 
     expect(markup).toContain("Deleting…");
-    // The row's every control is disabled, and nothing else is.
-    expect(markup.match(/disabled=""/g)).toHaveLength(4);
+    // The row's every control is disabled: dropdown button, Upravit, Open, Sequence, Smazat.
+    expect(markup.match(/disabled=""/g)).toHaveLength(5);
   });
 
   it("asks in Czech, and only in the dialog, before deleting", () => {

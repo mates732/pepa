@@ -30,6 +30,13 @@ interface OutreachHistoryProps {
    */
   openingComposerRowId?: string | null;
   /**
+   * Row whose dropdown menu is open.
+   *
+   * When set, the dropdown menu for this row is rendered, showing the
+   * Upravit, Open, Sequence, and Smazat controls.
+   */
+  openingMenuRowId?: string | null;
+  /**
    * Delete a lead from history and the database ("Smazat z historie").
    *
    * Where this is supplied, EVERY row gains the Smazat control — sent
@@ -61,6 +68,7 @@ export function OutreachHistory({
   onBulkMarkSent,
   selectedIds = [],
   onSelectionChange,
+  openingMenuRowId = null,
 }: OutreachHistoryProps) {
   // The lead awaiting confirmation in the delete dialog. null means
   // no dialog is open.
@@ -194,6 +202,10 @@ export function OutreachHistory({
               <tbody>
                 {rows.map((row) => {
                   const isSelected = selection.has(row.id);
+                  const openingComposer = openingComposerRowId === row.id;
+                  const openingDetail = openingDetailId === row.id;
+                  const rowDeleting = deletingRowId === row.id;
+
                   return (
                     <tr
                       key={row.id}
@@ -209,7 +221,7 @@ export function OutreachHistory({
                       </td>
                       <td className="max-w-[200px] px-4 py-3">
                         <div className="truncate font-bold text-midnight">
-                          {row.company_name || row.contact_name || "\u2014"}
+                          {row.company_name || row.contact_name || "—"}
                         </div>
                         {row.contact_name && row.company_name ? (
                           <div className="truncate text-xs text-midnight-soft">
@@ -224,7 +236,7 @@ export function OutreachHistory({
                       </td>
                       <td className="max-w-[260px] px-4 py-3">
                         <span className="block truncate text-midnight">
-                          {row.latestSubject || "\u2014"}
+                          {row.latestSubject || "—"}
                         </span>
                       </td>
                       <td className="px-4 py-3">
@@ -249,21 +261,21 @@ export function OutreachHistory({
                             <button
                               type="button"
                               onClick={() => toggleMenu(row.id)}
-                              disabled={deletingRowId === row.id}
+                              disabled={rowDeleting}
                               className="btn btn-sm"
                               aria-haspopup="true"
-                              aria-expanded={openMenuRowId === row.id}
+                              aria-expanded={openingMenuRowId === row.id}
                               aria-label="More actions"
                             >
                               ⋮
                             </button>
-                            {openMenuRowId === row.id && (
-                              <div className="absolute right-0 top-full mt-1 z-20 sticker min-w-[140px] py-1 shadow-pop border border-midnight-line">
+                            {openingMenuRowId === row.id && (
+                              <div className="absolute right-0 top-full mt-1 z-20 sticker min-w-[160px] py-1 shadow-pop border border-midnight-line">
                                 {row.unsent && (
                                   <button
                                     type="button"
                                     onClick={() => handleMenuAction("edit", row)}
-                                    disabled={openingComposerRowId === row.id || deletingRowId === row.id}
+                                    disabled={openingComposer || rowDeleting}
                                     className="w-full px-3 py-2 text-left text-sm hover:bg-midnight-faint"
                                   >
                                     Upravit
@@ -271,28 +283,35 @@ export function OutreachHistory({
                                 )}
                                 <button
                                   type="button"
-                                  onClick={() => handleMenuAction("sequence", row)}
-                                  disabled={openingDetailId === row.id || deletingRowId === row.id}
-                                  className="w-full px-3 py-2 text-left text-sm hover:bg-midnight-faint"
-                                >
-                                  Sequence
-                                </button>
-                                <button
-                                  type="button"
                                   onClick={() => handleMenuAction("open", row)}
-                                  disabled={openingComposerRowId === row.id || deletingRowId === row.id}
+                                  disabled={openingComposer || rowDeleting}
                                   className="w-full px-3 py-2 text-left text-sm hover:bg-midnight-faint"
                                 >
-                                  Open
+                                  {openingComposer ? "Opening…" : "Open"}
                                 </button>
+                                {row.unsent && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleMenuAction("sequence", row)}
+                                    disabled={openingDetail || rowDeleting}
+                                    className="w-full px-3 py-2 text-left text-sm hover:bg-midnight-faint"
+                                  >
+                                    {openingDetail ? "Opening…" : "Sequence"}
+                                  </button>
+                                )}
+                                {row.unsent && (
+                                  <span className="w-full text-center text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
+                                    Nothing is sent.
+                                  </span>
+                                )}
                                 {onDelete && (
                                   <button
                                     type="button"
                                     onClick={() => handleMenuAction("delete", row)}
-                                    disabled={deletingRowId === row.id}
+                                    disabled={rowDeleting}
                                     className="w-full px-3 py-2 text-left text-sm hover:bg-midnight-faint text-alarm"
                                   >
-                                    Smazat
+                                    {rowDeleting ? "Deleting…" : "Smazat"}
                                   </button>
                                 )}
                               </div>
@@ -301,8 +320,8 @@ export function OutreachHistory({
                         </div>
                       </td>
                     </tr>
-                  )}
-                )}
+                  );
+                })}
               </tbody>
             </table>
 
