@@ -1553,13 +1553,9 @@ describe("reported fixture — 2 LEAD blocks stay 2 leads through the production
   it("never merges: parse → preview → client requests → import → 5 drafts", async () => {
     await authenticate();
     const { parseBulkEmails } = await import("@/lib/import/bulk-emails");
-    const { previewBulkEmails } = await import("@/app/bulk-actions");
+    const { previewBulkEmails, importBulkEmails } = await import("@/app/bulk-actions");
     const { importableRequests, BULK_IMPORT_CHUNK_SIZE } =
       await import("@/lib/import/bulk-plan");
-    // `importInChunks` is the client's own chunk walker; it calls the
-    // `importBulkEmails` server action exactly as the Import button does.
-    const { importInChunks } = await import("@/components/bulk-import");
-
     /* ---------------------------------------------------------------- */
     /* 1. textarea value → parseBulkEmails(): exactly 2 candidates       */
     /* ---------------------------------------------------------------- */
@@ -1643,40 +1639,42 @@ describe("reported fixture — 2 LEAD blocks stay 2 leads through the production
     expect(plan.rows.every((row) => row.status === "ready")).toBe(true);
 
     /* ---------------------------------------------------------------- */
-    /* 3. the client's own converters keep the rows separate             */
-    /*    (`importableRequests` is exactly what bulk-import.tsx calls    */
-    /*    before handing the list to importInChunks)                     */
+    /* 4. bulk import through the server action (re-checked server-side) */
+    /*    The client's chunk walker was removed with the bulk-import UI     */
+    /*    component; this test replays the same sequential chunking via     */
+    /*    the wired-in server action instead of the deleted helper.        */
     /* ---------------------------------------------------------------- */
-    const requests = importableRequests(plan);
-
-    expect(requests).toHaveLength(2);
-    expect(requests.map((request) => request.recipient)).toEqual([
+    const importable = importableRequests(plan);
+    expect(importable).toHaveLength(2);
+    expect(importable.map((request) => request.recipient)).toEqual([
       "originalbarbersestka@gmail.com",
       "glowupbarbershop@seznam.cz",
     ]);
-    expect(requests.map((request) => request.followUps?.length ?? 0)).toEqual([
+    expect(importable.map((request) => request.followUps?.length ?? 0)).toEqual([
       2, 1,
     ]);
     // The exact bug-report signature: a space-joined recipient. Never.
-    expect(requests.some((request) => /\s/.test(request.recipient))).toBe(
+    expect(importable.some((request) => /\s/.test(request.recipient))).toBe(
       false,
     );
     expect(
-      requests.some((request) =>
+      importable.some((request) =>
         (request.subject ?? "").includes(
           "Nabídka pro The Original Barber ŠESTKA Nabídka",
         ),
       ),
     ).toBe(false);
 
-    /* ---------------------------------------------------------------- */
-    /* 4. client chunk walker → importBulkEmails (server, re-checked)    */
-    /* ---------------------------------------------------------------- */
-    const resultRows = await importInChunks(
-      requests,
-      () => {},
-      BULK_IMPORT_CHUNK_SIZE,
-    );
+    const resultRows = await (async () => {
+      const collected: BulkDraftResultRow[] = [];
+      for (let start = 0; start < importable.length; start += BULK_IMPORT_CHUNK_SIZE) {
+        const chunk = importable.slice(start, start + BULK_IMPORT_CHUNK_SIZE);
+        const result = await importBulkEmails(chunk);
+        if (!result.ok) throw new Error(result.error);
+        collected.push(...result.rows);
+      }
+      return collected;
+    })();
 
     expect(resultRows).toHaveLength(2);
     expect(resultRows.every((row) => row.outcome === "created")).toBe(true);

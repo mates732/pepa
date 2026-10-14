@@ -4,7 +4,11 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import Link from "next/link";
 
 import { openGmailComposeSmart } from "@/lib/outreach/open-gmail-compose";
-import { deleteOutreachMessage, loadOutreachDraftRows } from "@/app/actions";
+import {
+  deleteOutreachMessage,
+  loadOutreachDraftRows,
+  recordOutreachSent,
+} from "@/app/actions";
 import type { OutreachDraftRow } from "@/lib/services/outreach-service";
 import { formatDate, sequenceLabel, draftTitle } from "@/lib/utils/date";
 
@@ -24,6 +28,8 @@ export function DraftsListClient({ initialDrafts, initialError }: Props) {
   const [error, setError] = useState<string | null>(initialError);
   const [openingGmailId, setOpeningGmailId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [recordingId, setRecordingId] = useState<string | null>(null);
+  const [armedId, setArmedId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const loadedRef = useRef(false);
 
@@ -84,6 +90,65 @@ export function DraftsListClient({ initialDrafts, initialError }: Props) {
     }
   }
 
+  /**
+   * The explicit, and only, way an initial email leaves the outbox in PEPA.
+   *
+   * PEPA sends no mail itself: the operator sends the draft from their own
+   * client (the Gmail button above opens it prefilled) and then records the
+   * fact here, so the follow-up engine can schedule from a real send. The
+   * server action compare-and-sets, so a double submit is safe — the second
+   * call reports `already_sent` and schedules nothing. The quality gate runs
+   * server-side at the moment of the write; on warnings the button arms for
+   * one explicit second click, and a blocked send never writes.
+   */
+  async function handleMarkSent(draft: OutreachDraftRow) {
+    if (recordingId) return;
+    setRecordingId(draft.message.id);
+    setNotice(null);
+    try {
+      const result = await recordOutreachSent({
+        messageId: draft.message.id,
+        leadId: draft.lead.id,
+        confirmWarnings: armedId === draft.message.id,
+      });
+
+      if (result.ok) {
+        setArmedId(null);
+        setNotice({
+          kind: "info",
+          text:
+            result.outcome === "already_sent"
+              ? "Already recorded as sent — nothing was changed."
+              : `Recorded as sent${result.nextFollowUpAt ? " — the next follow-up is scheduled." : "."}`,
+        });
+        // The row leaves the Drafts list: the list only ever contains unsent
+        // messages, so keeping it would show a draft that is already sent.
+        setDrafts((current) =>
+          current.filter((d) => d.message.id !== draft.message.id),
+        );
+        return;
+      }
+
+      if ("requiresConfirmation" in result && result.requiresConfirmation) {
+        // Warnings, not a refusal: arm one explicit confirmation click.
+        setArmedId(draft.message.id);
+        setNotice({
+          kind: "info",
+          text: `${result.error ?? "The quality gate reported warnings."} Read them, then confirm with “Confirm sent”.`,
+        });
+        return;
+      }
+
+      setArmedId(null);
+      setNotice({ kind: "error", text: result.error });
+    } catch {
+      setArmedId(null);
+      setNotice({ kind: "error", text: "The send could not be recorded. Try again." });
+    } finally {
+      setRecordingId(null);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-6">
       <header>
@@ -93,6 +158,8 @@ export function DraftsListClient({ initialDrafts, initialError }: Props) {
         </p>
         <p className="mt-1 text-xs text-midnight-soft">
           Each draft is an <strong>initial outreach</strong> (sequence 0).
+          Send it from your own mail client with “Gmail”, then record the fact
+          here with “Mark as sent” — opening Gmail never marks anything as sent.
           Follow-ups are created from the initial email and appear in{" "}
           <Link href="/follow-ups" className="font-semibold text-accent underline-offset-2 hover:underline">
             Follow-ups
@@ -133,6 +200,8 @@ export function DraftsListClient({ initialDrafts, initialError }: Props) {
                 {drafts.map((draft) => {
                   const isOpeningGmail = openingGmailId === draft.message.id;
                   const isDeleting = deletingId === draft.message.id;
+                  const isRecording = recordingId === draft.message.id;
+                  const isArmed = armedId === draft.message.id;
 
                   return (
                     <tr key={draft.message.id} className="hover:bg-midnight-faint/50">
@@ -164,15 +233,24 @@ export function DraftsListClient({ initialDrafts, initialError }: Props) {
                             type="button"
                             className="btn btn-xs"
                             onClick={() => handleOpenInGmail(draft.message.id, draft)}
-                            disabled={isOpeningGmail || isDeleting}
+                            disabled={isOpeningGmail || isDeleting || isRecording}
                           >
                             {isOpeningGmail ? "…" : "Gmail"}
                           </button>
                           <button
                             type="button"
+                            className="btn btn-xs btn-primary"
+                            onClick={() => handleMarkSent(draft)}
+                            disabled={isRecording || recordingId !== null}
+                            title="Record that you already sent this email from your own mail client. Runs the quality gate first; opening Gmail never marks anything as sent."
+                          >
+                            {isRecording ? "…" : isArmed ? "Confirm sent" : "Mark as sent"}
+                          </button>
+                          <button
+                            type="button"
                             className="btn btn-xs text-red"
                             onClick={() => handleDelete(draft.message.id)}
-                            disabled={isDeleting || isOpeningGmail}
+                            disabled={isDeleting || isOpeningGmail || isRecording}
                           >
                             {isDeleting ? "…" : "Del"}
                           </button>

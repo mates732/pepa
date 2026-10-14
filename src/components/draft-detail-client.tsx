@@ -6,7 +6,7 @@ import Link from "next/link";
 import { openGmailComposeSmart } from "@/lib/outreach/open-gmail-compose";
 import { updateDraft } from "@/app/update-draft-action";
 import { loadDraftById } from "@/app/load-draft-action";
-import { deleteOutreachMessage } from "@/app/actions";
+import { deleteOutreachMessage, recordOutreachSent } from "@/app/actions";
 import { formatDate, sequenceLabel } from "@/lib/utils/date";
 
 interface Notice {
@@ -59,6 +59,8 @@ export function DraftDetailClient({ initialDraft }: Props) {
   const [editError, setEditError] = useState<string | null>(null);
   const [openingGmail, setOpeningGmail] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [armed, setArmed] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
 
   const loadFreshDraft = useCallback(async () => {
@@ -148,6 +150,65 @@ export function DraftDetailClient({ initialDraft }: Props) {
       setDeleting(false);
     }
   }
+
+  /**
+   * The explicit, and only, way an initial email leaves the outbox in PEPA.
+   *
+   * PEPA sends no mail itself: the operator sends the draft from their own
+   * client (the button above opens it prefilled) and then records the fact
+   * here, so the follow-up engine can schedule from a real send. The server
+   * action compare-and-sets, so a double submit is safe — the second call
+   * reports `already_sent` and schedules nothing. The quality gate runs
+   * server-side at the moment of the write; on warnings the button arms for
+   * one explicit second click, and a blocked send never writes.
+   */
+  async function handleMarkSent() {
+    if (recording) return;
+    setRecording(true);
+    setNotice(null);
+    try {
+      const result = await recordOutreachSent({
+        messageId: draft.message.id,
+        leadId: draft.lead.id,
+        confirmWarnings: armed,
+      });
+
+      if (result.ok) {
+        setArmed(false);
+        setNotice({
+          kind: "info",
+          text:
+            result.outcome === "already_sent"
+              ? "Already recorded as sent — nothing was changed."
+              : `Recorded as sent${result.nextFollowUpAt ? " — the next follow-up is scheduled." : "."}`,
+        });
+        await loadFreshDraft();
+        return;
+      }
+
+      if ("requiresConfirmation" in result && result.requiresConfirmation) {
+        // Warnings, not a refusal: arm one explicit confirmation click.
+        setArmed(true);
+        setNotice({
+          kind: "info",
+          text: `${result.error ?? "The quality gate reported warnings."} Read them, then confirm with “Confirm sent”.`,
+        });
+        return;
+      }
+
+      setArmed(false);
+      setNotice({ kind: "error", text: result.error });
+    } catch {
+      setArmed(false);
+      setNotice({ kind: "error", text: "The send could not be recorded. Try again." });
+    } finally {
+      setRecording(false);
+    }
+  }
+
+  // Sent is a database fact, not a client claim: the same rule the follow-up
+  // engine applies. An already-sent message never offers the transition.
+  const isSent = draft.message.sent_at !== null || draft.message.status === "sent";
 
   return (
     <div className="flex flex-col gap-6">
@@ -252,6 +313,21 @@ export function DraftDetailClient({ initialDraft }: Props) {
               ) : (
                 <>
                   <button type="button" onClick={startEditing} className="btn btn-primary">Edit</button>
+                  {isSent ? (
+                    <button type="button" className="btn" disabled>
+                      Already sent
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleMarkSent}
+                      disabled={recording}
+                      className="btn btn-primary"
+                      title="Record that you already sent this email from your own mail client. Runs the quality gate first; opening Gmail never marks anything as sent."
+                    >
+                      {recording ? "Recording…" : armed ? "Confirm sent" : "Mark as sent"}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={handleOpenInGmail}

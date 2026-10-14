@@ -737,7 +737,9 @@ describe("import contract remains compatible", () => {
 
     expect(result.ok).toBe(true);
 
-    const stored = db.messages.filter((row) => row.recipient_email === "import-draft@example.com");
+    const stored = db.messages.filter(
+      (row) => row.recipient_email === "import-draft@example.com" && row.sequence_number === 0,
+    );
     expect(stored).toHaveLength(1);
     expect(stored[0]).toMatchObject({
       status: "draft",
