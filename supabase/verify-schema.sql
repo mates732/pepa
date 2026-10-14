@@ -42,7 +42,8 @@ declare
   t text;
 begin
   foreach t in array array[
-    'leads', 'outreach_messages', 'action_tokens', 'followup_notifications', 'historical_outreach'
+    'leads', 'outreach_messages', 'action_tokens', 'followup_notifications',
+    'followup_notification_settings', 'historical_outreach', 'streak_reminders'
   ]
   loop
     if not exists (

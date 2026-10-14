@@ -5,10 +5,15 @@
  * notification becomes eligible, given a scheduling instant and a configured
  * delay, is decided here.
  *
- * The delay is added to the scheduling instant (the time `markFollowUpSent()`
- * runs, i.e. the initial email's `sentAt`) to produce `notification_due_at`.
- * This is independent of `next_followup_at`, which stays the cadence-based
- * email-due timestamp.
+ * The delay is an offset from the follow-up's DUE moment — the instant the
+ * cadence says the email should go out (for follow-up #1: 4 business days after
+ * the previous touchpoint). It is deliberately NOT an offset from the send:
+ * the operator asked for a timer, so the bot writes when the follow-up comes
+ * due, not when it was scheduled. A delay of 0 (the default) means "exactly on
+ * time"; a positive one is a late reminder ("1 day" = a day after it came due).
+ *
+ * The email-due timestamp itself (`next_followup_at`) is computed by the cadence
+ * module and never depends on this configuration.
  *
  * Units: seconds, minutes, hours, days. Days are calendar days (not business
  * days) — the notification is a prompt, not a follow-up in the cadence sense.
@@ -27,12 +32,13 @@ export interface ComputedDue {
 }
 
 /**
- * Default delay: 3 minutes. Matches the behaviour the operator originally asked
- * for and is short enough that the notification arrives while the follow-up is
- * still fresh, without being instantaneous (which would race the cron).
+ * Default delay: 0 — the notification fires the moment the follow-up becomes
+ * due, which is the timer the operator asked for. A positive value shifts the
+ * notification later; it is never negative, so a notification cannot arrive
+ * before the follow-up it announces.
  */
 export const DEFAULT_DELAY: DelayConfig = {
-  value: 3,
+  value: 0,
   unit: "minutes",
 };
 
@@ -73,16 +79,17 @@ export function validateDelayConfig(config: {
 }
 
 /**
- * Compute the notification due timestamp from a scheduling instant and a delay.
+ * Compute the notification due timestamp from an anchor instant and a delay.
  *
- * `scheduledAt` is the moment the follow-up was scheduled — in the current
- * model, the initial email's `sentAt` from `markFollowUpSent()`.
+ * `anchorAt` is the follow-up's due moment — the cadence-based
+ * `next_followup_at` computed by `markFollowUpSent()` — so the default zero
+ * delay notifies exactly when the email should go out.
  */
 export function computeNotificationDueAt(
-  scheduledAt: Date | string,
+  anchorAt: Date | string,
   config: DelayConfig,
 ): Date {
-  const base = typeof scheduledAt === "string" ? new Date(scheduledAt) : scheduledAt;
+  const base = typeof anchorAt === "string" ? new Date(anchorAt) : anchorAt;
   const ms = config.value * UNIT_TO_MS[config.unit];
   return new Date(base.getTime() + ms);
 }

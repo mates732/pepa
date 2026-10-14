@@ -293,6 +293,24 @@ function padYear(value: number): string {
   return String(value).padStart(4, "0");
 }
 
+/**
+ * The wall-clock hour of `instant` in `timeZone`, 0–23.
+ *
+ * Needed by anything that must act on a *local time of day* rather than on a
+ * calendar day — the 19:00 streak reminder is the first caller. Resolved
+ * through the same `localParts` path as every boundary above, so an hour read
+ * here can never disagree with the day key the same instant maps to.
+ *
+ * Returns `null` for an unusable zone or an unparseable instant, never a
+ * guessed hour.
+ */
+export function localHourInZone(timeZone: string, instant: Date | number | string): number | null {
+  if (!isValidTimeZone(timeZone)) return null;
+  const date = instant instanceof Date ? instant : new Date(instant);
+  if (Number.isNaN(date.getTime())) return null;
+  return localParts(timeZone, date).hour;
+}
+
 /** `[start, end)` — a half-open window, so boundaries are never double-counted. */
 export function isWithin(sentAt: string, start: string, end: string): boolean {
   const value = Date.parse(sentAt);

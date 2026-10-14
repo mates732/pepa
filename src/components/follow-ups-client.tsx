@@ -19,7 +19,8 @@ import {
 } from "@/lib/utils/follow-ups";
 
 const DELAY_UNITS = ["seconds", "minutes", "hours", "days"] as const;
-const DEFAULT_DELAY_VALUE = 3;
+/** Notify exactly when the follow-up comes due — the operator's 4-day timer. */
+const DEFAULT_DELAY_VALUE = 0;
 const DEFAULT_DELAY_UNIT = "minutes" as const;
 
 interface Notice {
@@ -479,6 +480,10 @@ function NotificationDelayControl({
     <div className="sticker px-3 py-2" style={{ minWidth: 220 }}>
       <p className="text-[11px] font-bold uppercase tracking-wider text-midnight-soft mb-2">
         Notification delay
+      </p>
+      <p className="mb-2 text-[11px] leading-snug text-midnight-soft">
+        Added to the due moment — 0 means the bot writes the moment the follow-up
+        comes due (the cadence timer), a positive value is a late reminder.
       </p>
       <div className="flex items-center gap-2">
         <label className="text-xs text-midnight flex-1">

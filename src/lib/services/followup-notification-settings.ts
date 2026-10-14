@@ -1,8 +1,11 @@
 import "server-only";
 
-import { validateDelayConfig } from "@/lib/followup/notification-delay";
+import {
+  DEFAULT_DELAY,
+  validateDelayConfig,
+  type DelayConfig,
+} from "@/lib/followup/notification-delay";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
-import type { DelayConfig } from "@/lib/followup/notification-delay";
 
 export type { DelayConfig };
 
@@ -11,6 +14,10 @@ export type { DelayConfig };
  *
  * Stored in a singleton table (`followup_notification_settings`). One row,
  * created by the migration. The service reads and updates this row.
+ *
+ * The configured delay is an offset from the follow-up's due moment (0 = the
+ * bot writes exactly when the follow-up becomes due). See
+ * `@/lib/followup/notification-delay` for the semantics.
  */
 
 export interface NotificationDelaySettings {
@@ -135,8 +142,5 @@ export async function updateNotificationDelaySettings(input: {
     error: null,
   };
 }
-
-/** Default delay — used when the settings row is missing (legacy state). */
-const DEFAULT_DELAY = { value: 3, unit: "minutes" as const };
 
 export { DEFAULT_DELAY };

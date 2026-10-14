@@ -596,17 +596,24 @@ async function clearFollowUpSchedule(leadId: string): Promise<void> {
 }
 
 /**
- * Advance the schedule after the operator actually sends a follow-up.
- * Called by the future EmailProvider; not wired to anything yet.
+ * Advance the schedule after the operator actually sends a follow-up (or the
+ * initial outreach, which `recordOutreachSent()` calls). Called by the future
+ * EmailProvider and by the send-recording transition.
  *
  * Sets both:
- *   * `next_followup_at`     — the email-due timestamp (cadence-based).
- *   * `notification_due_at`  — the Telegram-notification-due timestamp
- *                              (scheduled_at + configured delay).
+ *   * `next_followup_at`     — the email-due timestamp (cadence-based): for
+ *                             follow-up #1 that is 4 business days after the
+ *                             send (configurable via PEPA_FOLLOWUP_CADENCE).
+ *   * `notification_due_at`  — the Telegram-notification-due timestamp. This is
+ *                             the timer the operator experiences: the bot writes
+ *                             when the follow-up comes due, not when it was
+ *                             scheduled. The configured delay is an offset from
+ *                             the due moment (0 = notify exactly on time).
  *
- * These are independent: the notification can become eligible before or after
- * the email is due, depending on the configured delay. Email eligibility is
- * never changed by this function beyond the existing cadence behaviour.
+ * The two timestamps move together: the notification is eligible when the
+ * email comes due (offset 0) or later with a positive offset. Email
+ * eligibility itself is never changed by this function beyond the existing
+ * cadence behaviour.
  */
 export async function markFollowUpSent(input: {
   leadId: string;
@@ -620,9 +627,15 @@ export async function markFollowUpSent(input: {
   const due = nextFollowUpDueAt(sentAt, attempt, getFollowUpCadence());
   const nextFollowUpAt = due ? toUtcIso(due) : null;
 
-  // Configurable notification delay: scheduled_at + delay.
+  // Configurable offset from the DUE moment — never from the send. Anchoring on
+  // the send (as this once did) made the bot write minutes after the email left
+  // the outbox, while the operator was waiting for it at the end of the 4-day
+  // timer. A lead past the cadence has nothing to announce, so no notification
+  // is scheduled at all and the legacy fallback in the engine has nothing to do.
   const delayConfig = await getNotificationDelayConfig();
-  const notificationDueAt = computeNotificationDueAtIso(sentAt, delayConfig);
+  const notificationDueAt = due
+    ? computeNotificationDueAtIso(due, delayConfig)
+    : null;
 
   const { error } = await supabase
     .from("leads")

@@ -354,27 +354,36 @@ Short version:
 
 1. Push the schema with `supabase db push`, then prove it with
    `supabase db query --linked --file supabase/verify-schema.sql`. A correct
-   database reports 4 RLS-enabled tables, 2 views and **0** RLS policies.
+   database reports 7 RLS-enabled tables, 2 views and **0** RLS policies.
 2. Set the variables listed in `.env.example` (ten required) under **Settings →
    Environment Variables**. `npm run build` reads none of them, so a successful
    build says nothing about your configuration.
 3. Import the repository in Vercel (framework preset: Next.js) and deploy.
-   `vercel.json` registers the daily follow-up cron automatically.
+   `vercel.json` registers the daily follow-up cron and the streak-reminder
+   schedule automatically.
 4. Register the Telegram webhook once the production hostname exists — Telegram
    cannot reach a preview deployment, and until this is done no notification
    will ever be delivered.
 5. Add Vercel Authentication protection as a second lock, since the PEPA
    password is a single factor.
 
-There are three server routes, and each authenticates itself because
+There are four server routes, and each authenticates itself because
 `src/proxy.ts` excludes `/api/*` from the session gate:
 
 | Route | Method | Authorised by |
 | --- | --- | --- |
 | `/api/telegram/webhook` | POST | `X-Telegram-Bot-Api-Secret-Token` (Telegram) |
 | `/api/cron/followups` | GET | `Authorization: Bearer $CRON_SECRET` |
+| `/api/cron/streak-reminders` | GET | `Authorization: Bearer $CRON_SECRET` |
 | `/api/import` | POST | `Authorization: Bearer $IMPORT_SECRET` |
 
 The last two fail closed with `401` when their secret is unset; there is no
 development bypass. Server Actions are covered by the session gate in
 `src/proxy.ts` in addition to their own `requireAuthenticatedUser()` check.
+
+The streak reminder runs at 17:00, 18:00 and 19:00 UTC because the 19:00
+deadline is in the operator's Europe/Prague calendar and Vercel Cron schedules
+in UTC: the summer run is 17:00, the winter run is 18:00, and the third is the
+same-evening retry window. The engine's local-hour gate decides which run is
+really the deadline and a per-day ledger guarantees at most one message, so the
+extra runs are no-ops.

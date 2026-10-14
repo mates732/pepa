@@ -1,4 +1,6 @@
 import { loadFollowUpWorkspace, loadOutreachDraftRows } from "@/app/actions";
+import { loadOutreachStats } from "@/app/stats-actions";
+import { FOLLOW_UP_TIMEZONE } from "@/lib/followup/cadence";
 import { FollowUpDetailPanel } from "@/components/follow-up-detail-panel";
 import {
   IconBuilding,
@@ -19,6 +21,11 @@ import {
  * When `initialFollowUpId` is set — the Telegram notification deep link — the
  * Phase 4C follow-up detail opens above the stats, where Open in Gmail and
  * Mark as sent live. Nothing is written by opening it.
+ *
+ * The sent counters are resolved in {@link FOLLOW_UP_TIMEZONE} — the same
+ * Europe/Prague calendar the follow-up cadence, the streaks surface and the
+ * 19:00 reminder all use, so "sent today" means the same day to the card, to
+ * the timer and to the Telegram message.
  */
 export async function Dashboard({
   initialFollowUpId,
@@ -35,10 +42,20 @@ export async function Dashboard({
     ? workspaceResult.followUps.filter((f) => f.attention !== 2).length
     : 0;
 
+  // Confirmed sends, counted server-side under the same predicate Stats uses
+  // (status 'sent' with a sent_at). A failed load degrades to zero rather
+  // than throwing — the card states the calendar it counted in either way.
+  const statsResult = await loadOutreachStats({ timeZone: FOLLOW_UP_TIMEZONE });
+  const sentToday = statsResult.ok ? statsResult.stats.today : 0;
+  const sentThisWeek = statsResult.ok ? statsResult.stats.week : 0;
+  const sentAllTime = statsResult.ok ? statsResult.stats.totalSent : 0;
+
   const stats = {
     drafts: drafts.length,
     leads: new Set(drafts.map((d) => d.lead.id)).size,
-    sent: 0,
+    sent: sentAllTime,
+    sentToday,
+    sentThisWeek,
     pendingFollowups: pendingFollowUps,
   };
 
@@ -59,11 +76,18 @@ export async function Dashboard({
       </header>
 
       <section aria-labelledby="stats-heading" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Sent today" value={stats.sentToday} icon={<IconSend size={16} />} />
+        <StatCard label="Sent this week" value={stats.sentThisWeek} icon={<IconSend size={16} />} />
+        <StatCard label="Sent Messages" value={stats.sent} icon={<IconSend size={16} />} />
         <StatCard label="Saved Drafts" value={stats.drafts} icon={<IconFileText size={16} />} />
         <StatCard label="Leads" value={stats.leads} icon={<IconBuilding size={16} />} />
-        <StatCard label="Sent Messages" value={stats.sent} icon={<IconSend size={16} />} />
         <StatCard label="Pending Follow-ups" value={stats.pendingFollowups} icon={<IconRefresh size={16} />} />
       </section>
+      <p className="-mt-3 text-xs text-midnight-soft">
+        Sent today and Sent this week count messages recorded as sent, in the {FOLLOW_UP_TIMEZONE}{" "}
+        calendar — the same day the 19:00 streak reminder watches. Send at least one today to keep the
+        streak.
+      </p>
 
       <section aria-labelledby="quick-links-heading">
         <h2 id="quick-links-heading" className="heading-sticker text-sm text-midnight-soft mb-3">
