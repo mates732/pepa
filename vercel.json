@@ -7,7 +7,7 @@
     },
     {
       "path": "/api/cron/streak-reminders",
-      "schedule": "0 17,18,19 * * *"
+      "schedule": "0 18 * * *"
     }
   ]
 }
