@@ -10,6 +10,15 @@ interface Notice {
   text: string;
 }
 
+interface LeadStatus {
+  "parsed" | "validating" | "checking-history" | "saving-draft" | "verified" | "created" | "updated" | "skipped" | "failed";
+}
+
+interface LeadStatusInfo {
+  status: LeadStatus;
+  reason?: string;
+}
+
 interface ParseResult {
   candidates: Array<{
     recipient: string | null;
@@ -28,7 +37,7 @@ Subject: Nabídka spolupráce
 Body:
 Dobrý den,
 
-rád bych Vám představil naši nabídku.
+rád bych Vám představit naši nabídku.
 
 S pozdravem
 Petr
@@ -67,10 +76,28 @@ export function ParserClient() {
     existing: number;
     skipped: number;
     failed: number;
-    details: Array<{ index: number; recipient: string | null; outcome: string; error: string | null }>;
+    details: Array<{
+      index: number;
+      recipient: string | null;
+      outcome: string;
+      error: string | null;
+    }>;
   } | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+
+  // Live per-lead status tracking
+  const [leadStatuses, setLeadStatuses] = useState<
+    Array<{ index: number; status: LeadStatus; reason?: string }>
+  >();
+  const [processingCounters, setProcessingCounters] = useState({
+    parsed: 0,
+    processing: 0,
+    created: 0,
+    updated: 0,
+    skipped: 0,
+    failed: 0,
+  });
 
   const handleParse = useCallback(() => {
     const result = parseBulkEmails(pasteValue ?? "");
@@ -78,6 +105,24 @@ export function ParserClient() {
     setSaveError(null);
     setSaveResult(null);
     setNotice(null);
+    // Reset lead statuses on new parse
+    setLeadStatuses(
+      preview.candidates.map((_, idx) => ({
+        index: idx,
+        status: "parsed",
+        reason: null,
+      }))
+    );
+    setProcessingCounters({
+      parsed: preview.candidates.filter(
+        (c) => c.status === "parsed" && c.recipient,
+      ).length,
+      processing: 0,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+    });
   }, [pasteValue]);
 
   async function handleSave() {
@@ -91,7 +136,9 @@ export function ParserClient() {
       return;
     }
 
-    const validCandidates = preview.candidates.filter((c) => c.status === "parsed" && c.recipient);
+    const validCandidates = preview.candidates.filter(
+      (c) => c.status === "parsed" && c.recipient,
+    );
     if (validCandidates.length === 0) {
       setSaveError("No valid emails with recipients found. Fix the input first.");
       return;
@@ -102,13 +149,61 @@ export function ParserClient() {
     setSaveResult(null);
     setNotice(null);
 
+    // Initialize lead statuses
+    setLeadStatuses(
+      preview.candidates.map((_, idx) => ({
+        index: idx,
+        status: "parsed",
+        reason: null,
+      }))
+    );
+    setProcessingCounters({
+      parsed: validCandidates.length,
+      processing: validCandidates.length,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+    });
+
     try {
       const result = await saveDraftsFromPaste(pasteValue);
+      
       if (!result.ok) {
         setSaveError(result.error);
+        setLeadStatuses(
+          leadStatuses.map((ls) => ({
+            ...ls,
+            status: "failed",
+            reason: result.error,
+          }))
+        );
+        setProcessingCounters({
+          parsed: leadStatuses.length,
+          processing: 0,
+          created: 0,
+          updated: 0,
+          skipped: leadStatuses.length,
+          failed: leadStatuses.length,
+        });
         return;
       }
 
+      // Update lead statuses based on results
+      const updatedLeadStatuses = leadStatuses.map((ls, i) => {
+        const detail = result.details.find((d) => d.index === ls.index);
+        if (!detail) return ls;
+        
+        const outcome = detail.outcome;
+        if (outcome === "created") return { ...ls, status: "created", reason: null };
+        if (outcome === "already_present") return { ...ls, status: "updated", reason: null };
+        if (outcome === "skipped") return { ...ls, status: "skipped", reason: detail.error };
+        if (outcome === "failed") return { ...ls, status: "failed", reason: detail.error };
+        return ls;
+      });
+      
+      setLeadStatuses(updatedLeadStatuses);
+      
       setSaveResult({
         created: result.created,
         existing: result.existing,
@@ -128,6 +223,23 @@ export function ParserClient() {
       });
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : "Failed to save drafts.");
+      
+      // Mark all leads as failed
+      setLeadStatuses(
+        leadStatuses.map((ls) => ({
+          ...ls,
+          status: "failed",
+          reason: error instanceof Error ? error.message : "Failed to save drafts.",
+        }))
+      );
+      setProcessingCounters({
+        parsed: leadStatuses.length,
+        processing: 0,
+        created: 0,
+        updated: 0,
+        skipped: 0,
+        failed: leadStatuses.length,
+      });
     } finally {
       setSaving(false);
     }
@@ -245,7 +357,7 @@ export function ParserClient() {
                           <span className="text-midnight-soft">{sequenceLabel(fuIdx + 1)}:</span>{" "}
                           {fu.subject ?? "(no subject)"} — {fu.body?.slice(0, 80) ?? "(empty)"}
                         </li>
-                      ))}
+                      ))
                     </ul>
                   </div>
                 )}
@@ -310,6 +422,119 @@ export function ParserClient() {
           {notice.text}
         </div>
       )}
-    </div>
+
+      {/* Live per-lead status panel */}
+      {leadStatuses && leadStatuses.length > 0 && (
+        <section className="sticker">
+          <div className="sticker-title-row">
+            <h2 className="sticker-title">3. Processing Status</h2>
+          </div>
+          <div className="p-5">
+            <div className="grid grid-cols-6 gap-2 mb-4">
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Lead</span>
+                <span>Status</span>
+                <span>Reason</span>
+              </div>
+              {leadStatuses.map((ls) => (
+                <div key={ls.index} className="col-span-6 p-2 border border-midnight-line/20 rounded">
+                  <span className="font-mono text-xs text-midnight lead-index">
+                    Lead {ls.index + 1}
+                  </span>
+                  <span className="font-medium text-midnight status-badge {
+                    ls.status === "parsed"
+                      ? "text-midnight"
+                      : ls.status === "validating"
+                        ? "text-warning-ink"
+                        : ls.status === "checking-history"
+                          ? "text-midnight"
+                          : ls.status === "saving-draft"
+                            ? "text-accent-ink"
+                            : ls.status === "verified"
+                              ? "text-success-ink"
+                              : ls.status === "created"
+                                ? "text-success-ink"
+                                : ls.status === "updated"
+                                  ? "text-success-ink"
+                                  : ls.status === "skipped"
+                                    ? "text-warning-ink"
+                                    : "text-error-ink"
+                  }">
+                    {ls.status}
+                  </span>
+                  <span className="text-xs text-muted-rose ml-2 {
+                    ls.reason
+                      ? "text-error-ink"
+                      : "text-midnight-soft"
+                  }">
+                    {ls.reason ?? ""}
+                  </span>
+                </div>
+              ))}
+            </div>
+            
+            <div className="grid grid-cols-6 gap-2">
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Parsed</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "parsed").length}</span>
+              </div>
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Processing</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "saving-draft").length}</span>
+              </div>
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Created</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "created").length}</span>
+              </div>
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Updated</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "updated").length}</span>
+              </div>
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Skipped</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "skipped").length}</span>
+              </div>
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Failed</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "failed").length}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* Live counters summary */}
+      <div className="mt-6 p-4 rounded-blob border border-midnight-line/20">
+        <p className="text-sm font-bold uppercase tracking-wide text-midnight mb-2">
+          Live Processing Status
+        </p>
+        <div className="grid grid-cols-6 gap-2">
+          <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+            <span>Parsed</span>
+            <span className="font-mono text-midnight">{processingCounters.parsed}</span>
+          </div>
+          <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+            <span>Processing</span>
+            <span className="font-mono text-midnight">{processingCounters.processing}</span>
+          </div>
+          <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+            <span>Created</span>
+            <span className="font-mono text-midnight">{processingCounters.created}</span>
+          </div>
+          <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+            <span>Updated</span>
+            <span className="font-mono text-midnight">{processingCounters.updated}</span>
+          </div>
+          <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+            <span>Skipped</span>
+            <span className="font-mono text-midnight">{processingCounters.skipped}</span>
+          </div>
+          <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+            <span>Failed</span>
+            <span className="font-mono text-midnight">{processingCounters.failed}</span>
+          </div>
+        </div>
+      </div>
+    )
   );
 }
