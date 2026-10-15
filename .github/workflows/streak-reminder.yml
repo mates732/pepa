@@ -16,7 +16,7 @@ on:
 env:
   # Environment variables
   CRON_SECRET: ${{ secrets.CRON_SECRET }}
-  VERCEL_URL: ${{ secrets.VERCEL_URL }}
+  PEPA_BASE_URL: ${{ secrets.PEPA_BASE_URL }}
 
 jobs:
   run-streak-reminder:
@@ -50,8 +50,8 @@ jobs:
             exit 1
           fi
 
-          if [ -z "$VERCEL_URL" ]; then
-            echo "❌ VERCEL_URL is not set!"
+          if [ -z "$PEPA_BASE_URL" ]; then
+            echo "❌ PEPA_BASE_URL is not set!"
             exit 1
           fi
 
@@ -59,7 +59,7 @@ jobs:
           RESPONSE=$(curl -s -w "%{http_code}" \
             -X GET \
             -H "Authorization: Bearer $CRON_SECRET" \
-            "$VERCEL_URL/api/cron/streak-reminders")
+            "$PEPA_BASE_URL/api/cron/streak-reminders")
           
           HTTP_CODE=${RESPONSE: -3}
           BODY=${RESPONSE%???}
