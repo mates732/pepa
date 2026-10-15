@@ -141,6 +141,24 @@ export async function saveDraftsFromPaste(text: string): Promise<SaveDraftsResul
     });
 
     if (!saved.ok || !saved.data) {
+      // If the message was already sent, treat it as skipped per the
+      // "never unsend" semantics. createDraft() returns a string error
+      // when the existing message has status "sent".
+      if (
+        saved.error &&
+        saved.error.startsWith("This message has already been sent")
+      ) {
+        results.push({
+          index: candidate.index,
+          recipient: candidate.recipient,
+          outcome: "skipped",
+          messageId: null,
+          leadId: lead?.id ?? null,
+          error: saved.error,
+        });
+        skipped++;
+        continue;
+      }
       results.push({
         index: candidate.index,
         recipient: candidate.recipient,

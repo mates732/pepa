@@ -110,6 +110,7 @@ export async function createDraft(
     status: "draft" as const,
     sequence_number: 0,
     parent_message_id: null,
+    sent_at: null,
   };
 
   let mainMessage: OutreachMessage;
@@ -140,6 +141,56 @@ export async function createDraft(
         created: false,
       },
     };
+  }
+
+  // Check existing message state for the upsert path.
+  // This must run after the messageId-handling early return, so that
+  // re-saving a sent message via messageId preserves it, while the regular
+  // import/upsert path applies the three-case semantics.
+  const existingMessageQuery = supabase
+    .from("outreach_messages")
+    .select("id, status, sent_at")
+    .eq("lead_id", lead.id)
+    .eq("recipient_email", recipientEmail)
+    .eq("sequence_number", 0)
+    .maybeSingle();
+
+  const { data: existingMessage, error: existingError } = await existingMessageQuery;
+
+  if (existingError) {
+    return fail(existingError.message);
+  }
+
+  // Build main payload - sent_at will be managed based on existing state.
+  // If there is no existing record yet, sent_at stays NULL (payload has no value for it).
+  // If an existing unsent draft is being refreshed, explicitly set sent_at to NULL
+  // so the Drafts UI filter (sent_at IS NULL) includes this record.
+  // If an existing sent message is being updated, this code path is never reached
+  // because createDraft() returns early above.
+  mainPayload.sent_at = null;
+  mainPayload.lead_id = lead.id;
+  mainPayload.recipient_email = recipientEmail;
+  mainPayload.subject = input.mainSubject.trim() || null;
+  mainPayload.body = input.mainBody.trim() || null;
+  mainPayload.status = "draft" as const;
+  mainPayload.sequence_number = 0;
+  mainPayload.parent_message_id = null;
+
+  // If an existing record exists, determine the appropriate semantics.
+  if (existingMessage) {
+    if (existingMessage.status === "sent") {
+      // CASE 3: Existing sent message - never overwrite or unsend it.
+      // Preserve the sent record as-is and report it cannot be overwritten.
+      return fail("This message has already been sent and cannot be overwritten.");
+    }
+
+    // CASE 2: Existing unsent draft (status = "draft" or "ready").
+    // Update its content and explicitly ensure sent_at is NULL so the Drafts
+    // UI filter (sent_at IS NULL) includes this record.
+    mainPayload.sent_at = null;
+  } else {
+    // CASE 1: No existing record - proceed with upsert INSERT.
+    // sent_at will be NULL by default (payload has no value for it - already set above).
   }
 
   // ---- MAIN DRAFT -----------------------------------------------------
