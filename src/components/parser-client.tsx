@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 
 import { parseBulkEmails } from "@/lib/import/bulk-emails";
 import { saveDraftsFromPaste } from "@/app/save-drafts-action";
@@ -8,15 +8,6 @@ import { saveDraftsFromPaste } from "@/app/save-drafts-action";
 interface Notice {
   kind: "info" | "error";
   text: string;
-}
-
-interface LeadStatus {
-  "parsed" | "validating" | "checking-history" | "saving-draft" | "verified" | "created" | "updated" | "skipped" | "failed";
-}
-
-interface LeadStatusInfo {
-  status: LeadStatus;
-  reason?: string;
 }
 
 interface ParseResult {
@@ -67,6 +58,31 @@ function sequenceLabel(sequenceNumber: number): string {
   return `Follow-up #${sequenceNumber}`;
 }
 
+type LeadStatus =
+  | "parsed"
+  | "validating"
+  | "checking-history"
+  | "saving-draft"
+  | "verified"
+  | "created"
+  | "updated"
+  | "skipped"
+  | "failed";
+
+interface LeadStatusInfo {
+  status: LeadStatus;
+  reason?: string;
+}
+
+interface ParserClientProps {
+  onImportComplete?: () => void;
+}
+
+interface LeadStatusInfo {
+  status: LeadStatus;
+  reason?: string;
+}
+
 export function ParserClient() {
   const [pasteValue, setPasteValue] = useState("");
   const [saving, setSaving] = useState(false);
@@ -90,6 +106,7 @@ export function ParserClient() {
   const [leadStatuses, setLeadStatuses] = useState<
     Array<{ index: number; status: LeadStatus; reason?: string }>
   >();
+
   const [processingCounters, setProcessingCounters] = useState({
     parsed: 0,
     processing: 0,
@@ -107,14 +124,14 @@ export function ParserClient() {
     setNotice(null);
     // Reset lead statuses on new parse
     setLeadStatuses(
-      preview.candidates.map((_, idx) => ({
+      result.candidates.map((_, idx) => ({
         index: idx,
         status: "parsed",
         reason: null,
       }))
     );
     setProcessingCounters({
-      parsed: preview.candidates.filter(
+      parsed: result.candidates.filter(
         (c) => c.status === "parsed" && c.recipient,
       ).length,
       processing: 0,
@@ -502,39 +519,9 @@ export function ParserClient() {
           </div>
         </section>
       )}
-
-      {/* Live counters summary */}
-      <div className="mt-6 p-4 rounded-blob border border-midnight-line/20">
-        <p className="text-sm font-bold uppercase tracking-wide text-midnight mb-2">
-          Live Processing Status
-        </p>
-        <div className="grid grid-cols-6 gap-2">
-          <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
-            <span>Parsed</span>
-            <span className="font-mono text-midnight">{processingCounters.parsed}</span>
-          </div>
-          <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
-            <span>Processing</span>
-            <span className="font-mono text-midnight">{processingCounters.processing}</span>
-          </div>
-          <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
-            <span>Created</span>
-            <span className="font-mono text-midnight">{processingCounters.created}</span>
-          </div>
-          <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
-            <span>Updated</span>
-            <span className="font-mono text-midnight">{processingCounters.updated}</span>
-          </div>
-          <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
-            <span>Skipped</span>
-            <span className="font-mono text-midnight">{processingCounters.skipped}</span>
-          </div>
-          <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
-            <span>Failed</span>
-            <span className="font-mono text-midnight">{processingCounters.failed}</span>
-          </div>
-        </div>
-      </div>
-    )
+    </div>
   );
 }
+EOF
+cp /dev/null src/components/parser-client.tsx
+echo "File cleanup"
