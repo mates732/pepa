@@ -1,0 +1,95 @@
+# GitHub Actions workflow for PEPA streak reminder
+name: Streak Reminder Scheduler
+
+on:
+  # Schedule runs at 17:00, 18:00, and 19:00 UTC (matches Vercel Cron schedule)
+  schedule:
+    - cron: '0 17,18,19 * * *'
+    # Optional: Also run every hour during testing
+    # - cron: '0 * * * *'
+  # Manual trigger for testing
+  workflow_dispatch:
+  # Optional: Run on repository dispatch (for external triggers)
+  repository_dispatch:
+    types: [trigger-streak-reminder]
+
+env:
+  # Environment variables
+  CRON_SECRET: ${{ secrets.CRON_SECRET }}
+  VERCEL_URL: ${{ secrets.VERCEL_URL }}
+
+jobs:
+  run-streak-reminder:
+    runs-on: ubuntu-latest
+    name: Run Streak Reminder
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+
+      - name: Run streak reminder
+        run: |
+          echo "🔄 Running streak reminder scheduler..."
+          echo "📅 Schedule: $(date -u -d '@$GITHUB_RUN_ID' '+%Y-%m-%d %H:%M:%S UTC')"
+          
+          if [ -z "$CRON_SECRET" ]; then
+            echo "❌ CRON_SECRET is not set!"
+            exit 1
+          fi
+
+          if [ -z "$VERCEL_URL" ]; then
+            echo "❌ VERCEL_URL is not set!"
+            exit 1
+          fi
+
+          # Call the streak reminder API
+          RESPONSE=$(curl -s -w "%{http_code}" \
+            -X GET \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$VERCEL_URL/api/cron/streak-reminders")
+          
+          HTTP_CODE=${RESPONSE: -3}
+          BODY=${RESPONSE%???}
+          
+          echo "📊 HTTP Status: $HTTP_CODE"
+          echo "📝 Response: $BODY"
+          
+          if [ "$HTTP_CODE" -eq 200 ]; then
+            echo "✅ Streak reminder completed successfully"
+            exit 0
+          elif [ "$HTTP_CODE" -eq 401 ]; then
+            echo "❌ Unauthorized - check CRON_SECRET"
+            exit 1
+          elif [ "$HTTP_CODE" -eq 500 ]; then
+            echo "❌ Internal server error"
+            exit 1
+          else
+            echo "⚠️  Unexpected response"
+            exit 1
+          fi
+
+      - name: Log success
+        if: success()
+        run: |
+          echo "🎉 Streak reminder scheduled successfully!"
+          echo "📈 Check Vercel dashboard for run details"
+
+      - name: Log failure
+        if: failure()
+        run: |
+          echo "💥 Streak reminder failed!"
+          echo "🔍 Check Vercel logs for details"
+          echo "📋 Verify secrets are configured correctly"
