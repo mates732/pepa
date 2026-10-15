@@ -43,7 +43,7 @@ jobs:
       - name: Run streak reminder
         run: |
           echo "🔄 Running streak reminder scheduler..."
-          echo "📅 Schedule: $(date -u -d '@$GITHUB_RUN_ID' '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "📅 Schedule: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           
           if [ -z "$CRON_SECRET" ]; then
             echo "❌ CRON_SECRET is not set!"
