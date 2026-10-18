@@ -16,14 +16,19 @@ import { processStreakReminder } from "@/lib/services/streak-reminder-service";
  *
  * WHY MORE THAN ONE DAILY RUN
  *
- * The deadline is 19:00 in the operator's calendar (Europe/Prague), but Vercel
- * cron schedules are UTC. The offset between the two changes twice a year, so
- * no single UTC hour is 19:00 local all year. The schedules in `vercel.json`
- * therefore run this route at 17:00, 18:00 and 19:00 UTC: in summer the 17:00
- * run is the 19:00 local deadline, in winter it is the 18:00 run, and the third
- * is a same-evening retry window if delivery failed. The local-hour gate inside
- * `processStreakReminder()` decides which run is really the deadline, and the
- * per-day ledger guarantees at most one message no matter how often it runs.
+ * The deadline is 19:00 in the operator's calendar (Europe/Prague), but cron
+ * schedules are UTC. The offset between the two changes twice a year, so no
+ * single UTC hour is 19:00 local all year. The GitHub Actions schedule in
+ * `.github/workflows/streak-reminder.yml` therefore runs this route at 17:00,
+ * 18:00 and 19:00 UTC: in summer the 17:00 run is the 19:00 local deadline, in
+ * winter it is the 18:00 run, and the third is a same-evening retry window if
+ * delivery failed. Vercel Cron is kept only as a once-a-day safety net at
+ * 18:00 UTC — a Hobby plan rejects any expression that fires more than once a
+ * day, which silently refuses every deployment — and it is never early: it is
+ * exactly the deadline in winter and one hour after it in summer. The
+ * local-hour gate inside `processStreakReminder()` decides which run is really
+ * the deadline, and the per-day ledger guarantees at most one message no
+ * matter how often it runs.
  *
  * Response contains counts only: never a lead, subject, body or URL.
  */

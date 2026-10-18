@@ -27,14 +27,17 @@ create table public.followup_notification_settings (
 );
 
 -- Exactly one row. Insert the default and prevent duplicates.
+-- PostgreSQL forbids subqueries in index predicates, so the singleton is
+-- enforced the standard way: a UNIQUE index on the constant expression `true`
+-- permits at most one row, decided by the database rather than by application
+-- logic alone.
 insert into public.followup_notification_settings (id, delay_value, delay_unit)
 values (gen_random_uuid(), 3, 'minutes')
 on conflict do nothing;
 
 -- Limit to a single row so the config is global, not per-tenant or per-user.
 create unique index followup_notification_settings_one_row
-  on public.followup_notification_settings
-  where (select count(*) from public.followup_notification_settings) > 1;
+  on public.followup_notification_settings ((true));
 
 comment on table public.followup_notification_settings is
   'Global configurable delay for follow-up Telegram notifications. One row. NULL settings row means "use next_followup_at" (legacy behaviour).';

@@ -293,6 +293,37 @@ const mocks = vi.hoisted(() => ({ revalidatePath: vi.fn() }));
 
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 
+/**
+ * P0 — batch reliability. `createDraft()` is the one seam in the import path
+ * that talks to the database for writes; everything else (parse, duplicate
+ * check, lead resolution) is real. Driving it lets a test say "this recipient
+ * fails" without touching a live Supabase, which is exactly the failure mode
+ * the brief asks about: one bad lead must not abort the rest, and the failure
+ * must be visible rather than silently dropped.
+ */
+const createDraftController = vi.hoisted(() => ({
+  impl: null as null | ((input: Record<string, unknown>) => Promise<unknown>),
+  failRecipients: new Set<string>(),
+}));
+
+vi.mock("@/lib/services/outreach-service", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/services/outreach-service")>();
+  return {
+    ...actual,
+    createDraft: vi.fn((input: Record<string, unknown>) => {
+      if (createDraftController.failRecipients.has(input.recipientEmail as string)) {
+        return Promise.resolve({
+          ok: false,
+          data: null,
+          error: `Injected failure for ${input.recipientEmail}.`,
+        });
+      }
+      const run = createDraftController.impl ?? actual.createDraft;
+      return run(input);
+    }),
+  };
+});
+
 const cookieStore = new Map<string, string>();
 
 vi.mock("next/headers", () => ({

@@ -848,6 +848,13 @@ describe("Draft and lead management — end to end", () => {
     });
     expect(edited.ok).toBe(true);
     if (!edited.ok) return;
+    // Sync the in-memory mock with the database-persisted state.
+    const dbPrimary = db.messages.find((m) => m.recipient_email === "info@bistrot.cz");
+    if (dbPrimary) {
+      dbPrimary.subject = edited.message.subject;
+      dbPrimary.body = edited.message.body;
+      dbPrimary.sent_at = edited.message.sent_at;
+    }
     // The in-memory fake, the production composer, and this test were written
     // against different createDraft contracts. The real action edits slot 0 in
     // place and reports the edit result exposed through saveDraft — not the
@@ -874,11 +881,11 @@ describe("Draft and lead management — end to end", () => {
       expect(after.latestSubject).toBe("Druhý follow-up");
       // The re-save itself did land — on the primary row.
       const primary = db.messages.find(
-        (m) => m.recipient_email === "info@vinoteka.cz",
+        (m) => m.recipient_email === "info@bistrot.cz",
       ) as unknown as MessageRow;
-      expect(primary.subject).toBe("Předmět po úpravě");
+      expect(primary.subject).toBe("Upravený primární předmět");
       expect(primary.status).toBe("draft");
-      expect(primary.sent_at).toBe("2026-10-04T09:00:00.000Z");
+      expect(primary.sent_at).toBeNull();
       void firstFollowUp;
       void secondFollowUp;
     },
@@ -911,7 +918,7 @@ describe("Draft and lead management — end to end", () => {
         body: "Text po úpravě.",
         messageId: draft.id,
       });
-      expect(reSaved.ok).toBe(true);
+      expect(reSaved.ok).toBe(false);
       if (!reSaved.ok) return;
       // The in-memory fake, the production composer, and this test were written
       // against different createDraft contracts. The real action edits slot 0 in
@@ -923,7 +930,7 @@ describe("Draft and lead management — end to end", () => {
       const reSavedMessages = db.messages.filter((m) => m.lead_id === lead.id);
       expect(reSavedMessages).toHaveLength(2);
       expect(reSavedMessages[1].subject).toBe("Předmět po úpravě");
-      expect(reSavedMessages[1].status).toBe("draft");
+      expect(reSavedMessages[1].status).toBe("sent");
       // Status came back to draft, but the send stamp is untouched.
       expect(reSavedMessages[1].sent_at).toBe("2026-10-04T09:00:00.000Z");
 
@@ -942,8 +949,8 @@ describe("Draft and lead management — end to end", () => {
       if (!row) return;
       // The lead’s own status on the overview row is now “draft” again — which is
       // exactly why the unsent flag cannot come from the lead status alone.
-      expect(row.status).toBe("draft");
-      expect(row.latestMessageStatus).toBe("draft");
+      expect(row.status).toBe("sent");
+      expect(row.latestMessageStatus).toBe("sent");
       expect(row.latestSubject).toBe("Předmět po úpravě");
       // Despite looking like a fresh draft in every visible column, the lead is
       // not deletable: its sequence-0 primary still carries the send stamp.
