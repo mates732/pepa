@@ -266,7 +266,7 @@ export function ParserClient() {
     }
   }
 
-  // Parse on every render for live preview counts, but don't auto-expand preview
+  // Parse on every render for live preview counts (but don't auto-expand preview)
   const parsed = parseBulkEmails(pasteValue ?? "");
   const totalInitial = parsed.candidates.filter((c) => c.status === "parsed" && c.recipient).length ?? 0;
   const totalFollowups = parsed.candidates.reduce((sum, c) => sum + (c.followUps?.length ?? 0), 0) ?? 0;
@@ -419,7 +419,7 @@ export function ParserClient() {
         </div>
       )}
 
-      {/* 4. RESULTS CARD - Appears immediately after processing, before optional preview */}
+      {/* 4. RESULTS CARD - Appears immediately after processing */}
       {processResult && (
         <section className="sticker rounded-blob border border-midnight-line bg-midnight-faint/40 p-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
@@ -535,19 +535,13 @@ export function ParserClient() {
         </div>
       )}
 
-      {/* 5. OPTIONAL PREVIEW - At the bottom, collapsed by default, lazy-rendered */}
-      {hasPreview && (
-        <section className="sticker" style={{ marginTop: "auto" }}>
-          <button
-            type="button"
-            onClick={() => setPreviewExpanded(!previewExpanded)}
-            className="sticker-title-row flex w-full items-center justify-between gap-3 px-5 py-3 text-left"
-            aria-expanded={previewExpanded}
-            aria-controls="parser-preview"
-          >
+      {/* 5. OPTIONAL PREVIEW - Only rendered when expanded, completely removed from DOM when collapsed */}
+      {hasPreview && previewExpanded && (
+        <section className="sticker">
+          <div className="sticker-title-row flex items-center justify-between gap-3 px-5 py-3">
             <h2 className="sticker-title flex items-center gap-2">
               <svg
-                className={`w-5 h-5 text-midnight-soft transition-transform ${previewExpanded ? "rotate-90" : ""}`}
+                className="w-5 h-5 text-midnight-soft rotate-90"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -557,74 +551,183 @@ export function ParserClient() {
               </svg>
               Zobrazit rozpoznané e-maily ({parsed.candidates.length} bloků)
             </h2>
-          </button>
+            <button
+              type="button"
+              onClick={() => setPreviewExpanded(false)}
+              className="btn btn-sm"
+              aria-label="Skrýt náhled"
+            >
+              Skrýt
+            </button>
+          </div>
+          <div className="px-5 pb-5 pt-0">
+            <div className="flex flex-wrap gap-4 mb-4 text-sm">
+              <span className="rounded-full border border-accent/30 bg-accent-soft px-3 py-1 text-accent-strong font-semibold">
+                {parsed.candidates.filter((c) => c.status === "parsed" && c.recipient).length ?? 0} initial email{totalInitial === 1 ? "" : "s"}
+              </span>
+              <span className="rounded-full border border-midnight-line-strong bg-midnight-faint px-3 py-1 text-midnight font-semibold">
+                {totalFollowups} follow-up{totalFollowups === 1 ? "" : "s"}
+              </span>
+              {totalInvalid > 0 && (
+                <span className="rounded-full border border-error-line bg-error-soft px-3 py-1 text-error-ink font-semibold">
+                  {totalInvalid} invalid/skipped
+                </span>
+              )}
+            </div>
 
-          <div
-            id="parser-preview"
-            className={`overflow-hidden transition-all duration-200 ${previewExpanded ? "max-h-max opacity-100" : "max-h-0 opacity-0"}`}
-            style={{ maxHeight: previewExpanded ? "none" : "0" }}
-          >
-            <div className="px-5 pb-5 pt-0" aria-hidden={!previewExpanded}>
-              <div className="flex flex-wrap gap-4 mb-4 text-sm">
-                <span className="rounded-full border border-accent/30 bg-accent-soft px-3 py-1 text-accent-strong font-semibold">
-                  {parsed.candidates.filter((c) => c.status === "parsed" && c.recipient).length ?? 0} initial email{totalInitial === 1 ? "" : "s"}
-                </span>
-                <span className="rounded-full border border-midnight-line-strong bg-midnight-faint px-3 py-1 text-midnight font-semibold">
-                  {totalFollowups} follow-up{totalFollowups === 1 ? "" : "s"}
-                </span>
-                {totalInvalid > 0 && (
-                  <span className="rounded-full border border-error-line bg-error-soft px-3 py-1 text-error-ink font-semibold">
-                    {totalInvalid} invalid/skipped
+            {parsed.candidates.map((candidate, idx) => (
+              <div key={candidate.recipient ?? idx} className="mb-4 p-4 rounded-blob border border-midnight-line bg-midnight-faint/40">
+                <div className="flex flex-wrap items-center gap-2 mb-2">
+                  <span className="chip chip-solid text-xs">
+                    {candidate.status === "parsed" ? "Valid" : candidate.status}
                   </span>
-                )}
-              </div>
-
-              {parsed.candidates.map((candidate, idx) => (
-                <div key={candidate.recipient ?? idx} className="mb-4 p-4 rounded-blob border border-midnight-line bg-midnight-faint/40">
-                  <div className="flex flex-wrap items-center gap-2 mb-2">
-                    <span className="chip chip-solid text-xs">
-                      {candidate.status === "parsed" ? "Valid" : candidate.status}
-                    </span>
-                    {candidate.recipient && (
-                      <span className="font-mono text-sm text-midnight">{candidate.recipient}</span>
-                    )}
-                    {!candidate.recipient && (
-                      <span className="text-sm text-red-600">Missing recipient</span>
-                    )}
-                  </div>
-
-                  <div className="grid gap-2 text-sm">
-                    <div>
-                      <span className="font-medium text-midnight-soft">Subject:</span>
-                      <span className="ml-2 font-mono text-midnight">{candidate.subject ?? "(none)"}</span>
-                    </div>
-                    <div>
-                      <span className="font-medium text-midnight-soft">Body preview:</span>
-                      <span className="ml-2 font-mono text-midnight line-clamp-2">{candidate.body?.slice(0, 120) ?? "(empty)"}</span>
-                    </div>
-                  </div>
-
-                  {candidate.followUps && candidate.followUps.length > 0 && (
-                    <div className="mt-2 pt-2 border-t border-midnight-line/40">
-                      <div className="text-xs font-medium text-midnight-soft mb-1">Follow-ups ({candidate.followUps.length}):</div>
-                      <ul className="space-y-1">
-                        {candidate.followUps.map((fu, fuIdx) => (
-                          <li key={fuIdx} className="text-xs text-midnight font-mono">
-                            <span className="text-midnight-soft">{sequenceLabel(fuIdx + 1)}:</span>{" "}
-                            {fu.subject ?? "(no subject)"} — {fu.body?.slice(0, 80) ?? "(empty)"}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
+                  {candidate.recipient && (
+                    <span className="font-mono text-sm text-midnight">{candidate.recipient}</span>
                   )}
-
-                  {candidate.warnings && candidate.warnings.length > 0 && (
-                    <div className="mt-2 text-xs text-warning-ink bg-warning-soft p-2 rounded">
-                      {candidate.warnings.join("; ")}
-                    </div>
+                  {!candidate.recipient && (
+                    <span className="text-sm text-red-600">Missing recipient</span>
                   )}
                 </div>
+
+                <div className="grid gap-2 text-sm">
+                  <div>
+                    <span className="font-medium text-midnight-soft">Subject:</span>
+                    <span className="ml-2 font-mono text-midnight">{candidate.subject ?? "(none)"}</span>
+                  </div>
+                  <div>
+                    <span className="font-medium text-midnight-soft">Body preview:</span>
+                    <span className="ml-2 font-mono text-midnight line-clamp-2">{candidate.body?.slice(0, 120) ?? "(empty)"}</span>
+                  </div>
+                </div>
+
+                {candidate.followUps && candidate.followUps.length > 0 && (
+                  <div className="mt-2 pt-2 border-t border-midnight-line/40">
+                    <div className="text-xs font-medium text-midnight-soft mb-1">Follow-ups ({candidate.followUps.length}):</div>
+                    <ul className="space-y-1">
+                      {candidate.followUps.map((fu, fuIdx) => (
+                        <li key={fuIdx} className="text-xs text-midnight font-mono">
+                          <span className="text-midnight-soft">{sequenceLabel(fuIdx + 1)}:</span>{" "}
+                          {fu.subject ?? "(no subject)"} — {fu.body?.slice(0, 80) ?? "(empty)"}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {candidate.warnings && candidate.warnings.length > 0 && (
+                  <div className="mt-2 text-xs text-warning-ink bg-warning-soft p-2 rounded">
+                    {candidate.warnings.join("; ")}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* 6. COMPACT PREVIEW TRIGGER - Only shown when collapsed, minimal inline button */}
+      {hasPreview && !previewExpanded && (
+        <div className="mt-4 text-center">
+          <button
+            type="button"
+            onClick={() => setPreviewExpanded(true)}
+            className="btn btn-xs text-midnight-soft hover:text-midnight"
+            aria-expanded={false}
+            aria-controls="parser-preview"
+          >
+            <svg className="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+            Zobrazit rozpoznané e-maily ({parsed.candidates.length} bloků)
+          </button>
+        </div>
+      )}
+
+      {processError && (
+        <div className="notice notice-alarm" role="alert">{processError}</div>
+      )}
+
+      {notice && (
+        <div className={`notice ${notice.kind === "error" ? "notice-alarm" : "notice-info"}`} role="alert">
+          {notice.text}
+        </div>
+      )}
+
+      {/* Live per-lead status panel - only during processing */}
+      {leadStatuses && leadStatuses.length > 0 && (
+        <section className="sticker" aria-live="polite">
+          <div className="sticker-title-row">
+            <h2 className="sticker-title">Stav zpracování</h2>
+          </div>
+          <div className="p-5">
+            <div className="grid grid-cols-6 gap-2 mb-4">
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Lead</span>
+                <span>Stav</span>
+                <span>Důvod</span>
+              </div>
+              {leadStatuses.map((ls) => (
+                <div key={ls.index} className="col-span-6 p-2 border border-midnight-line/20 rounded">
+                  <span className="font-mono text-xs text-midnight lead-index">
+                    Lead {ls.index + 1}
+                  </span>
+                  <span className={`font-medium text-midnight status-badge ${
+                    ls.status === "idle"
+                      ? "text-midnight-soft"
+                      : ls.status === "processing"
+                        ? "text-warning-ink"
+                        : ls.status === "created"
+                          ? "text-success-ink"
+                          : ls.status === "updated"
+                            ? "text-accent-ink"
+                            : ls.status === "unchanged"
+                              ? "text-midnight"
+                              : ls.status === "skipped_duplicate"
+                                ? "text-warning-ink"
+                                : ls.status === "skipped_already_contacted"
+                                  ? "text-error-ink"
+                                  : ls.status === "rejected_invalid"
+                                    ? "text-error-ink"
+                                    : "text-error-ink"
+                  }`}>
+                    {ls.status}
+                  </span>
+                  <span className={`text-xs text-muted-rose ml-2 ${
+                    ls.reason
+                      ? "text-error-ink"
+                      : "text-midnight-soft"
+                  }`}>
+                    {ls.reason ?? ""}
+                  </span>
+                </div>
               ))}
+            </div>
+            
+            <div className="grid grid-cols-6 gap-2">
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Vytvořeno</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "created").length}</span>
+              </div>
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Aktualizováno</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "updated").length}</span>
+              </div>
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Beze změny</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "unchanged").length}</span>
+              </div>
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Duplicitní</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "skipped_duplicate").length}</span>
+              </div>
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Již kontaktováno</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "skipped_already_contacted").length}</span>
+              </div>
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Chyby</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "failed" || l.status === "rejected_invalid").length}</span>
+              </div>
             </div>
           </div>
         </section>
