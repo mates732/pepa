@@ -188,7 +188,7 @@ export async function importBulkEmails(rows: BulkDraftRequest[]): Promise<BulkIm
       results.push({
         index: row.index,
         recipient: row.recipient,
-        outcome: "skipped",
+        outcome: "rejected_invalid",
         messageId: null,
         leadId: null,
         error: check.error ?? "Duplicate check failed.",
@@ -201,7 +201,7 @@ export async function importBulkEmails(rows: BulkDraftRequest[]): Promise<BulkIm
       results.push({
         index: row.index,
         recipient: row.recipient,
-        outcome: "skipped",
+        outcome: "skipped_already_contacted",
         messageId: null,
         leadId: null,
         error: check.check.historicalContact
@@ -243,15 +243,26 @@ export async function importBulkEmails(rows: BulkDraftRequest[]): Promise<BulkIm
       continue;
     }
 
+    // Determine outcome: created, updated, or unchanged
+    const existingDraft = check.check.latestUnsentMessage;
+    const existingSubject = existingDraft?.subject ?? null;
+    const existingBody = existingDraft?.body ?? null;
+    const newSubject = saved.data.main.subject;
+    const newBody = saved.data.main.body;
+
+    let outcome: "created" | "updated" | "unchanged";
+    if (!check.check.messageCount || check.check.messageCount === 0) {
+      outcome = "created";
+    } else if (existingSubject === newSubject && existingBody === newBody) {
+      outcome = "unchanged";
+    } else {
+      outcome = "updated";
+    }
+
     results.push({
       index: row.index,
       recipient: saved.data.main.recipient_email,
-      // `createDraft()` reports `created: true` on its upsert path whatever
-      // happened, because the guarantee that matters there is the one Postgres
-      // makes: slot 0 is refreshed in place, never duplicated. So "was this
-      // already a draft?" is answered from the lead's message count, captured by
-      // the re-check immediately above — the same read the composer's badge uses.
-      outcome: check.check.messageCount > 0 ? "already_present" : "created",
+      outcome,
       messageId: saved.data.main.id,
       leadId: saved.data.lead.id,
       error: null,

@@ -1,4 +1,4 @@
-"use server";
+﻿"use server";
 
 import { revalidatePath } from "next/cache";
 
@@ -16,6 +16,7 @@ import {
   listOutreachDrafts,
   listOutreachHistory,
   recordOutreachSent as recordOutreachSentService,
+  attachProviderMessageId as attachProviderMessageIdService,
 } from "@/lib/services/outreach-service";
 import { evaluateDraftQualityGate, type GateEvaluation } from "@/lib/services/outreach-quality-gate";
 import {
@@ -473,10 +474,15 @@ export async function checkQualityGate(input: {
  * The transition is owned by `recordOutreachSent()`, which compare-and-sets on
  * the database and is therefore safe to submit twice: the second call reports
  * `already_sent` and schedules nothing further.
+ *
+ * Optionally accepts a Gmail Message-ID from the sent email (found via
+ * "Show original" in Gmail). This enables future inbound reply matching.
  */
 export async function recordOutreachSent(input: {
   messageId: string;
   leadId: string;
+  /** Optional Gmail Message-ID from the sent email (from "Show original" in Gmail). */
+  providerMessageId?: string;
   /** Second and later attempts, after the operator acknowledged warnings. */
   confirmWarnings?: boolean;
 }): Promise<RecordOutreachSentResult> {
@@ -484,6 +490,7 @@ export async function recordOutreachSent(input: {
 
   const messageId = String(input?.messageId ?? "");
   const leadId = String(input?.leadId ?? "");
+  const providerMessageId = input.providerMessageId ? String(input.providerMessageId).trim() : undefined;
 
   if (!UUID_PATTERN.test(messageId)) return failure("That message could not be identified.");
   if (!UUID_PATTERN.test(leadId)) return failure("That lead could not be identified.");
@@ -492,6 +499,7 @@ export async function recordOutreachSent(input: {
     const result = await recordOutreachSentService({
       messageId,
       leadId,
+      providerMessageId,
       confirmWarnings: input?.confirmWarnings === true,
     });
     if (!result.ok || !result.data) {
@@ -527,6 +535,57 @@ export async function recordOutreachSent(input: {
   } catch (error) {
     return failure(
       error instanceof Error ? error.message : "Could not record the send.",
+    );
+  }
+}
+
+export type AttachProviderMessageIdResult =
+  | { ok: true; message: OutreachMessage }
+  | ActionFailure;
+
+/**
+ * Attach a Gmail Message-ID to an already-sent outreach message.
+ *
+ * This enables future inbound reply matching via In-Reply-To headers.
+ * The operator obtains the Message-ID from Gmail: open the sent email,
+ * select "Show original", and copy the Message-ID header.
+ *
+ * Requirements:
+ * - Message must already be recorded as sent (status='sent', sent_at not null)
+ * - Provider will be set to 'gmail'
+ * - If the message already has a different Message-ID, the operation is rejected
+ * - Idempotent: if the same Message-ID is already stored, succeeds
+ */
+export async function attachProviderMessageId(input: {
+  messageId: string;
+  leadId: string;
+  providerMessageId: string;
+}): Promise<AttachProviderMessageIdResult> {
+  await requireAuthenticatedUser();
+
+  const messageId = String(input?.messageId ?? "");
+  const leadId = String(input?.leadId ?? "");
+  const providerMessageId = String(input?.providerMessageId ?? "").trim();
+
+  if (!UUID_PATTERN.test(messageId)) return failure("That message could not be identified.");
+  if (!UUID_PATTERN.test(leadId)) return failure("That lead could not be identified.");
+  if (!providerMessageId) return failure("A provider Message-ID is required.");
+
+  try {
+    const result = await attachProviderMessageIdService({
+      messageId,
+      leadId,
+      providerMessageId,
+    });
+    if (!result.ok || !result.data) {
+      return failure(result.error ?? "Could not attach the provider Message-ID.");
+    }
+
+    revalidatePath("/");
+    return { ok: true, message: result.data.message };
+  } catch (error) {
+    return failure(
+      error instanceof Error ? error.message : "Could not attach the provider Message-ID.",
     );
   }
 }
@@ -921,3 +980,4 @@ export async function getNotificationDelay(): Promise<{ ok: true; config: DelayC
     );
   }
 }
+

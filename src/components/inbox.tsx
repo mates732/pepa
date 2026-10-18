@@ -28,8 +28,11 @@ export function Inbox() {
   const [saving, setSaving] = useState(false);
   const [saveResult, setSaveResult] = useState<{
     created: number;
-    existing: number;
-    skipped: number;
+    updated: number;
+    unchanged: number;
+    skipped_duplicate: number;
+    skipped_already_contacted: number;
+    rejected_invalid: number;
     failed: number;
     details: Array<{ index: number; recipient: string | null; outcome: string; error: string | null }>;
   } | null>(null);
@@ -100,19 +103,22 @@ export function Inbox() {
 
       setSaveResult({
         created: result.created,
-        existing: result.existing,
-        skipped: result.skipped,
+        updated: result.updated,
+        unchanged: result.unchanged,
+        skipped_duplicate: result.skipped_duplicate,
+        skipped_already_contacted: result.skipped_already_contacted,
+        rejected_invalid: result.rejected_invalid,
         failed: result.failed,
         details: result.details,
       });
 
-      if (result.created > 0 || result.existing > 0) {
+      if (result.created > 0 || result.updated > 0 || result.unchanged > 0) {
         setPasteValue("");
       }
 
       setNotice({
         kind: "info",
-        text: `${result.created} draft${result.created === 1 ? "" : "s"} created, ${result.existing} updated, ${result.skipped} skipped${result.failed > 0 ? `, ${result.failed} failed` : ""}.`,
+        text: `${result.created} draft${result.created === 1 ? "" : "s"} created, ${result.updated} updated, ${result.unchanged} unchanged${result.skipped_duplicate + result.skipped_already_contacted + result.rejected_invalid > 0 ? `, ${result.skipped_duplicate + result.skipped_already_contacted + result.rejected_invalid} skipped` : ""}${result.failed > 0 ? `, ${result.failed} failed` : ""}.`,
       });
 
       await loadDrafts();
@@ -349,21 +355,24 @@ Petr`;
             </p>
           </div>
 
-          {saveResult && saveResult.created + saveResult.existing > 0 && (
+          {saveResult && saveResult.created + saveResult.updated + saveResult.unchanged > 0 && (
             <div className="mt-4 rounded-blob border border-midnight-line px-4 py-3 bg-midnight-faint/40">
               <p className="text-sm font-bold uppercase tracking-wide text-midnight">
-                {saveResult.created + saveResult.existing} draft{saveResult.created + saveResult.existing === 1 ? "" : "s"} ready
+                {saveResult.created + saveResult.updated + saveResult.unchanged} draft{saveResult.created + saveResult.updated + saveResult.unchanged === 1 ? "" : "s"} ready
               </p>
               <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-wider">
                 <span className="rounded-full border border-success-line bg-success-soft px-2 py-0.5 text-success-ink">
                   {saveResult.created} created
                 </span>
-                <span className="rounded-full border border-midnight-line-strong bg-midnight-faint px-2 py-0.5 text-midnight">
-                  {saveResult.existing} updated
+                <span className="rounded-full border border-accent-line bg-accent-soft px-2 py-0.5 text-accent-ink">
+                  {saveResult.updated} updated
                 </span>
-                {saveResult.skipped > 0 && (
+                <span className="rounded-full border border-midnight-line-strong bg-midnight-faint px-2 py-0.5 text-midnight">
+                  {saveResult.unchanged} unchanged
+                </span>
+                {(saveResult.skipped_duplicate + saveResult.skipped_already_contacted + saveResult.rejected_invalid) > 0 && (
                   <span className="rounded-full border border-warning-line bg-warning-soft px-2 py-0.5 text-warning-ink">
-                    {saveResult.skipped} skipped
+                    {saveResult.skipped_duplicate + saveResult.skipped_already_contacted + saveResult.rejected_invalid} skipped
                   </span>
                 )}
                 {saveResult.failed > 0 && (

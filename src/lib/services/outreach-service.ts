@@ -421,8 +421,8 @@ export type RecordSentResult =
  *
  * PEPA does not send email and has no provider: this only records a fact the
  * operator asserts, so that the follow-up engine can see that real outreach
- * happened. `provider` and `provider_message_id` are deliberately left NULL —
- * PEPA has no idea which client was used and will not invent a delivery id.
+ * happened. `provider` and `provider_message_id` can be set if the operator
+ * provides the actual Gmail Message-ID (from "Show original" in Gmail).
  *
  * Idempotency and concurrency come from the database, not from an application
  * flag. The UPDATE is a compare-and-set on two columns at once:
@@ -441,6 +441,8 @@ export async function recordOutreachSent(input: {
   messageId: string;
   leadId: string;
   sentAt?: Date;
+  /** Optional Gmail Message-ID from the sent email (from "Show original" in Gmail). */
+  providerMessageId?: string;
   /** Set by the caller once the operator has explicitly acknowledged the gate's
    * warnings. Warnings are never waived implicitly: the first call reports them
    * and the second one, with this flag, proceeds.
@@ -470,6 +472,18 @@ export async function recordOutreachSent(input: {
     // Already recorded. Idempotency outranks the gate: no write is about to
     // happen, so there is nothing for the gate to authorise, and reporting a
     // refusal here would misdescribe a send that legitimately succeeded earlier.
+    // If providerMessageId is provided and message doesn't have one yet, attach it.
+    if (input.providerMessageId && !evaluated.message.provider_message_id) {
+      const attachResult = await attachProviderMessageId({
+        messageId: input.messageId,
+        leadId: input.leadId,
+        providerMessageId: input.providerMessageId,
+      });
+      if (!attachResult.ok) {
+        // Log but don't fail the already_sent outcome
+        console.warn("[recordOutreachSent] Failed to attach provider Message-ID:", attachResult.error);
+      }
+    }
     return {
       ok: true,
       error: null,
@@ -505,9 +519,19 @@ export async function recordOutreachSent(input: {
     };
   }
 
+  // Build update payload - include provider and provider_message_id if provided
+  const updatePayload: Record<string, unknown> = { status: "sent", sent_at: toUtcIso(sentAt) };
+  if (input.providerMessageId) {
+    const normalizedId = normalizeMessageId(input.providerMessageId);
+    if (normalizedId) {
+      updatePayload.provider = "gmail";
+      updatePayload.provider_message_id = normalizedId;
+    }
+  }
+
   const { data, error } = await supabase
     .from("outreach_messages")
-    .update({ status: "sent", sent_at: toUtcIso(sentAt) })
+    .update(updatePayload)
     .eq("id", input.messageId)
     // The message must belong to the lead the caller asked for, so a crafted
     // request cannot record a different lead's message as sent.
@@ -525,6 +549,18 @@ export async function recordOutreachSent(input: {
     // must not be conflated: a wrong lead id is a failure, not a success.
     const existing = await findRecordedSend(input.messageId, input.leadId);
     if (!existing) return fail("That message does not exist for this lead.");
+
+    // If already sent and providerMessageId provided, try to attach it
+    if (input.providerMessageId && !existing.provider_message_id) {
+      const attachResult = await attachProviderMessageId({
+        messageId: input.messageId,
+        leadId: input.leadId,
+        providerMessageId: input.providerMessageId,
+      });
+      if (!attachResult.ok) {
+        console.warn("[recordOutreachSent] Failed to attach provider Message-ID:", attachResult.error);
+      }
+    }
 
     return {
       ok: true,
@@ -556,6 +592,120 @@ export async function recordOutreachSent(input: {
       gate: gate ?? null,
     },
   };
+}
+
+/**
+ * Normalize a raw Gmail Message-ID for storage and comparison.
+ * Strips surrounding whitespace and optional angle brackets.
+ * Returns the canonical form without angle brackets.
+ */
+export function normalizeMessageId(raw: string): string {
+  const trimmed = raw.trim();
+  // Remove optional angle brackets
+  if (trimmed.startsWith("<") && trimmed.endsWith(">")) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+/**
+ * Attach a provider Message-ID to an already-sent outreach message.
+ * This enables future inbound reply matching via In-Reply-To headers.
+ *
+ * Requirements:
+ * - Message must already be recorded as sent (status='sent', sent_at not null)
+ * - Provider must be 'gmail' (the only supported provider for manual capture)
+ * - Message-ID must be a valid RFC 5322 Message-ID format
+ * - If the message already has a different Message-ID, reject unless force=true
+ * - Idempotent: if the same Message-ID is already stored, succeeds
+ * - Does not modify any other fields (status, sent_at, recipient, subject, body, sequence)
+ */
+export async function attachProviderMessageId(input: {
+  messageId: string;
+  leadId: string;
+  providerMessageId: string;
+  force?: boolean;
+}): Promise<ServiceResult<{ message: OutreachMessage }>> {
+  if (!input.messageId) return fail("A message is required.");
+  if (!input.leadId) return fail("A lead is required.");
+  if (!input.providerMessageId) return fail("A provider Message-ID is required.");
+
+  const normalizedId = normalizeMessageId(input.providerMessageId);
+  if (!normalizedId) return fail("The provider Message-ID cannot be empty.");
+  if (normalizedId.length > 500) return fail("The provider Message-ID is too long.");
+
+  // Basic RFC 5322 Message-ID validation: must contain @ and no spaces
+  if (!normalizedId.includes("@") || /\s/.test(normalizedId)) {
+    return fail("The provider Message-ID is not a valid format. It should contain @ and no spaces.");
+  }
+
+  const supabase = getSupabaseAdmin();
+
+  // First, verify the message exists, belongs to the lead, and is already sent
+  const { data: existing, error: loadError } = await supabase
+    .from("outreach_messages")
+    .select("id, lead_id, status, sent_at, provider, provider_message_id")
+    .eq("id", input.messageId)
+    .eq("lead_id", input.leadId)
+    .not("sent_at", "is", null)
+    .maybeSingle();
+
+  if (loadError) return fail(loadError.message);
+  if (!existing) return fail("That sent message does not exist for this lead.");
+
+  const msg = existing as { id: string; lead_id: string; status: string; sent_at: string; provider: string | null; provider_message_id: string | null };
+
+  // Check if already has a Message-ID
+  if (msg.provider_message_id) {
+    const existingNormalized = normalizeMessageId(msg.provider_message_id);
+    if (existingNormalized === normalizedId) {
+      // Idempotent: same Message-ID already stored
+      const { data: fresh, error: freshError } = await supabase
+        .from("outreach_messages")
+        .select(MESSAGE_COLUMNS)
+        .eq("id", input.messageId)
+        .maybeSingle();
+      if (freshError) return fail(freshError.message);
+      return { ok: true, error: null, data: { message: fresh as OutreachMessage } };
+    }
+    if (!input.force) {
+      return fail("This message already has a different provider Message-ID. Use force=true to override.");
+    }
+  }
+
+  // Check if this Message-ID is already used by another message (enforced by unique index)
+  const { data: conflict, error: conflictError } = await supabase
+    .from("outreach_messages")
+    .select("id")
+    .eq("provider", "gmail")
+    .eq("provider_message_id", normalizedId)
+    .neq("id", input.messageId)
+    .maybeSingle();
+
+  if (conflictError) return fail(conflictError.message);
+  if (conflict) return fail("This provider Message-ID is already associated with a different outreach message.");
+
+  // Update the message with provider and provider_message_id
+  const { data, error } = await supabase
+    .from("outreach_messages")
+    .update({ provider: "gmail", provider_message_id: normalizedId })
+    .eq("id", input.messageId)
+    .eq("lead_id", input.leadId)
+    .not("sent_at", "is", null)
+    .select(MESSAGE_COLUMNS)
+    .maybeSingle();
+
+  if (error) {
+    // Check for unique constraint violation (race condition)
+    if (error.code === "23505") {
+      return fail("This provider Message-ID is already associated with a different outreach message.");
+    }
+    return fail(error.message);
+  }
+
+  if (!data) return fail("Could not update the message with the provider Message-ID.");
+
+  return { ok: true, error: null, data: { message: data as OutreachMessage } };
 }
 
 /**

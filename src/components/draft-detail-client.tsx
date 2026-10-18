@@ -6,7 +6,7 @@ import Link from "next/link";
 import { openGmailComposeSmart } from "@/lib/outreach/open-gmail-compose";
 import { updateDraft } from "@/app/update-draft-action";
 import { loadDraftById } from "@/app/load-draft-action";
-import { deleteOutreachMessage, recordOutreachSent } from "@/app/actions";
+import { deleteOutreachMessage, recordOutreachSent, attachProviderMessageId } from "@/app/actions";
 import { formatDate, sequenceLabel } from "@/lib/utils/date";
 
 interface Notice {
@@ -62,6 +62,8 @@ export function DraftDetailClient({ initialDraft }: Props) {
   const [recording, setRecording] = useState(false);
   const [armed, setArmed] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [providerMessageId, setProviderMessageId] = useState("");
+  const [attachRecording, setAttachRecording] = useState(false);
 
   const loadFreshDraft = useCallback(async () => {
     setLoading(true);
@@ -171,6 +173,7 @@ export function DraftDetailClient({ initialDraft }: Props) {
         messageId: draft.message.id,
         leadId: draft.lead.id,
         confirmWarnings: armed,
+        providerMessageId: providerMessageId || undefined,
       });
 
       if (result.ok) {
@@ -203,6 +206,34 @@ export function DraftDetailClient({ initialDraft }: Props) {
       setNotice({ kind: "error", text: "The send could not be recorded. Try again." });
     } finally {
       setRecording(false);
+    }
+  }
+
+  async function handleAttachMessageId() {
+    if (attachRecording || !providerMessageId.trim()) return;
+    setAttachRecording(true);
+    setNotice(null);
+    try {
+      const result = await attachProviderMessageId({
+        messageId: draft.message.id,
+        leadId: draft.lead.id,
+        providerMessageId: providerMessageId,
+      });
+
+      if (result.ok) {
+        setNotice({
+          kind: "info",
+          text: "Gmail Message-ID saved. Reply detection is now enabled for this message.",
+        });
+        await loadFreshDraft();
+        return;
+      }
+
+      setNotice({ kind: "error", text: result.error });
+    } catch {
+      setNotice({ kind: "error", text: "The Message-ID could not be saved. Try again." });
+    } finally {
+      setAttachRecording(false);
     }
   }
 
@@ -313,10 +344,38 @@ export function DraftDetailClient({ initialDraft }: Props) {
               ) : (
                 <>
                   <button type="button" onClick={startEditing} className="btn btn-primary">Edit</button>
-                  {isSent ? (
-                    <button type="button" className="btn" disabled>
-                      Already sent
-                    </button>
+{isSent ? (
+                    <>
+                      <button type="button" className="btn" disabled>
+                        Already sent
+                      </button>
+                      {draft.message.provider_message_id ? (
+                        <div className="flex items-center gap-2 text-sm text-midnight-soft">
+                          <span className="font-mono text-xs bg-midnight-faint/30 px-2 py-1 rounded">{draft.message.provider_message_id}</span>
+                          <span className="text-xs">Gmail Message-ID recorded</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={providerMessageId}
+                            onChange={(e) => setProviderMessageId(e.target.value)}
+                            placeholder="Gmail Message-ID (from Show original)"
+                            className="field font-mono text-sm flex-1 min-w-[300px]"
+                            title="Paste the Message-ID header from Gmail: open sent email -> More -> Show original -> copy Message-ID"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleAttachMessageId}
+                            disabled={attachRecording || !providerMessageId.trim()}
+                            className="btn btn-primary"
+                            title="Save the Gmail Message-ID for this sent message to enable reply detection."
+                          >
+                            {attachRecording ? "Saving..." : "Save Message-ID"}
+                          </button>
+                        </div>
+                      )}
+                    </>
                   ) : (
                     <button
                       type="button"

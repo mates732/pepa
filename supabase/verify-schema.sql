@@ -21,18 +21,11 @@
 -- follow-up with nowhere to live, which is the defect the migration exists to
 -- fix. The gate now asserts the objects that are actually load-bearing.
 --
--- KNOWN DEFECT, deliberately not fixed here:
---   The trigger `outreach_messages_parent_same_lead` checks its cross-recipient
---   relationship against `NEW.recipient_normalized`, which
---   is a GENERATED column. Postgres computes generated columns AFTER before-row
---   triggers, so that value is NULL during the trigger and the recipient half of
---   the check never fires. The same-LEAD half works, because `lead_id` is an
---   ordinary column. PEPA's own writers always copy the recipient from the
---   anchor, so no supported write path produces an offending row, and the
---   sequence unique key plus the engine's `skippedAmbiguous` refusal stand
---   behind it. Recorded here so the assertion below is not mistaken for a
---   guarantee it does not currently provide. Fixing it requires a migration and
---   is deferred to an explicitly authorised phase.
+-- The trigger `outreach_messages_parent_same_lead` was fixed in migration
+-- 20260101001100_fix_parent_trigger.sql: it now normalizes NEW.recipient_email
+-- inline instead of reading the GENERATED column recipient_normalized (which is
+-- not yet available in a BEFORE trigger). The self-check below asserts the
+-- function body calls normalize_email.
 
 -- ---------------------------------------------------------------------------
 -- 1. Tables exist and Row Level Security is enabled on all of them
@@ -154,9 +147,29 @@ begin
 end
 $$;
 
--- The parent-link trigger must exist. See the KNOWN DEFECT note at the top of
--- this file: its recipient half is currently inert, so this asserts presence,
--- not correctness.
+-- The parent-link trigger must exist AND call normalize_email to compare
+-- recipients correctly (the GENERATED column is not available in BEFORE trigger).
+-- Migration 20260101001100_fix_parent_trigger.sql fixes this.
+do $$
+declare
+  fn_body text;
+begin
+  select prosrc into fn_body
+    from pg_proc
+   where proname = 'outreach_messages_parent_same_lead'
+     and pronamespace = 'public'::regnamespace;
+  if fn_body is null then
+    raise exception
+      'MISSING FUNCTION: outreach_messages_parent_same_lead — apply 20260101000500_outreach_sequence.sql then 20260101001100_fix_parent_trigger.sql';
+  end if;
+  if fn_body !~ 'normalize_email' then
+    raise exception
+      'outreach_messages_parent_same_lead does not normalize recipient_email — apply 20260101001100_fix_parent_trigger.sql';
+  end if;
+end
+$$;
+
+-- The trigger must be attached to outreach_messages for BEFORE INSERT OR UPDATE.
 do $$
 begin
   if not exists (
@@ -168,9 +181,10 @@ begin
       and c.relname = 'outreach_messages'
       and t.tgname = 'outreach_messages_parent_same_lead'
       and not t.tgisinternal
+      and t.tgtype & (1 | 4) = (1 | 4) -- BEFORE INSERT | BEFORE UPDATE
   ) then
     raise exception
-      'MISSING TRIGGER: outreach_messages_parent_same_lead — apply 20260101000500_outreach_sequence.sql';
+      'MISSING TRIGGER: outreach_messages_parent_same_lead on outreach_messages (BEFORE INSERT OR UPDATE) — apply 20260101000500_outreach_sequence.sql then 20260101001100_fix_parent_trigger.sql';
   end if;
 end
 $$;

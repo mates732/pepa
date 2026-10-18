@@ -28,7 +28,7 @@ interface FollowUpDetailProps {
   detail: FollowUpDetail;
   onClose: () => void;
   onOpenInGmail: (messageId: string) => void;
-  onMarkSent: (messageId: string, leadId: string) => void;
+  onMarkSent: (messageId: string, leadId: string, providerMessageId?: string) => void;
   onCreateFollowUp: (parentMessageId: string, subject: string, body: string) => void;
   onDelete: (messageId: string) => void;
   openingGmail: boolean;
@@ -129,6 +129,9 @@ export function FollowUpDetail({
   // Phase 8F — the next follow-up in this sequence, drafted in place.
   const [followUpSubject, setFollowUpSubject] = useState("");
   const [followUpBody, setFollowUpBody] = useState("");
+
+  // Message-ID input for sent messages
+  const [providerMessageId, setProviderMessageId] = useState("");
 
   // Delete confirmation state
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -244,15 +247,32 @@ export function FollowUpDetail({
             {openingGmail ? "Opening…" : "Open in Gmail ↗"}
           </button>
 
-          <button
-            type="button"
-            onClick={() => onMarkSent(message.id, lead.id)}
-            disabled={recording || sent || deleting}
-            className="btn btn-primary"
-            title="Record this follow-up as sent. Runs the quality gate first."
-          >
-            {sent ? "Already sent" : recording ? "Recording…" : "Mark as sent"}
-          </button>
+          {message.provider_message_id ? (
+            <div className="flex items-center gap-2 text-sm text-midnight-soft">
+              <span className="font-mono text-xs bg-midnight-faint/30 px-2 py-1 rounded">{message.provider_message_id}</span>
+              <span className="text-xs">Gmail Message-ID recorded</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={providerMessageId}
+                onChange={(e) => setProviderMessageId(e.target.value)}
+                placeholder="Gmail Message-ID (from Show original)"
+                className="field font-mono text-sm flex-1 min-w-[300px]"
+                title="Paste the Message-ID header from Gmail: open sent email -> More -> Show original -> copy Message-ID"
+              />
+              <button
+                type="button"
+                onClick={() => onMarkSent(message.id, lead.id, providerMessageId || undefined)}
+                disabled={recording || sent || deleting}
+                className="btn btn-primary"
+                title="Record this follow-up as sent. Runs the quality gate first."
+              >
+                {sent ? "Already sent" : recording ? "Recording..." : "Mark as sent"}
+              </button>
+            </div>
+          )}
 
           {!confirmDelete ? (
             <button

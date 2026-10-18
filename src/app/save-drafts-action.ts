@@ -10,13 +10,16 @@ import { createDraft } from "@/lib/services/outreach-service";
 export interface SaveDraftsActionResult {
   ok: true;
   created: number;
-  existing: number;
-  skipped: number;
+  updated: number;
+  unchanged: number;
+  skipped_duplicate: number;
+  skipped_already_contacted: number;
+  rejected_invalid: number;
   failed: number;
   details: Array<{
     index: number;
     recipient: string | null;
-    outcome: "created" | "already_present" | "skipped" | "failed";
+    outcome: "created" | "updated" | "unchanged" | "skipped_duplicate" | "skipped_already_contacted" | "rejected_invalid" | "failed";
     messageId: string | null;
     leadId: string | null;
     error: string | null;
@@ -85,8 +88,11 @@ export async function saveDraftsFromPaste(text: string): Promise<SaveDraftsResul
 
   const results: SaveDraftsActionResult["details"] = [];
   let created = 0;
-  let existing = 0;
-  let skipped = 0;
+  let updated = 0;
+  let unchanged = 0;
+  let skipped_duplicate = 0;
+  let skipped_already_contacted = 0;
+  let rejected_invalid = 0;
   let failed = 0;
 
   for (const candidate of importable) {
@@ -96,12 +102,12 @@ export async function saveDraftsFromPaste(text: string): Promise<SaveDraftsResul
       results.push({
         index: candidate.index,
         recipient: candidate.recipient,
-        outcome: "skipped",
+        outcome: "rejected_invalid",
         messageId: null,
         leadId: null,
         error: checkResult.check.error ?? "Duplicate check failed.",
       });
-      skipped++;
+      rejected_invalid++;
       continue;
     }
 
@@ -112,14 +118,14 @@ export async function saveDraftsFromPaste(text: string): Promise<SaveDraftsResul
       results.push({
         index: candidate.index,
         recipient: candidate.recipient,
-        outcome: "skipped",
+        outcome: "skipped_already_contacted",
         messageId: null,
         leadId: null,
         error: check.historicalContact
           ? "Already on record — the imported history blocks a new cold outreach here."
           : `Cannot start a new outreach: ${check.blockReason ?? "blocked"}.`,
       });
-      skipped++;
+      skipped_already_contacted++;
       continue;
     }
 
@@ -130,6 +136,11 @@ export async function saveDraftsFromPaste(text: string): Promise<SaveDraftsResul
       subject: (fu.subject ?? "").slice(0, MAX_SUBJECT_LENGTH),
       body: (fu.body ?? "").slice(0, MAX_BODY_LENGTH),
     }));
+
+    // Check if there's an existing unsent draft to compare content
+    const existingDraft = check.latestUnsentMessage;
+    const existingSubject = existingDraft?.subject ?? null;
+    const existingBody = existingDraft?.body ?? null;
 
     const saved = await createDraft({
       recipientEmail: candidate.recipient,
@@ -151,12 +162,12 @@ export async function saveDraftsFromPaste(text: string): Promise<SaveDraftsResul
         results.push({
           index: candidate.index,
           recipient: candidate.recipient,
-          outcome: "skipped",
+          outcome: "skipped_already_contacted",
           messageId: null,
           leadId: lead?.id ?? null,
           error: saved.error,
         });
-        skipped++;
+        skipped_already_contacted++;
         continue;
       }
       results.push({
@@ -171,36 +182,45 @@ export async function saveDraftsFromPaste(text: string): Promise<SaveDraftsResul
       continue;
     }
 
-    // An existing unsent draft exists only if there are messages that
-    // haven't been sent (messageCount > sentCount). A lead with only sent
-    // messages does NOT have an existing unsent draft.
+    // Determine outcome: created, updated, or unchanged
+    const newSubject = saved.data.main.subject;
+    const newBody = saved.data.main.body;
     const hasExistingUnsentDraft = check.messageCount > check.sentCount;
-    const wasExisting = hasExistingUnsentDraft;
-    if (wasExisting) {
-      existing++;
-    } else {
+    
+    let outcome: "created" | "updated" | "unchanged";
+    if (!hasExistingUnsentDraft) {
+      outcome = "created";
       created++;
+    } else if (existingSubject === newSubject && existingBody === newBody) {
+      outcome = "unchanged";
+      unchanged++;
+    } else {
+      outcome = "updated";
+      updated++;
     }
 
     results.push({
       index: candidate.index,
       recipient: saved.data.main.recipient_email,
-      outcome: wasExisting ? "already_present" : "created",
+      outcome,
       messageId: saved.data.main.id,
       leadId: saved.data.lead.id,
       error: null,
     });
   }
 
-  if (created > 0 || existing > 0) {
+  if (created > 0 || updated > 0 || unchanged > 0) {
     revalidatePath("/");
   }
 
   return {
     ok: true,
     created,
-    existing,
-    skipped,
+    updated,
+    unchanged,
+    skipped_duplicate: 0, // Parser handles duplicates before this point
+    skipped_already_contacted,
+    rejected_invalid,
     failed,
     details: results,
   };

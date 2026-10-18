@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
+import Link from "next/link";
 
 import { parseBulkEmails } from "@/lib/import/bulk-emails";
 import { saveDraftsFromPaste } from "@/app/save-drafts-action";
@@ -59,33 +60,86 @@ function sequenceLabel(sequenceNumber: number): string {
 }
 
 type LeadStatus =
-  | "parsed"
-  | "validating"
-  | "checking-history"
-  | "saving-draft"
-  | "verified"
+  | "idle"
+  | "processing"
   | "created"
   | "updated"
-  | "skipped"
+  | "unchanged"
+  | "skipped_duplicate"
+  | "skipped_already_contacted"
+  | "rejected_invalid"
   | "failed";
+
+const OUTCOME_LABELS: Record<string, { label: string; color: string; description: string }> = {
+  created: {
+    label: "Vytvořeno",
+    color: "bg-success-soft text-success-ink border-success-line",
+    description: "Nový draft byl úspěšně uložen.",
+  },
+  updated: {
+    label: "Aktualizováno",
+    color: "bg-accent-soft text-accent-ink border-accent-line",
+    description: "Existující draft byl aktualizován novým obsahem.",
+  },
+  unchanged: {
+    label: "Beze změny",
+    color: "bg-midnight-faint text-midnight border-midnight-line",
+    description: "Draft již existoval se stejným obsahem — nic se nezměnilo.",
+  },
+  skipped_duplicate: {
+    label: "Přeskočeno (duplicitní)",
+    color: "bg-warning-soft text-warning-ink border-warning-line",
+    description: "Stejný příjemce už v tomto vložení byl — importován jen jednou.",
+  },
+  skipped_already_contacted: {
+    label: "Přeskočeno (již kontaktováno)",
+    color: "bg-error-soft text-error-ink border-error-line",
+    description: "Historie outreachu zabraňuje novému cold outreachi na tuto adresu.",
+  },
+  rejected_invalid: {
+    label: "Zamítnuto (neplatné)",
+    color: "bg-error-soft text-error-ink border-error-line",
+    description: "Chybí příjemce, nesprávný formát nebo jiná chyba validace.",
+  },
+  failed: {
+    label: "Chyba",
+    color: "bg-error-soft text-error-ink border-error-line",
+    description: "Nastala chyba při ukládání. Zkuste to znovu.",
+  },
+};
+
+const OUTCOME_ORDER = [
+  "created",
+  "updated",
+  "unchanged",
+  "skipped_duplicate",
+  "skipped_already_contacted",
+  "rejected_invalid",
+  "failed",
+] as const;
 
 export function ParserClient() {
   const [pasteValue, setPasteValue] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [processing, setProcessing] = useState(false);
   const [preview, setPreview] = useState<ParseResult | null>(null);
-  const [saveResult, setSaveResult] = useState<{
+  const [processResult, setProcessResult] = useState<{
     created: number;
-    existing: number;
-    skipped: number;
+    updated: number;
+    unchanged: number;
+    skipped_duplicate: number;
+    skipped_already_contacted: number;
+    rejected_invalid: number;
     failed: number;
     details: Array<{
       index: number;
       recipient: string | null;
       outcome: string;
+      messageId: string | null;
+      leadId: string | null;
       error: string | null;
     }>;
   } | null>(null);
-  const [saveError, setSaveError] = useState<string | null>(null);
+  const [processError, setProcessError] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
 
   // Live per-lead status tracking
@@ -96,48 +150,48 @@ export function ParserClient() {
   const handleParse = useCallback(() => {
     const result = parseBulkEmails(pasteValue ?? "");
     setPreview(result);
-    setSaveError(null);
-    setSaveResult(null);
+    setProcessError(null);
+    setProcessResult(null);
     setNotice(null);
-    // Reset lead statuses on new parse
     setLeadStatuses(
       result.candidates.map((_, idx) => ({
         index: idx,
-        status: "parsed",
+        status: "idle",
         reason: null,
       }))
     );
   }, [pasteValue]);
 
-  async function handleSave() {
+  async function handleProcess() {
     if (!pasteValue.trim()) {
-      setSaveError("Nothing to save — paste your emails first.");
+      setProcessError("Nothing to process — paste your emails first.");
       return;
     }
 
-    if (!preview || preview.candidates.length === 0) {
-      setSaveError("Parse the content first — click \"Preview\".");
+    const parsed = parseBulkEmails(pasteValue ?? "");
+    if (parsed.candidates.length === 0) {
+      setProcessError("Nothing to parse — no valid emails found.");
       return;
     }
 
-    const validCandidates = preview.candidates.filter(
+    const validCandidates = parsed.candidates.filter(
       (c) => c.status === "parsed" && c.recipient,
     );
     if (validCandidates.length === 0) {
-      setSaveError("No valid emails with recipients found. Fix the input first.");
+      setProcessError("No valid emails with recipients found. Fix the input first.");
       return;
     }
 
-    setSaving(true);
-    setSaveError(null);
-    setSaveResult(null);
+    setProcessing(true);
+    setProcessError(null);
+    setProcessResult(null);
     setNotice(null);
 
     // Initialize lead statuses
     setLeadStatuses(
-      preview.candidates.map((_, idx) => ({
+      parsed.candidates.map((_, idx) => ({
         index: idx,
-        status: "parsed",
+        status: "idle",
         reason: null,
       }))
     );
@@ -147,7 +201,7 @@ export function ParserClient() {
       const result = await saveDraftsFromPaste(pasteValue);
 
       if (!result.ok) {
-        setSaveError(result.error);
+        setProcessError(result.error);
         setLeadStatuses(
           statuses.map((ls) => ({
             index: ls.index,
@@ -166,10 +220,16 @@ export function ParserClient() {
         const outcome = detail.outcome;
         if (outcome === "created")
           return { index: ls.index, status: "created" as const, reason: null };
-        if (outcome === "already_present")
+        if (outcome === "updated")
           return { index: ls.index, status: "updated" as const, reason: null };
-        if (outcome === "skipped")
-          return { index: ls.index, status: "skipped" as const, reason: detail.error };
+        if (outcome === "unchanged")
+          return { index: ls.index, status: "unchanged" as const, reason: null };
+        if (outcome === "skipped_duplicate")
+          return { index: ls.index, status: "skipped_duplicate" as const, reason: detail.error };
+        if (outcome === "skipped_already_contacted")
+          return { index: ls.index, status: "skipped_already_contacted" as const, reason: detail.error };
+        if (outcome === "rejected_invalid")
+          return { index: ls.index, status: "rejected_invalid" as const, reason: detail.error };
         if (outcome === "failed")
           return { index: ls.index, status: "failed" as const, reason: detail.error };
         return ls;
@@ -177,37 +237,48 @@ export function ParserClient() {
 
       setLeadStatuses(updatedLeadStatuses);
 
-      setSaveResult({
+      setProcessResult({
         created: result.created,
-        existing: result.existing,
-        skipped: result.skipped,
+        updated: result.updated,
+        unchanged: result.unchanged,
+        skipped_duplicate: result.skipped_duplicate,
+        skipped_already_contacted: result.skipped_already_contacted,
+        rejected_invalid: result.rejected_invalid,
         failed: result.failed,
         details: result.details,
       });
 
-      if (result.created > 0 || result.existing > 0) {
+      if (result.created > 0 || result.updated > 0 || result.unchanged > 0) {
         setPasteValue("");
         setPreview(null);
       }
 
+      const totalSuccess = result.created + result.updated + result.unchanged;
+      const parts = [
+        totalSuccess > 0 && `${totalSuccess} draft${totalSuccess === 1 ? "" : "y"} připraven${totalSuccess === 1 ? "" : "e"}`,
+        result.skipped_duplicate > 0 && `${result.skipped_duplicate} duplicitn${result.skipped_duplicate === 1 ? "í" : "ích"}`,
+        result.skipped_already_contacted > 0 && `${result.skipped_already_contacted} již kontaktovan${result.skipped_already_contacted === 1 ? "ý" : "ých"}`,
+        result.rejected_invalid > 0 && `${result.rejected_invalid} neplatn${result.rejected_invalid === 1 ? "ý" : "ých"}`,
+        result.failed > 0 && `${result.failed} chyb${result.failed === 1 ? "a" : result.failed < 5 ? "y" : ""}`,
+      ].filter(Boolean);
+
       setNotice({
-        kind: "info",
-        text: `${result.created} draft${result.created === 1 ? "" : "s"} created, ${result.existing} updated, ${result.skipped} skipped${result.failed > 0 ? `, ${result.failed} failed` : ""}.`,
+        kind: result.failed > 0 ? "error" : "info",
+        text: parts.join(", ") + ".",
       });
     } catch (error) {
       const statuses = leadStatuses ?? [];
-      setSaveError(error instanceof Error ? error.message : "Failed to save drafts.");
+      setProcessError(error instanceof Error ? error.message : "Failed to process drafts.");
 
-      // Mark all leads as failed
       setLeadStatuses(
         statuses.map((ls) => ({
           index: ls.index,
           status: "failed" as const,
-          reason: error instanceof Error ? error.message : "Failed to save drafts.",
+          reason: error instanceof Error ? error.message : "Failed to process drafts.",
         }))
       );
     } finally {
-      setSaving(false);
+      setProcessing(false);
     }
   }
 
@@ -226,7 +297,7 @@ export function ParserClient() {
 
       <section className="sticker">
         <div className="sticker-title-row">
-          <h2 className="sticker-title">1. Paste Content</h2>
+          <h2 className="sticker-title">1. Paste & Process</h2>
         </div>
         <div className="p-5">
           <textarea
@@ -239,7 +310,7 @@ export function ParserClient() {
                 handleParse();
               }
             }}
-            disabled={saving}
+            disabled={processing}
             rows={16}
             spellCheck={false}
             placeholder={EXAMPLE_INPUT}
@@ -253,17 +324,17 @@ export function ParserClient() {
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <button
               type="button"
-              onClick={handleParse}
-              disabled={saving || !pasteValue.trim()}
+              onClick={handleProcess}
+              disabled={processing || !pasteValue.trim()}
               className="btn btn-primary"
             >
-              {saving ? "Parsing…" : "Preview"}
+              {processing ? "Zpracovává se…" : "Zpracovat"}
             </button>
-            <button type="button" onClick={() => setPasteValue("")} className="btn" disabled={saving}>
-              Clear
+            <button type="button" onClick={() => { setPasteValue(""); setPreview(null); setProcessResult(null); setProcessError(null); setLeadStatuses(undefined); }} className="btn" disabled={processing}>
+              Vymazat
             </button>
             <p className="text-[11px] font-bold uppercase tracking-wider text-midnight-soft">
-              ⌘ + ↵ to preview · Drafts only · You send every email yourself
+              ⌘ + ↵ pro náhled · Drafts only · You send every email yourself
             </p>
           </div>
         </div>
@@ -272,7 +343,7 @@ export function ParserClient() {
       {preview && (
         <section className="sticker">
           <div className="sticker-title-row">
-            <h2 className="sticker-title">2. Preview</h2>
+            <h2 className="sticker-title">2. Náhled ({preview.candidates.length} bloků)</h2>
           </div>
           <div className="p-5">
             <div className="flex flex-wrap gap-4 mb-4 text-sm">
@@ -339,13 +410,13 @@ export function ParserClient() {
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                onClick={handleSave}
-                disabled={saving || totalInitial === 0}
+                onClick={handleProcess}
+                disabled={processing || totalInitial === 0}
                 className="btn btn-primary"
               >
-                {saving ? "Saving…" : `Save ${totalInitial} draft${totalInitial === 1 ? "" : "s"}`}
+                {processing ? "Zpracovává se…" : `Zpracovat ${totalInitial} draft${totalInitial === 1 ? "" : "y"}`}
               </button>
-              <button type="button" onClick={() => { setPasteValue(""); setPreview(null); }} className="btn" disabled={saving}>
+              <button type="button" onClick={() => { setPasteValue(""); setPreview(null); }} className="btn" disabled={processing}>
                 Clear All
               </button>
             </div>
@@ -353,34 +424,117 @@ export function ParserClient() {
         </section>
       )}
 
-      {saveError && (
-        <div className="notice notice-alarm" role="alert">{saveError}</div>
+      {processError && (
+        <div className="notice notice-alarm" role="alert">{processError}</div>
       )}
 
-      {saveResult && (
-        <div className="sticker rounded-blob border border-midnight-line bg-midnight-faint/40 p-4">
-          <p className="text-sm font-bold uppercase tracking-wide text-midnight mb-2">
-            {saveResult.created + saveResult.existing} draft{saveResult.created + saveResult.existing === 1 ? "" : "s"} ready
-          </p>
-          <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-wider">
-            <span className="rounded-full border border-success-line bg-success-soft px-2 py-0.5 text-success-ink">
-              {saveResult.created} created
-            </span>
-            <span className="rounded-full border border-midnight-line-strong bg-midnight-faint px-2 py-0.5 text-midnight">
-              {saveResult.existing} updated
-            </span>
-            {saveResult.skipped > 0 && (
-              <span className="rounded-full border border-warning-line bg-warning-soft px-2 py-0.5 text-warning-ink">
-                {saveResult.skipped} skipped
-              </span>
-            )}
-            {saveResult.failed > 0 && (
-              <span className="rounded-full border border-error-line bg-error-soft px-2 py-0.5 text-error-ink">
-                {saveResult.failed} failed
-              </span>
-            )}
+      {processResult && (
+        <section className="sticker rounded-blob border border-midnight-line bg-midnight-faint/40 p-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-4">
+            <div>
+              <p className="text-sm font-bold uppercase tracking-wide text-midnight">
+                {processResult.created + processResult.updated + processResult.unchanged} draft{processResult.created + processResult.updated + processResult.unchanged === 1 ? "" : "y"} připraven{processResult.created + processResult.updated + processResult.unchanged === 1 ? "" : "é"}
+              </p>
+              <div className="flex flex-wrap items-center gap-2 text-[11px] uppercase tracking-wider mt-1">
+                {processResult.created > 0 && (
+                  <span className="rounded-full border border-success-line bg-success-soft px-2 py-0.5 text-success-ink">
+                    {processResult.created} vytvořen{processResult.created === 1 ? "" : "y"}
+                  </span>
+                )}
+                {processResult.updated > 0 && (
+                  <span className="rounded-full border border-accent-line bg-accent-soft px-2 py-0.5 text-accent-ink">
+                    {processResult.updated} aktualizován{processResult.updated === 1 ? "" : "y"}
+                  </span>
+                )}
+                {processResult.unchanged > 0 && (
+                  <span className="rounded-full border border-midnight-line-strong bg-midnight-faint px-2 py-0.5 text-midnight">
+                    {processResult.unchanged} beze změny
+                  </span>
+                )}
+                {processResult.skipped_duplicate > 0 && (
+                  <span className="rounded-full border border-warning-line bg-warning-soft px-2 py-0.5 text-warning-ink">
+                    {processResult.skipped_duplicate} duplicitn{processResult.skipped_duplicate === 1 ? "í" : "ích"}
+                  </span>
+                )}
+                {processResult.skipped_already_contacted > 0 && (
+                  <span className="rounded-full border border-error-line bg-error-soft px-2 py-0.5 text-error-ink">
+                    {processResult.skipped_already_contacted} již kontaktován{processResult.skipped_already_contacted === 1 ? "ý" : "í"}
+                  </span>
+                )}
+                {processResult.rejected_invalid > 0 && (
+                  <span className="rounded-full border border-error-line bg-error-soft px-2 py-0.5 text-error-ink">
+                    {processResult.rejected_invalid} neplatn{processResult.rejected_invalid === 1 ? "ý" : "é"}
+                  </span>
+                )}
+                {processResult.failed > 0 && (
+                  <span className="rounded-full border border-error-line bg-error-soft px-2 py-0.5 text-error-ink">
+                    {processResult.failed} chyb{processResult.failed === 1 ? "a" : processResult.failed < 5 ? "y" : ""}
+                  </span>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <Link href="/drafts" className="btn btn-primary">
+                Otevřít drafty ({processResult.created + processResult.updated + processResult.unchanged})
+              </Link>
+            </div>
           </div>
-        </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs uppercase text-midnight-soft border-b border-midnight-line">
+                  <th className="pb-2 px-2">#</th>
+                  <th className="pb-2 px-2">Příjemce</th>
+                  <th className="pb-2 px-2">Předmět</th>
+                  <th className="pb-2 px-2">Výsledek</th>
+                  <th className="pb-2 px-2">Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                {processResult.details
+                  .sort((a, b) => OUTCOME_ORDER.indexOf(a.outcome as any) - OUTCOME_ORDER.indexOf(b.outcome as any))
+                  .map((detail) => {
+                    const outcomeInfo = OUTCOME_LABELS[detail.outcome] || {
+                      label: detail.outcome,
+                      color: "bg-midnight-faint text-midnight border-midnight-line",
+                      description: "Neznámý výsledek.",
+                    };
+                    return (
+                      <tr key={detail.index} className="border-b border-midnight-line/20 hover:bg-midnight-faint/20">
+                        <td className="py-2 px-2 font-mono text-xs text-midnight">{detail.index}</td>
+                        <td className="py-2 px-2 font-mono text-sm text-midnight">{detail.recipient ?? "—"}</td>
+                        <td className="py-2 px-2 text-midnight max-w-xs truncate">{detail.messageId ? "Draft" : "—"}</td>
+                        <td className="py-2 px-2">
+                          <span className={`chip chip-solid text-xs ${outcomeInfo.color}`}>
+                            {outcomeInfo.label}
+                          </span>
+                        </td>
+                        <td className="py-2 px-2">
+                          <div className="flex items-center gap-2">
+                            {detail.messageId && (
+                              <Link
+                                href={`/drafts/${detail.messageId}`}
+                                className="text-xs text-accent-strong hover:underline font-mono"
+                                title="Otevřít draft v detailu"
+                              >
+                                Otevřít draft
+                              </Link>
+                            )}
+                            {detail.error && (
+                              <span className="text-xs text-error-ink" title={detail.error}>
+                                {detail.error.length > 60 ? detail.error.slice(0, 60) + "…" : detail.error}
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </section>
       )}
 
       {notice && (
@@ -393,14 +547,14 @@ export function ParserClient() {
       {leadStatuses && leadStatuses.length > 0 && (
         <section className="sticker">
           <div className="sticker-title-row">
-            <h2 className="sticker-title">3. Processing Status</h2>
+            <h2 className="sticker-title">Stav zpracování</h2>
           </div>
           <div className="p-5">
             <div className="grid grid-cols-6 gap-2 mb-4">
               <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
                 <span>Lead</span>
-                <span>Status</span>
-                <span>Reason</span>
+                <span>Stav</span>
+                <span>Důvod</span>
               </div>
               {leadStatuses.map((ls) => (
                 <div key={ls.index} className="col-span-6 p-2 border border-midnight-line/20 rounded">
@@ -408,22 +562,22 @@ export function ParserClient() {
                     Lead {ls.index + 1}
                   </span>
                   <span className={`font-medium text-midnight status-badge ${
-                    ls.status === "parsed"
-                      ? "text-midnight"
-                      : ls.status === "validating"
+                    ls.status === "idle"
+                      ? "text-midnight-soft"
+                      : ls.status === "processing"
                         ? "text-warning-ink"
-                        : ls.status === "checking-history"
-                          ? "text-midnight"
-                          : ls.status === "saving-draft"
+                        : ls.status === "created"
+                          ? "text-success-ink"
+                          : ls.status === "updated"
                             ? "text-accent-ink"
-                            : ls.status === "verified"
-                              ? "text-success-ink"
-                              : ls.status === "created"
-                                ? "text-success-ink"
-                                : ls.status === "updated"
-                                  ? "text-success-ink"
-                                  : ls.status === "skipped"
-                                    ? "text-warning-ink"
+                            : ls.status === "unchanged"
+                              ? "text-midnight"
+                              : ls.status === "skipped_duplicate"
+                                ? "text-warning-ink"
+                                : ls.status === "skipped_already_contacted"
+                                  ? "text-error-ink"
+                                  : ls.status === "rejected_invalid"
+                                    ? "text-error-ink"
                                     : "text-error-ink"
                   }`}>
                     {ls.status}
@@ -441,28 +595,28 @@ export function ParserClient() {
             
             <div className="grid grid-cols-6 gap-2">
               <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
-                <span>Parsed</span>
-                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "parsed").length}</span>
-              </div>
-              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
-                <span>Processing</span>
-                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "saving-draft").length}</span>
-              </div>
-              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
-                <span>Created</span>
+                <span>Vytvořeno</span>
                 <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "created").length}</span>
               </div>
               <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
-                <span>Updated</span>
+                <span>Aktualizováno</span>
                 <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "updated").length}</span>
               </div>
               <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
-                <span>Skipped</span>
-                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "skipped").length}</span>
+                <span>Beze změny</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "unchanged").length}</span>
               </div>
               <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
-                <span>Failed</span>
-                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "failed").length}</span>
+                <span>Duplicitní</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "skipped_duplicate").length}</span>
+              </div>
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Již kontaktováno</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "skipped_already_contacted").length}</span>
+              </div>
+              <div className="col-span-6 text-center text-xs uppercase text-midnight-strong">
+                <span>Chyby</span>
+                <span className="font-mono text-midnight">{leadStatuses.filter((l) => l.status === "failed" || l.status === "rejected_invalid").length}</span>
               </div>
             </div>
           </div>

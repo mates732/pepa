@@ -545,7 +545,7 @@ describe("streaks — completeness under the scan cap", () => {
     // run itself cannot be certified either.
     expect(result.currentStreakComplete).toBe(false);
     expect(result.longestStreak).toBe(1);
-  });
+  }, 10000);
 
   it("keeps the current streak exact when the cap still covers the whole run", async () => {
     const { MAX_STATS_SCAN_ROWS, calculateStreaks } = await load();

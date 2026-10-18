@@ -14,6 +14,7 @@ import { getNotificationChannel } from "@/lib/providers/notifications";
 import type { ActionNotification, DueFollowUp, FollowUpService } from "@/lib/providers/types";
 import { mintFollowUpToken } from "@/lib/services/action-token-service";
 import { toActionNotification } from "@/lib/telegram/format";
+import { createFollowUpDraft } from "@/lib/services/follow-up-sequence-service";
 import { getSupabaseAdmin } from "@/lib/supabase/server";
 import type { Lead, OutreachMessage } from "@/lib/types";
 
@@ -614,6 +615,10 @@ async function clearFollowUpSchedule(leadId: string): Promise<void> {
  * email comes due (offset 0) or later with a positive offset. Email
  * eligibility itself is never changed by this function beyond the existing
  * cadence behaviour.
+ *
+ * After advancing the schedule, if another follow-up is permitted by the
+ * cadence, the next follow-up draft is created automatically as a draft
+ * (status='draft') so the operator can review and edit it before sending.
  */
 export async function markFollowUpSent(input: {
   leadId: string;
@@ -648,6 +653,40 @@ export async function markFollowUpSent(input: {
     .eq("id", input.leadId);
 
   if (error) throw new Error(error.message);
+
+  // After advancing the schedule, create the next follow-up draft if within cadence.
+  const nextAttempt = attempt + 1;
+  const cadence = getFollowUpCadence();
+  if (isWithinCadence(nextAttempt, cadence) && due) {
+    // The message that was just sent is the anchor for the next follow-up.
+    // Its sequence_number is (attempt - 1): 0 for initial outreach, 1 for FU1, etc.
+    const anchorSequence = attempt - 1;
+    const { data: anchorRow } = await supabase
+      .from("outreach_messages")
+      .select("id, lead_id, recipient_email, subject, body")
+      .eq("lead_id", input.leadId)
+      .eq("sequence_number", anchorSequence)
+      .maybeSingle();
+
+    if (anchorRow) {
+      // Create the next follow-up draft by copying the anchor's content.
+      // The operator must review and edit before sending.
+      await createFollowUpDraft({
+        anchorMessageId: anchorRow.id,
+        subject: anchorRow.subject,
+        body: anchorRow.body,
+      }).catch((err) => {
+        // Log for observability but don't throw — schedule advance is the critical path.
+        // The operator can create the follow-up manually via the "Next follow-up" form.
+        console.error("[markFollowUpSent] Auto draft creation failed:", {
+          leadId: input.leadId,
+          anchorSequence,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+  }
+
   return { nextFollowUpAt, notificationDueAt };
 }
 
@@ -690,6 +729,15 @@ export const followUpService: FollowUpService = {
       .delete()
       .eq("lead_id", leadId)
       .eq("status", "claimed");
+    // Delete unsent follow-up drafts (sequence_number > 0) for this lead.
+    // This removes both manually created and auto-generated pending drafts.
+    // Sent follow-ups (status='sent') are preserved as history.
+    await supabase
+      .from("outreach_messages")
+      .delete()
+      .eq("lead_id", leadId)
+      .gt("sequence_number", 0)
+      .in("status", ["draft", "ready"]);
   },
 };
 

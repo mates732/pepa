@@ -123,6 +123,8 @@ export interface DuplicateCheckResult {
   canContact: boolean;
   /** Why `canContact` is false. Null when outreach is allowed. */
   blockReason: OutreachBlockReason | null;
+  /** The latest unsent draft (sequence 0, status draft/ready) for comparison, if any. */
+  latestUnsentMessage: { id: string; subject: string | null; body: string | null } | null;
 }
 
 export interface OutreachHistoryRow extends Lead {

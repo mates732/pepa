@@ -287,16 +287,22 @@ export function importableRequests(plan: BulkEmailPlan): BulkDraftRequest[] {
 /**
  * What happened to one email.
  *
- * `created` and `already_present` are both SUCCESS: `createDraft()` upserts on
- * `(lead_id, recipient_normalized, sequence_number)`, so a retry cannot produce a
- * second draft, and reporting the retry honestly is what keeps the summary stable
- * across attempts.
+ * `created` and `updated` are SUCCESS with a new or changed draft.
+ * `unchanged` is SUCCESS but the existing draft was not modified.
+ * `skipped_*` are NOT importable — skipped without touching the database.
+ * `failed` is a processing error.
  */
 export type BulkDraftOutcome =
   | "created"
-  | "already_present"
-  /** Not importable — skipped without touching the database. */
-  | "skipped"
+  | "updated"
+  | "unchanged"
+  /** Duplicate within the same paste. */
+  | "skipped_duplicate"
+  /** Historical outreach blocks a new cold outreach. */
+  | "skipped_already_contacted"
+  /** Invalid email format or missing required fields. */
+  | "rejected_invalid"
+  /** A processing or persistence error occurred. */
   | "failed";
 
 export interface BulkDraftResultRow {
@@ -310,12 +316,20 @@ export interface BulkDraftResultRow {
 
 export interface BulkDraftTotals {
   /** Drafts that did not previously exist. */
-  ready: number;
-  /** Drafts that were already saved — a retry, or a re-saved paste. */
-  alreadyPresent: number;
-  skipped: number;
+  created: number;
+  /** Drafts that were updated with new content. */
+  updated: number;
+  /** Drafts that already existed with identical content. */
+  unchanged: number;
+  /** Duplicate within the paste. */
+  skipped_duplicate: number;
+  /** Historical outreach blocks new outreach. */
+  skipped_already_contacted: number;
+  /** Invalid email format or missing required fields. */
+  rejected_invalid: number;
+  /** A processing or persistence error occurred. */
   failed: number;
-  /** `ready + alreadyPresent` — the drafts this batch produced or found. */
+  /** `created + updated + unchanged` — the drafts this batch produced or found. */
   succeeded: number;
 }
 
@@ -323,17 +337,23 @@ export function summarizeOutcomes(rows: BulkDraftResultRow[]): BulkDraftTotals {
   const count = (outcome: BulkDraftOutcome) =>
     rows.filter((row) => row.outcome === outcome).length;
 
-  const ready = count("created");
-  const alreadyPresent = count("already_present");
-  const skipped = count("skipped");
+  const created = count("created");
+  const updated = count("updated");
+  const unchanged = count("unchanged");
+  const skipped_duplicate = count("skipped_duplicate");
+  const skipped_already_contacted = count("skipped_already_contacted");
+  const rejected_invalid = count("rejected_invalid");
   const failed = count("failed");
 
   return {
-    ready,
-    alreadyPresent,
-    skipped,
+    created,
+    updated,
+    unchanged,
+    skipped_duplicate,
+    skipped_already_contacted,
+    rejected_invalid,
     failed,
-    succeeded: ready + alreadyPresent,
+    succeeded: created + updated + unchanged,
   };
 }
 

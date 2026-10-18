@@ -39,6 +39,7 @@ export function FollowUpDetailPanel({ messageId }: { messageId: string }) {
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [armed, setArmed] = useState(false);
+  const [providerMessageId, setProviderMessageId] = useState("");
   const loadedRef = useRef(false);
 
   const reload = useCallback(async () => {
@@ -95,7 +96,7 @@ export function FollowUpDetailPanel({ messageId }: { messageId: string }) {
     }
   }
 
-  async function handleMarkSent(id: string, leadId: string) {
+  async function handleMarkSent(id: string, leadId: string, providerMessageId?: string) {
     if (recording || id !== detail!.message.id) return;
     setRecording(true);
     setNotice(null);
@@ -104,6 +105,7 @@ export function FollowUpDetailPanel({ messageId }: { messageId: string }) {
         messageId: id,
         leadId,
         confirmWarnings: armed,
+        providerMessageId: providerMessageId || undefined,
       });
 
       if (result.ok) {
@@ -180,7 +182,7 @@ export function FollowUpDetailPanel({ messageId }: { messageId: string }) {
       detail={detail}
       onClose={() => setOpen(false)}
       onOpenInGmail={(id) => void handleOpenInGmail(id)}
-      onMarkSent={(id, leadId) => void handleMarkSent(id, leadId)}
+      onMarkSent={(id, leadId, providerMessageId) => void handleMarkSent(id, leadId, providerMessageId)}
       onCreateFollowUp={(parentId, subject, body) => void handleCreateFollowUp(parentId, subject, body)}
       onDelete={(id) => void handleDelete(id)}
       openingGmail={openingGmail}

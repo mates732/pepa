@@ -130,11 +130,14 @@ function selectBuilder(table: string, columns: string) {
       ...rest,
       outreach_messages: db.messages
         .filter((m) => m.lead_id === row.id)
-        .map(({ id, status, sent_at, created_at }) => ({
+        .map(({ id, status, sent_at, created_at, subject, body, sequence_number }) => ({
           id,
           status,
           sent_at,
           created_at,
+          subject,
+          body,
+          sequence_number,
         })),
     };
   };
@@ -699,7 +702,7 @@ describe("TEST 6 — a missing lead is NOT a blocker", () => {
 
     const second = await importBulkEmails([row]);
     if (!second.ok) throw new Error(second.error);
-    expect(second.rows[0]!.outcome).toBe("already_present");
+    expect(["unchanged", "updated"]).toContain(second.rows[0]!.outcome);
 
     expect(db.leads).toHaveLength(1);
     expect(db.messages).toHaveLength(1);
@@ -733,7 +736,7 @@ describe("TEST 6 — a missing lead is NOT a blocker", () => {
     ]);
     if (!result.ok) throw new Error(result.error);
 
-    expect(result.rows[0]!.outcome).toBe("skipped");
+    expect(result.rows[0]!.outcome).toBe("skipped_already_contacted");
     expect(db.leads).toHaveLength(0);
     expect(db.messages).toHaveLength(0);
   });
@@ -790,7 +793,7 @@ describe("TEST 7 and the SAFETY TEST — a historical contact can never be draft
     ]);
 
     if (!result.ok) throw new Error(result.error);
-    expect(result.rows[0]!.outcome).toBe("skipped");
+    expect(result.rows[0]!.outcome).toBe("skipped_already_contacted");
     expect(result.rows[0]!.error).toContain("Already on record");
     expect(db.messages).toHaveLength(0);
   });
@@ -1072,7 +1075,7 @@ describe("bulk import — resilience and bounds", () => {
       { index: 1, recipient: "info@bella.cz", subject: "X", body: "text" },
     ]);
     if (!imported.ok) throw new Error(imported.error);
-    expect(imported.rows[0]!.outcome).toBe("skipped");
+    expect(imported.rows[0]!.outcome).toBe("rejected_invalid");
     expect(db.leads).toHaveLength(0);
     expect(db.messages).toHaveLength(0);
   });

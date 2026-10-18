@@ -12,7 +12,7 @@ import { markFollowUpSent } from "./follow-up-service";
  * is its expiry — both pre-existing. What is pinned here is the notification
  * anchor: `notification_due_at` is the DUE moment (optionally shifted by the
  * configured offset), never the send plus a delay. Anchoring on the send is
- * what made the bot write minutes after the email left the outbox instead of
+ * what made the bot write minutes after the email went out instead of
  * when the follow-up came due.
  *
  * Delivery itself (the cron, the claim ledger, the deep link) is covered by
@@ -24,40 +24,66 @@ type Row = Record<string, unknown>;
 const { db, makeSupabase, leadUpdates } = vi.hoisted(() => {
   const db = {
     leads: [] as Row[],
+    outreach_messages: [] as Row[],
   };
 
   const leadUpdates: Row[] = [];
 
   function makeSupabase() {
     return {
-      // `markFollowUpSent()` only reads and updates `leads`.
-      from() {
-        return {
-          select: () => ({
-            eq: (column: string, value: unknown) => ({
-              maybeSingle: async () => ({
-                data: db.leads.find((row) => row[column] === value) ?? null,
-                error: null,
+      from(table: string) {
+        if (table === "leads") {
+          return {
+            select: () => ({
+              eq: (column: string, value: unknown) => ({
+                maybeSingle: async () => ({
+                  data: db.leads.find((row) => row[column] === value) ?? null,
+                  error: null,
+                }),
               }),
             }),
-          }),
-          update(patch: Row) {
-            const filters: Array<[string, unknown]> = [];
-            const b: Record<string, unknown> = {};
-            b.eq = (column: string, value: unknown) => {
-              filters.push([column, value]);
+            update(patch: Row) {
+              const filters: Array<[string, unknown]> = [];
+              const b: Record<string, unknown> = {};
+              b.eq = (column: string, value: unknown) => {
+                filters.push([column, value]);
+                return b;
+              };
+              b.then = async (onFulfilled: (value: unknown) => unknown) => {
+                const matched = db.leads.filter((row) =>
+                  filters.every(([column, value]) => row[column] === value),
+                );
+                matched.forEach((row) => Object.assign(row, patch));
+                leadUpdates.push(patch);
+                return onFulfilled({ data: matched, error: null });
+              };
               return b;
-            };
-            b.then = async (onFulfilled: (value: unknown) => unknown) => {
-              const matched = db.leads.filter((row) =>
-                filters.every(([column, value]) => row[column] === value),
-              );
-              matched.forEach((row) => Object.assign(row, patch));
-              leadUpdates.push(patch);
-              return onFulfilled({ data: matched, error: null });
-            };
-            return b;
-          },
+            },
+          };
+        }
+        if (table === "outreach_messages") {
+          return {
+            select: (columns?: string) => ({
+              eq: (column: string, value: unknown) => ({
+                eq: (column2: string, value2: unknown) => ({
+                  maybeSingle: async () => ({
+                    data: db.outreach_messages.find(
+                      (row) =>
+                        row[column] === value && row[column2] === value2,
+                    ) ?? null,
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+          };
+        }
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: async () => ({ data: null, error: null }),
+            }),
+          }),
         };
       },
     };
@@ -84,8 +110,22 @@ function seedLead(followupCount: number) {
   db.leads = [{ id: LEAD_ID, followup_count: followupCount }];
 }
 
+function seedAnchorMessage(sequenceNumber: number) {
+  db.outreach_messages = [
+    {
+      id: `anchor-${sequenceNumber}`,
+      lead_id: LEAD_ID,
+      sequence_number: sequenceNumber,
+      recipient_email: "test@example.com",
+      subject: `Test Subject ${sequenceNumber}`,
+      body: `Test Body ${sequenceNumber}`,
+    },
+  ];
+}
+
 beforeEach(() => {
   db.leads = [];
+  db.outreach_messages = [];
   leadUpdates.length = 0;
   delayConfig = { value: 0, unit: "minutes" };
 });
@@ -96,6 +136,7 @@ const SENT_AT = new Date("2026-10-05T08:00:00.000Z");
 describe("markFollowUpSent — the notification fires when the follow-up is due", () => {
   it("notifies at the cadence due moment (4 business days) with the default offset", async () => {
     seedLead(0);
+    seedAnchorMessage(0);
 
     const result = await markFollowUpSent({ leadId: LEAD_ID, sentAt: SENT_AT });
 
@@ -108,6 +149,7 @@ describe("markFollowUpSent — the notification fires when the follow-up is due"
 
   it("does not anchor the notification on the send", async () => {
     seedLead(0);
+    seedAnchorMessage(0);
 
     const result = await markFollowUpSent({ leadId: LEAD_ID, sentAt: SENT_AT });
 
@@ -121,6 +163,7 @@ describe("markFollowUpSent — the notification fires when the follow-up is due"
 
   it("shifts the notification by the configured offset, still measured from the due moment", async () => {
     seedLead(0);
+    seedAnchorMessage(0);
     delayConfig = { value: 2, unit: "hours" };
 
     const result = await markFollowUpSent({ leadId: LEAD_ID, sentAt: SENT_AT });
@@ -131,6 +174,7 @@ describe("markFollowUpSent — the notification fires when the follow-up is due"
 
   it("keeps the due moment the cadence computes for later follow-ups", async () => {
     seedLead(1);
+    seedAnchorMessage(1);
 
     const result = await markFollowUpSent({ leadId: LEAD_ID, sentAt: SENT_AT });
 
@@ -141,6 +185,7 @@ describe("markFollowUpSent — the notification fires when the follow-up is due"
 
   it("schedules no notification once the cadence is exhausted", async () => {
     seedLead(3);
+    seedAnchorMessage(3);
 
     const result = await markFollowUpSent({ leadId: LEAD_ID, sentAt: SENT_AT });
 

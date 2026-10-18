@@ -17,6 +17,9 @@ type LeadWithMessages = Lead & {
     status: string;
     sent_at: string | null;
     created_at: string;
+    subject: string | null;
+    body: string | null;
+    sequence_number: number;
   }>;
 };
 
@@ -113,6 +116,7 @@ export async function findLeadByEmail(
         historicalContact,
         canContact,
         blockReason,
+        latestUnsentMessage: null,
       },
     };
   }
@@ -124,6 +128,20 @@ export async function findLeadByEmail(
   );
   const latestSentAt = sent.reduce<string | null>(
     (latest, m) => (m.sent_at && (!latest || m.sent_at > latest) ? m.sent_at : latest),
+    null,
+  );
+
+  // Find the latest unsent draft (sequence 0, status draft or ready)
+  const unsentDrafts = messages.filter(
+    (m) => m.sequence_number === 0 && (m.status === "draft" || m.status === "ready"),
+  );
+  const latestUnsentDraft = unsentDrafts.reduce<{ id: string; subject: string | null; body: string | null } | null>(
+    (latest, m) => {
+      if (!latest || (m.created_at && m.created_at > (latest as any).created_at)) {
+        return { id: m.id, subject: m.subject, body: m.body };
+      }
+      return latest;
+    },
     null,
   );
 
@@ -142,6 +160,7 @@ export async function findLeadByEmail(
       historicalContact,
       canContact,
       blockReason,
+      latestUnsentMessage: latestUnsentDraft,
     },
   };
 }
