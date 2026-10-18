@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback } from "react";
 
 import { parseBulkEmails } from "@/lib/import/bulk-emails";
 import { saveDraftsFromPaste } from "@/app/save-drafts-action";
@@ -69,20 +69,6 @@ type LeadStatus =
   | "skipped"
   | "failed";
 
-interface LeadStatusInfo {
-  status: LeadStatus;
-  reason?: string;
-}
-
-interface ParserClientProps {
-  onImportComplete?: () => void;
-}
-
-interface LeadStatusInfo {
-  status: LeadStatus;
-  reason?: string;
-}
-
 export function ParserClient() {
   const [pasteValue, setPasteValue] = useState("");
   const [saving, setSaving] = useState(false);
@@ -104,17 +90,8 @@ export function ParserClient() {
 
   // Live per-lead status tracking
   const [leadStatuses, setLeadStatuses] = useState<
-    Array<{ index: number; status: LeadStatus; reason?: string }>
+    Array<{ index: number; status: LeadStatus; reason?: string | null }>
   >();
-
-  const [processingCounters, setProcessingCounters] = useState({
-    parsed: 0,
-    processing: 0,
-    created: 0,
-    updated: 0,
-    skipped: 0,
-    failed: 0,
-  });
 
   const handleParse = useCallback(() => {
     const result = parseBulkEmails(pasteValue ?? "");
@@ -130,16 +107,6 @@ export function ParserClient() {
         reason: null,
       }))
     );
-    setProcessingCounters({
-      parsed: result.candidates.filter(
-        (c) => c.status === "parsed" && c.recipient,
-      ).length,
-      processing: 0,
-      created: 0,
-      updated: 0,
-      skipped: 0,
-      failed: 0,
-    });
   }, [pasteValue]);
 
   async function handleSave() {
@@ -174,53 +141,42 @@ export function ParserClient() {
         reason: null,
       }))
     );
-    setProcessingCounters({
-      parsed: validCandidates.length,
-      processing: validCandidates.length,
-      created: 0,
-      updated: 0,
-      skipped: 0,
-      failed: 0,
-    });
 
     try {
+      const statuses = leadStatuses ?? [];
       const result = await saveDraftsFromPaste(pasteValue);
-      
+
       if (!result.ok) {
         setSaveError(result.error);
         setLeadStatuses(
-          leadStatuses.map((ls) => ({
-            ...ls,
-            status: "failed",
+          statuses.map((ls) => ({
+            index: ls.index,
+            status: "failed" as const,
             reason: result.error,
           }))
         );
-        setProcessingCounters({
-          parsed: leadStatuses.length,
-          processing: 0,
-          created: 0,
-          updated: 0,
-          skipped: leadStatuses.length,
-          failed: leadStatuses.length,
-        });
         return;
       }
 
       // Update lead statuses based on results
-      const updatedLeadStatuses = leadStatuses.map((ls, i) => {
+      const updatedLeadStatuses = statuses.map((ls) => {
         const detail = result.details.find((d) => d.index === ls.index);
         if (!detail) return ls;
-        
+
         const outcome = detail.outcome;
-        if (outcome === "created") return { ...ls, status: "created", reason: null };
-        if (outcome === "already_present") return { ...ls, status: "updated", reason: null };
-        if (outcome === "skipped") return { ...ls, status: "skipped", reason: detail.error };
-        if (outcome === "failed") return { ...ls, status: "failed", reason: detail.error };
+        if (outcome === "created")
+          return { index: ls.index, status: "created" as const, reason: null };
+        if (outcome === "already_present")
+          return { index: ls.index, status: "updated" as const, reason: null };
+        if (outcome === "skipped")
+          return { index: ls.index, status: "skipped" as const, reason: detail.error };
+        if (outcome === "failed")
+          return { index: ls.index, status: "failed" as const, reason: detail.error };
         return ls;
       });
-      
+
       setLeadStatuses(updatedLeadStatuses);
-      
+
       setSaveResult({
         created: result.created,
         existing: result.existing,
@@ -239,24 +195,17 @@ export function ParserClient() {
         text: `${result.created} draft${result.created === 1 ? "" : "s"} created, ${result.existing} updated, ${result.skipped} skipped${result.failed > 0 ? `, ${result.failed} failed` : ""}.`,
       });
     } catch (error) {
+      const statuses = leadStatuses ?? [];
       setSaveError(error instanceof Error ? error.message : "Failed to save drafts.");
-      
+
       // Mark all leads as failed
       setLeadStatuses(
-        leadStatuses.map((ls) => ({
-          ...ls,
-          status: "failed",
+        statuses.map((ls) => ({
+          index: ls.index,
+          status: "failed" as const,
           reason: error instanceof Error ? error.message : "Failed to save drafts.",
         }))
       );
-      setProcessingCounters({
-        parsed: leadStatuses.length,
-        processing: 0,
-        created: 0,
-        updated: 0,
-        skipped: 0,
-        failed: leadStatuses.length,
-      });
     } finally {
       setSaving(false);
     }
@@ -374,7 +323,7 @@ export function ParserClient() {
                           <span className="text-midnight-soft">{sequenceLabel(fuIdx + 1)}:</span>{" "}
                           {fu.subject ?? "(no subject)"} — {fu.body?.slice(0, 80) ?? "(empty)"}
                         </li>
-                      ))
+                      ))}
                     </ul>
                   </div>
                 )}
@@ -458,7 +407,7 @@ export function ParserClient() {
                   <span className="font-mono text-xs text-midnight lead-index">
                     Lead {ls.index + 1}
                   </span>
-                  <span className="font-medium text-midnight status-badge {
+                  <span className={`font-medium text-midnight status-badge ${
                     ls.status === "parsed"
                       ? "text-midnight"
                       : ls.status === "validating"
@@ -476,14 +425,14 @@ export function ParserClient() {
                                   : ls.status === "skipped"
                                     ? "text-warning-ink"
                                     : "text-error-ink"
-                  }">
+                  }`}>
                     {ls.status}
                   </span>
-                  <span className="text-xs text-muted-rose ml-2 {
+                  <span className={`text-xs text-muted-rose ml-2 ${
                     ls.reason
                       ? "text-error-ink"
                       : "text-midnight-soft"
-                  }">
+                  }`}>
                     {ls.reason ?? ""}
                   </span>
                 </div>
@@ -522,6 +471,3 @@ export function ParserClient() {
     </div>
   );
 }
-EOF
-cp /dev/null src/components/parser-client.tsx
-echo "File cleanup"
