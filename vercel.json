@@ -1,5 +1,6 @@
 {
   "$schema": "https://vercel.sh/vercel.json",
+  "buildCommand": "npm install --legacy-peer-deps && npm run build",
   "crons": [
     {
       "path": "/api/cron/followups",
