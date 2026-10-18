@@ -185,7 +185,7 @@ export async function saveDraftsFromPaste(text: string): Promise<SaveDraftsResul
     // Determine outcome: created, updated, or unchanged
     const newSubject = saved.data.main.subject;
     const newBody = saved.data.main.body;
-    const hasExistingUnsentDraft = check.messageCount > check.sentCount;
+    const hasExistingUnsentDraft = !!check.latestUnsentMessage;
     
     let outcome: "created" | "updated" | "unchanged";
     if (!hasExistingUnsentDraft) {

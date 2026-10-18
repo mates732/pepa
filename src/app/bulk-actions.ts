@@ -251,7 +251,8 @@ export async function importBulkEmails(rows: BulkDraftRequest[]): Promise<BulkIm
     const newBody = saved.data.main.body;
 
     let outcome: "created" | "updated" | "unchanged";
-    if (!check.check.messageCount || check.check.messageCount === 0) {
+    const hasExistingUnsentDraft = !!check.check.latestUnsentMessage;
+    if (!hasExistingUnsentDraft) {
       outcome = "created";
     } else if (existingSubject === newSubject && existingBody === newBody) {
       outcome = "unchanged";
