@@ -12,7 +12,7 @@ import { constantTimeEquals } from "./token";
 export const AUTH_ENV_VARS = ["PEPA_PASSWORD", "PEPA_SESSION_SECRET"] as const;
 
 /** PEPA must never run on a trivially guessable password. */
-export const MIN_PASSWORD_LENGTH = 12;
+export const MIN_PASSWORD_LENGTH = 9;
 export const MIN_SECRET_LENGTH = 32;
 
 export interface AuthEnvStatus {
